@@ -12,7 +12,7 @@ servers, PyPlanet controllers, and a portable MariaDB instance — all on Linux.
 | **Game servers** | Download, install, start/stop/restart TM2020 & ManiaPlanet servers |
 | **PyPlanet pools** | Create isolated pools (settings split into `base.py` / `apps.py` / `local.py`), start/stop, edit config |
 | **MariaDB** | Portable single-node MariaDB managed as just another instance |
-| **DB browser** | Launch `gobang` against any pool or the MariaDB service |
+| **DB browser** | Launch `lazysql` against any pool or the MariaDB service |
 | **System stats** | Live CPU (per-core + sparkline), memory, disk, network (sparklines), GPU, temperatures |
 | **UFW firewall** | View rules, add rules via structured form, delete rules, enable/disable with SSH-safety toggle |
 | **systemd services** | Browse all services, start / stop / restart / enable / disable, view journal |
@@ -104,7 +104,7 @@ git pull && ./install.sh
 | ⇆ Attach | Attach to the GNU screen session |
 | ≡ View logs | Pick and tail a log file |
 | ✎ Edit config | Pick and edit a settings file |
-| ⛁ Open DB tool | Launch `gobang` (pools and MariaDB only) |
+| ⛁ Open DB tool | Launch `lazysql` (pools and MariaDB only) |
 | ⤓ Update server | Re-download and update game server binaries |
 | 📂 Open location | Open instance directory in `mc` (Midnight Commander) |
 | ✗ Delete | Delete the instance (must be stopped) |

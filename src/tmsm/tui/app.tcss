@@ -1,0 +1,22 @@
+Screen {
+    layout: vertical;
+}
+
+#table-wrap {
+    height: 60%;
+    border: round $accent;
+}
+
+#details {
+    height: 1fr;
+    border: round $accent;
+    padding: 1 2;
+}
+
+DataTable {
+    height: 1fr;
+}
+
+.dim {
+    color: $text-muted;
+}

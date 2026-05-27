@@ -276,5 +276,18 @@ echo
 echo "Installed. Run: tmsm"
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
-    *) echo "NOTE: $BIN_DIR is not on your PATH. Add it to your shell rc." ;;
+    *)
+        echo "NOTE: $BIN_DIR is not on your PATH."
+        # Add to ~/.bashrc and ~/.profile so it persists across sessions
+        for rc in "$HOME/.bashrc" "$HOME/.profile"; do
+            if [[ -f "$rc" ]] && ! grep -qF "$BIN_DIR" "$rc"; then
+                echo "" >> "$rc"
+                echo "# added by tmsm installer" >> "$rc"
+                echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$rc"
+                echo "Added $BIN_DIR to PATH in $rc"
+            fi
+        done
+        export PATH="$BIN_DIR:$PATH"
+        echo "PATH updated for this session. Open a new terminal or run: source ~/.bashrc"
+        ;;
 esac

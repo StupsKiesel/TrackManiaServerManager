@@ -26,7 +26,7 @@ servers, PyPlanet controllers, and a portable MariaDB instance — all on Linux.
 ## Install
 
 ```bash
-git clone <repo> tmsm
+git clone https://github.com/StupsKiesel/TrackManiaServerManager tmsm
 cd tmsm
 ./install.sh
 tmsm

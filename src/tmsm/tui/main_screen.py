@@ -216,6 +216,7 @@ class MainScreen(Screen):
             MenuItem("edit",    "✎  Edit config"),
             MenuItem("db_tool",       "⛁  Open DB tool",      enabled=is_db_target),
             MenuItem("update",        "⤓  Update server",     enabled=is_server),
+            MenuItem("add_map",       "＋  Add map (from Exchange)", enabled=is_server),
             MenuItem("open_location", "📂  Open location (mc)"),
             MenuItem("delete",        "✗  Delete",            enabled=not running),
         ]
@@ -348,6 +349,35 @@ class MainScreen(Screen):
             InstallScreen(title=title, runner=runner),
             lambda _r: self.refresh_instances(),
         )
+
+    def action_add_map(self) -> None:
+        from pathlib import Path
+        from .add_map_screen import AddMapScreen
+        from .install_screen import InstallScreen
+        from .. import maps as maps_mod
+
+        inst = self._selected()
+        if inst is None or inst.kind is not Kind.SERVER:
+            self.notify("Add map is only available for game servers.", severity="warning")
+            return
+
+        server_inst = inst  # captured below; narrow type for the closure
+
+        def on_prompt(result: tuple[str, Path] | None) -> None:
+            if result is None:
+                return
+            raw_id, ms_path = result
+            title = f"Adding map {raw_id} to '{server_inst.name}'"
+
+            def runner(log):
+                maps_mod.add_map_from_exchange(server_inst, raw_id, ms_path, log)
+
+            self.app.push_screen(
+                InstallScreen(title=title, runner=runner),
+                lambda _r: self.refresh_instances(),
+            )
+
+        self.app.push_screen(AddMapScreen(inst), on_prompt)
 
     def action_delete(self) -> None:
         from .confirm import ConfirmScreen

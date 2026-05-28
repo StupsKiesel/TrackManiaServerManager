@@ -216,6 +216,22 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p "$TMSM_HOME" "$BIN_DIR"
 
+# --- self-refresh source from git (skip with TMSM_SKIP_PULL=1) ---
+if [[ -d "$SRC_DIR/.git" && "${TMSM_SKIP_PULL:-0}" != "1" ]]; then
+    if command -v git >/dev/null 2>&1; then
+        if [[ -z "$(git -C "$SRC_DIR" status --porcelain)" ]]; then
+            echo "Updating source from git..."
+            git -C "$SRC_DIR" fetch --quiet --prune || true
+            if ! git -C "$SRC_DIR" pull --ff-only; then
+                echo "WARNING: git pull failed (divergent branch or no upstream)." >&2
+                echo "         Continuing with existing source." >&2
+            fi
+        else
+            echo "NOTE: skipping git pull — uncommitted local changes in $SRC_DIR" >&2
+        fi
+    fi
+fi
+
 # --- venv ---
 if [[ ! -d "$VENV" ]]; then
     echo "Creating venv at $VENV"

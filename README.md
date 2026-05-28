@@ -38,8 +38,11 @@ The first run offers to download a portable MariaDB and a managed Python 3.8
 
 **Update:**
 ```bash
-git pull && ./install.sh
+./install.sh
 ```
+Re-running `install.sh` does a `git pull --ff-only` and refreshes the venv.
+Or update from inside the TUI: press `u` on the main screen (only visible when
+a new version is available) — tmsm pulls, reinstalls, and relaunches itself.
 
 **Uninstall** (data under `~/.tmsm/` is kept):
 ```bash

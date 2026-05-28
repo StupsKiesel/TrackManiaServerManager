@@ -118,6 +118,12 @@ class MainScreen(Screen):
     def on_data_table_row_selected(self, _event: DataTable.RowSelected) -> None:
         self.action_open_menu()
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "update_tmsm":
+            # Hide entirely until the background check confirms an update.
+            return True if getattr(self.app, "update_available", False) else False
+        return True
+
     # --- actions ---
 
     def action_refresh(self) -> None:

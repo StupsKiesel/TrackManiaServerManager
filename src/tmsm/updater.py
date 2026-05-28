@@ -21,6 +21,33 @@ def _repo_root() -> Path | None:
     return None
 
 
+def check_update_available(timeout: float = 10.0) -> bool:
+    """Return True if the upstream branch has commits we don't have locally.
+
+    Safe to call in a worker thread. Network failures and non-git installs
+    return False rather than raising.
+    """
+    repo = _repo_root()
+    if repo is None:
+        return False
+    try:
+        subprocess.run(
+            ["git", "fetch", "--quiet", "--prune"],
+            cwd=str(repo), check=False,
+            capture_output=True, timeout=timeout,
+        )
+        r = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD..@{u}"],
+            cwd=str(repo), check=False,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if r.returncode != 0:
+            return False
+        return int(r.stdout.strip() or "0") > 0
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        return False
+
+
 def _run(cmd: list[str], cwd: Path, log: Log) -> None:
     log(f"$ {' '.join(cmd)}")
     proc = subprocess.Popen(

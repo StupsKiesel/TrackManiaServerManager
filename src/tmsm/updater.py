@@ -77,15 +77,24 @@ def update_tmsm(log: Log) -> None:
     if not (repo / ".git").is_dir():
         raise RuntimeError(f"{repo} is not a git working tree.")
 
-    # Refuse to pull over uncommitted local changes — would silently lose work.
-    status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=str(repo),
-        capture_output=True, text=True, check=False,
+    # Refuse to pull over uncommitted *content* changes. We deliberately
+    # ignore:
+    #   * untracked files — the user may keep local notes/scripts in the tree
+    #   * file-mode (chmod +x) differences — common after running install.sh
+    #     on filesystems that set the exec bit on first execution
+    diff = subprocess.run(
+        ["git", "-c", "core.fileMode=false", "diff", "--quiet", "HEAD"],
+        cwd=str(repo), check=False,
     )
-    if status.stdout.strip():
+    if diff.returncode != 0:
+        info = subprocess.run(
+            ["git", "-c", "core.fileMode=false", "status",
+             "--porcelain", "--untracked-files=no"],
+            cwd=str(repo), capture_output=True, text=True, check=False,
+        )
         raise RuntimeError(
             "Local uncommitted changes in the source checkout:\n"
-            f"{status.stdout}"
+            f"{info.stdout}"
             "Commit, stash, or discard them before updating."
         )
 

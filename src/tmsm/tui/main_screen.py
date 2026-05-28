@@ -30,6 +30,7 @@ class MainScreen(Screen):
         Binding("t", "stats",       "Stats"),
         Binding("f", "ufw",         "UFW"),
         Binding("y", "systemctl",   "Services"),
+        Binding("u", "update_tmsm", "Update tmsm"),
     ]
 
     def __init__(self) -> None:
@@ -172,6 +173,18 @@ class MainScreen(Screen):
     def action_systemctl(self) -> None:
         from .systemctl_screen import SystemctlScreen
         self.app.push_screen(SystemctlScreen())
+
+    def action_update_tmsm(self) -> None:
+        from .install_screen import InstallScreen
+        from .. import updater
+
+        def runner(log):
+            updater.update_tmsm(log)
+
+        self.app.push_screen(
+            InstallScreen(title="Updating tmsm from git", runner=runner),
+            lambda _r: None,
+        )
 
     def action_open_menu(self) -> None:
         from .action_menu import ActionMenuScreen, MenuItem

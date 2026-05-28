@@ -23,3 +23,7 @@ Thumbs.db
 
 # Windows-only setup helper
 install-wsl.bat
+
+# Windows-only WSL network helpers (local testing, not part of the project)
+wsl-forward-tm.bat
+wsl-relay-tm.bat

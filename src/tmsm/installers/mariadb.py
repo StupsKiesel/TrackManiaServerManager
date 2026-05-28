@@ -38,6 +38,18 @@ def is_installed() -> bool:
     return (paths.MARIADB_DIST / "bin" / "mysqld").is_file()
 
 
+def write_my_cnf() -> None:
+    """(Re-)write my.cnf from the current config. Safe to call after port changes."""
+    cfg = config.load()
+    my_cnf = paths.MARIADB_DIR / "my.cnf"
+    my_cnf.write_text(_MY_CNF_TEMPLATE.format(
+        datadir=paths.MARIADB_DATA,
+        socket=paths.MARIADB_DIR / "mysql.sock",
+        port=cfg.mariadb.port,
+        bind=cfg.mariadb.host,
+    ))
+
+
 def _find_top_dir(extract_dir: Path) -> Path:
     """Tarballs unpack to a single top-level dir; find it."""
     entries = [p for p in extract_dir.iterdir()]
@@ -88,13 +100,8 @@ def install_mariadb(log: Log) -> None:
         raise RuntimeError(f"Extracted archive has no bin/mysqld at {paths.MARIADB_DIST}")
 
     # my.cnf
+    write_my_cnf()
     my_cnf = paths.MARIADB_DIR / "my.cnf"
-    my_cnf.write_text(_MY_CNF_TEMPLATE.format(
-        datadir=paths.MARIADB_DATA,
-        socket=paths.MARIADB_DIR / "mysql.sock",
-        port=cfg.mariadb.port,
-        bind=cfg.mariadb.host,
-    ))
     log(f"Wrote {my_cnf}")
 
     # Initialize datadir

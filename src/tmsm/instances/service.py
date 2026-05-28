@@ -106,11 +106,16 @@ class MariaDBInstance(Instance):
         if _port_in_use(self.cfg.mariadb.host, port):
             raise RuntimeError(
                 f"Port {port} on {self.cfg.mariadb.host} is already in use.\n"
-                f"  sudo ss -tlnp | grep ':{port}'   # find the owner\n"
-                f"  sudo systemctl disable --now mariadb mysql 2>/dev/null\n"
-                f"  sudo pkill -x mysqld\n"
-                f"Then try Start again."
+                f"  To use a different port, edit ~/.tmsm/config.toml:\n"
+                f"    [mariadb]\n"
+                f"    port = 3307\n"
+                f"  Or to find and stop the conflicting process:\n"
+                f"    sudo ss -tlnp | grep ':{port}'\n"
+                f"    sudo systemctl disable --now mariadb mysql 2>/dev/null"
             )
+        # Keep my.cnf in sync with config (e.g. after a port change).
+        from ..installers.mariadb import write_my_cnf
+        write_my_cnf()
         # Clean stale pidfile so a fresh one indicates this run.
         try:
             self._pid_file().unlink()

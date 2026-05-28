@@ -83,4 +83,4 @@ def update_tmsm(log: Log) -> None:
         raise RuntimeError(f"pip install failed (exit {rc})")
 
     log("")
-    log("Update complete. Quit and relaunch tmsm to load the new code.")
+    log("Update complete. Restarting tmsm...")

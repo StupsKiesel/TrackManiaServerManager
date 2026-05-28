@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 
 
@@ -12,5 +13,9 @@ def main() -> int:
     from .tui.app import TmsmApp
 
     ensure_home()
-    TmsmApp().run()
+    app = TmsmApp()
+    app.run()
+    if getattr(app, "restart_pending", False):
+        # Replace the current process so the new code on disk is loaded.
+        os.execv(sys.executable, [sys.executable, "-m", "tmsm"])
     return 0

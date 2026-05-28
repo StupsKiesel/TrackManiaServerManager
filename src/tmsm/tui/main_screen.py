@@ -178,12 +178,19 @@ class MainScreen(Screen):
         from .install_screen import InstallScreen
         from .. import updater
 
+        app = self.app
+
         def runner(log):
             updater.update_tmsm(log)
+            app.restart_pending = True  # only set if update succeeded
+
+        def after(_r) -> None:
+            if getattr(app, "restart_pending", False):
+                app.exit()
 
         self.app.push_screen(
             InstallScreen(title="Updating tmsm from git", runner=runner),
-            lambda _r: None,
+            after,
         )
 
     def action_open_menu(self) -> None:

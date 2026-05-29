@@ -1,0 +1,49 @@
+﻿<frame pos="{{ widget_x }} {{ widget_y }}" z-index="100">
+  <quad pos="0 0" z-index="0" size="52 28" bgcolor="000b" halign="right" valign="top" />
+  <quad pos="0 0" z-index="1" size="52 4.5" bgcolor="f80b" halign="right" valign="top" />
+  <label pos="-26 -2.25" z-index="2" size="48 3.5" halign="center" valign="center2"
+         text="$000$o&#xf279; TMX MAP INFO" textsize="1.0" textfont="GameFontBlack" />
+
+  {% if data.not_on_tmx %}
+    <label pos="-26 -16" z-index="2" size="48 4" halign="center" valign="center2"
+           text="$888$o&#xf071; not on TMX" textsize="1.3" textfont="GameFontSemiBold" />
+  {% elif not data or not data.name %}
+    <label pos="-26 -16" z-index="2" size="48 4" halign="center" valign="center2"
+           text="$888..." textsize="1.6" />
+  {% else %}
+    <label pos="-26 -7" z-index="2" size="48 3.5" halign="center" valign="center2"
+           text="$fff$o{{ data.name }}" textsize="1.2" textfont="GameFontSemiBold" maxline="1" />
+
+    <label pos="-26 -10.5" z-index="2" size="48 2.5" halign="center" valign="center2"
+           text="$aaa&#xf007; {{ data.author|default('?') }}" textsize="0.9" maxline="1" />
+
+    {% set d = (data.difficulty or '')|string|lower %}
+    {% if 'lunatic' in d %}{% set thermo = '&#xf2c7;' %}{% set tcol = '$f22' %}
+    {% elif 'expert' in d %}{% set thermo = '&#xf2c8;' %}{% set tcol = '$f80' %}
+    {% elif 'advanced' in d %}{% set thermo = '&#xf2c9;' %}{% set tcol = '$ff0' %}
+    {% elif 'intermediate' in d %}{% set thermo = '&#xf2ca;' %}{% set tcol = '$8f0' %}
+    {% elif 'beginner' in d %}{% set thermo = '&#xf2cb;' %}{% set tcol = '$0f4' %}
+    {% else %}{% set thermo = '&#xf2c9;' %}{% set tcol = '$888' %}
+    {% endif %}
+    <label pos="-50 -14" z-index="2" size="24 3" halign="left" valign="center2"
+           text="{{ tcol }}{{ thermo|safe }}" textsize="0.95" />
+    <label pos="-2 -14" z-index="2" size="24 3" halign="right" valign="center2"
+           text="$888&#xf017; $fff{{ data.length_name|default('?') }}" textsize="0.95" />
+
+    <label pos="-26 -17.5" z-index="2" size="48 3" halign="center" valign="center2"
+           text="$888&#xf02b; $fff{{ data.style|default('?') }}" textsize="0.95" maxline="1" />
+
+    {% if data.mod_name %}
+      <label pos="-26 -21" z-index="2" size="48 3" halign="center" valign="center2"
+             text="$f80&#xf1fc; $fff{{ data.mod_name }}" textsize="0.95" maxline="1" />
+    {% else %}
+      <label pos="-26 -21" z-index="2" size="48 3" halign="center" valign="center2"
+             text="$555&#xf1fc; no mod" textsize="0.9" />
+    {% endif %}
+
+    {% if data.tmx_id %}
+      <label pos="-2 -25" z-index="2" size="48 2.5" halign="right" valign="center2"
+             text="$666&#xf05a; #{{ data.tmx_id }}" textsize="0.85" />
+    {% endif %}
+  {% endif %}
+</frame>

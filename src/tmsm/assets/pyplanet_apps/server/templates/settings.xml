@@ -1,0 +1,59 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context: fields=[{key,label,kind,value,dirty}], status, status_color,
+   dirty_count, loading #}
+
+<frame pos="-90 55" z-index="200">
+
+  {{ ui.window('Server settings', icon='cog', x=0, y=0, w=180, h=110) }}
+
+  {% if loading %}
+    {{ ui.label('loading…', x=90, y=-55, halign='center', color='888') }}
+  {% endif %}
+
+  {% set row_h = 5.5 %}
+  {% for f in fields %}
+    {% set y = -12 - loop.index0 * row_h %}
+    {{ ui.label(f.label, x=4, y=y, size='sm',
+                color=('fff' if f.dirty else 'ccc'),
+                bold=f.dirty) }}
+    {% if f.kind == 'bool' %}
+      {% set on = (f.value == '1') %}
+      {% set color = ('0f0' if on else '888') %}
+      {% set mark = 'check' if on else 'cross' %}
+      <quad pos="80 {{ y + 2 }}" z-index="202" size="20 4.5" bgcolor="fff0"
+            id="togbtn_{{ id }}__toggle__{{ f.key }}"
+            action="{{ id }}__toggle__{{ f.key }}"
+            ScriptEvents="1" />
+      {{ ui.icon(mark, x=82, y=y, color=color, font=2.2) }}
+      {{ ui.label(('true' if on else 'false'), x=88, y=y,
+                  size='sm', color=color) }}
+    {% else %}
+      {{ ui.line_edit('field__' ~ f.key, value=f.value,
+                      x=80, y=y, width=92, size='sm') }}
+    {% endif %}
+    {% if f.dirty %}
+      {{ ui.label('*', x=2, y=y, size='sm', color='fc4', bold=True) }}
+    {% endif %}
+  {% endfor %}
+
+  {# controls #}
+  {{ ui.push_button('save', 'Save (' ~ dirty_count|string ~ ' changes)',
+                    icon='save', x=4, y=-104,
+                    variant=('success' if dirty_count else 'ghost'),
+                    halign='left', size='sm') }}
+  {{ ui.push_button('refresh', 'Reset', icon='reload',
+                    x=50, y=-104, variant='ghost', halign='left', size='sm') }}
+  {{ ui.push_button('back', '< Back to hub', icon='arrow_left',
+                    x=70, y=-104, variant='primary', halign='left', size='sm') }}
+
+  {{ ui.label(status, x=176, y=-104, halign='right',
+              color=status_color, size='sm') }}
+
+  {{ ui.status_bar(x=0, y=0, w=180, h=110,
+                   left='dedicated XML-RPC',
+                   center='',
+                   right=fields|length|string + ' fields') }}
+
+  {{ ui.hover_script() }}
+</frame>

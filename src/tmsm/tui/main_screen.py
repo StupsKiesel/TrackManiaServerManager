@@ -30,6 +30,8 @@ class MainScreen(Screen):
         Binding("t", "stats",       "Stats"),
         Binding("f", "ufw",         "UFW"),
         Binding("y", "systemctl",   "Services"),
+        Binding("a", "addons",      "Addons"),
+        Binding("l", "tmsm_logs",   "App logs"),
         Binding("u", "update_tmsm", "Update tmsm"),
     ]
 
@@ -179,6 +181,14 @@ class MainScreen(Screen):
     def action_systemctl(self) -> None:
         from .systemctl_screen import SystemctlScreen
         self.app.push_screen(SystemctlScreen())
+
+    def action_addons(self) -> None:
+        from .assets_screen import AssetsScreen
+        self.app.push_screen(AssetsScreen())
+
+    def action_tmsm_logs(self) -> None:
+        from .tmsm_logs_screen import TmsmLogsScreen
+        self.app.push_screen(TmsmLogsScreen())
 
     def action_update_tmsm(self) -> None:
         from .install_screen import InstallScreen

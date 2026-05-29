@@ -1,0 +1,4 @@
+{
+  "description": "Three master-only hub apps: System Status (host metrics & process state), Logs Viewer (tail/filter any tmsm log), and PyPlanet Apps (toggle tmsm-managed apps in apps.py with live restart).",
+  "author": "tmsm"
+}

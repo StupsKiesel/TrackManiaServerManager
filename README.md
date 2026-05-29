@@ -174,3 +174,17 @@ Screens that need elevated privileges (UFW, systemd service management) prompt
 for a sudo password inside the TUI using a dedicated authentication dialog.
 The password is verified immediately via `sudo -S -v` and cached in-process for
 the session so you only need to enter it once.
+
+---
+
+## License
+
+tmsm is licensed under the **GNU General Public License v3.0 or later**
+(GPL-3.0-or-later) — see the [LICENSE](LICENSE) file for the full text.
+
+This includes the PyPlanet addons shipped in
+`src/tmsm/assets/pyplanet_apps/`, which are derivative works of
+[PyPlanet](https://github.com/PyPlanet/PyPlanet) (also GPL-3.0).
+
+Community PyPlanet addons fetched at install time (from `catalog.json`) are
+covered by their own upstream licenses — see each repo for details.

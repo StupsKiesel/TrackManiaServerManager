@@ -1,0 +1,64 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+<frame pos="-90 55" z-index="200">
+
+  {{ ui.window('System status', icon='info', x=0, y=0, w=180, h=110) }}
+
+  {{ ui.heading(hostname, x=4, y=-12, level=2) }}
+  {{ ui.label(ts ~ '  ·  up ' ~ uptime_s, x=4, y=-18, color='888', size='sm') }}
+
+  {# CPU / load #}
+  {{ ui.heading('CPU', x=4, y=-26, level=3, color='8af') }}
+  {{ ui.label('cores: ' ~ cpu_count, x=4, y=-32, size='sm') }}
+  {{ ui.label('load (1/5/15): ' ~ ('%.2f' % load1) ~ ' / ' ~ ('%.2f' % load5) ~ ' / ' ~ ('%.2f' % load15),
+              x=4, y=-37, size='sm') }}
+  <quad pos="4 -42" z-index="201" size="80 2" bgcolor="2228" />
+  <quad pos="4 -42" z-index="202" size="{{ (load1_pct * 0.8) }} 2"
+        bgcolor="{% if load1_pct >= 90 %}f44f{% elif load1_pct >= 60 %}fc4f{% else %}4f8f{% endif %}" />
+  {{ ui.label(load1_pct|string ~ '%', x=86, y=-42, size='sm', color='ccc') }}
+
+  {# Memory #}
+  {{ ui.heading('Memory', x=4, y=-50, level=3, color='8af') }}
+  {{ ui.label(mem_used ~ ' / ' ~ mem_total ~ '  (' ~ mem_avail ~ ' free)',
+              x=4, y=-56, size='sm') }}
+  <quad pos="4 -61" z-index="201" size="80 2" bgcolor="2228" />
+  <quad pos="4 -61" z-index="202" size="{{ (mem_pct * 0.8) }} 2"
+        bgcolor="{% if mem_pct >= 90 %}f44f{% elif mem_pct >= 75 %}fc4f{% else %}4f8f{% endif %}" />
+  {{ ui.label(mem_pct|string ~ '%', x=86, y=-61, size='sm', color='ccc') }}
+
+  {# Disk #}
+  {{ ui.heading('Disk (~/.tmsm)', x=4, y=-69, level=3, color='8af') }}
+  {{ ui.label(disk_used ~ ' / ' ~ disk_total ~ '  (' ~ disk_free ~ ' free)',
+              x=4, y=-75, size='sm') }}
+  <quad pos="4 -80" z-index="201" size="80 2" bgcolor="2228" />
+  <quad pos="4 -80" z-index="202" size="{{ (disk_pct * 0.8) }} 2"
+        bgcolor="{% if disk_pct >= 90 %}f44f{% elif disk_pct >= 75 %}fc4f{% else %}4f8f{% endif %}" />
+  {{ ui.label(disk_pct|string ~ '%', x=86, y=-80, size='sm', color='ccc') }}
+
+  {# Services (right column) #}
+  {{ ui.heading('Services', x=96, y=-26, level=3, color='8af') }}
+  {{ ui.label('PyPlanet pool', x=96, y=-32, size='sm') }}
+  {{ ui.label('online', x=176, y=-32, halign='right', color='0f0', size='sm') }}
+  {{ ui.label('pool log size', x=96, y=-37, size='sm') }}
+  {{ ui.label(pyp_log_size, x=176, y=-37, halign='right', color='ccc', size='sm') }}
+
+  {{ ui.label('Dedicated (XML-RPC)', x=96, y=-44, size='sm') }}
+  {% if ded_up %}
+    {{ ui.label('online :' ~ ded_port, x=176, y=-44, halign='right', color='0f0', size='sm') }}
+  {% else %}
+    {{ ui.label('offline :' ~ ded_port, x=176, y=-44, halign='right', color='f44', size='sm') }}
+  {% endif %}
+
+  {# controls #}
+  {{ ui.push_button('refresh', 'Refresh', icon='reload',
+                    x=4, y=-104, variant='ghost', halign='left', size='sm') }}
+  {{ ui.push_button('back', '< Back to hub', icon='arrow_left',
+                    x=24, y=-104, variant='primary', halign='left', size='sm') }}
+
+  {{ ui.status_bar(x=0, y=0, w=180, h=110,
+                   left='tmsm system status',
+                   center=ts,
+                   right=hostname) }}
+
+  {{ ui.hover_script() }}
+</frame>

@@ -1,0 +1,4 @@
+{
+  "description": "tmsm hub — central in-game launcher. Other apps register themselves as tiles via the 'tmsm:hub.register' signal and appear in the player/operator/admin/master tab corresponding to their role.",
+  "author": "tmsm"
+}

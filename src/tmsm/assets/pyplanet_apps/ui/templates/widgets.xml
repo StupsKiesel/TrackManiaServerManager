@@ -1,0 +1,1871 @@
+﻿{# =============================================================================
+   tmsm.ui v1 â€” widget macros
+   Import in a TemplateView template (the `with context` is REQUIRED â€” without
+   it Jinja isolates macro scope and `{{ id }}` renders empty, which silently
+   breaks every click handler):
+       {% import 'tmsm_ui/widgets.xml' as ui with context %}
+   Conventions:
+     * Every macro reads `id` from the surrounding context (provided by BaseView).
+     * Every action fires the signal named in `name` -> handler connected via
+       `self.connect("name", handler)` on the Python side.
+     * Labels never carry `action`/`scriptevents`; the underlying quad does.
+       This lets the hover script see MouseOver events on the quad and look
+       it up by `id` (TM2020 ManiaScript has no working `HasClass`).
+     * Button names within a single view MUST be unique â€” the macro emits an
+       `id` derived from the name and `Page.GetFirstChild` returns only the
+       first match.
+   ============================================================================ #}
+
+{# --- token tables (kept in sync with tokens.py) ----------------------------- #}
+{% set _ICONS = {
+  'reload': '&#xf021;', 'save': '&#xf0c7;', 'edit': '&#xf044;',
+  'trash': '&#xf1f8;', 'plus': '&#xf055;', 'minus': '&#xf056;',
+  'check': '&#xf00c;', 'cross': '&#xf00d;', 'cog': '&#xf013;',
+  'user': '&#xf007;', 'info': '&#xf05a;', 'warning': '&#xf071;',
+  'arrow_right': '&#xf061;', 'arrow_left': '&#xf060;',
+  'play': '&#xf04b;', 'pause': '&#xf04c;', 'stop': '&#xf04d;',
+  'home': '&#xf015;', 'list': '&#xf03a;', 'search': '&#xf002;',
+  'star': '&#xf005;', 'heart': '&#xf004;', 'bolt': '&#xf0e7;',
+  'flag': '&#xf024;', 'lock': '&#xf023;', 'unlock': '&#xf09c;',
+  'eye': '&#xf06e;', 'eye_slash': '&#xf070;', 'sync': '&#xf2f1;',
+  'folder': '&#xf07b;', 'folder_open': '&#xf07c;', 'file': '&#xf016;',
+  'arrow_up': '&#xf062;', 'arrow_down': '&#xf063;', 'level_up': '&#xf148;',
+  'error': '&#xf057;', 'question': '&#xf059;',
+  'terminal': '&#xf120;',
+} %}
+
+{% set _SIZES = {
+  'sm': {'btn_w': 16.0, 'btn_h': 5.0, 'font': 0.9,  'cb': 2.8, 'pad': 1.0, 'entry_h': 3.0},
+  'md': {'btn_w': 22.0, 'btn_h': 7.0, 'font': 1.0,  'cb': 3.5, 'pad': 1.5, 'entry_h': 3.8},
+  'lg': {'btn_w': 32.0, 'btn_h': 9.0, 'font': 1.3,  'cb': 4.5, 'pad': 2.0, 'entry_h': 5.0},
+} %}
+
+{% set _BTN_BG = {
+  'primary': '0d48', 'danger':  'f448', 'ghost':   'fff2',
+  'success': '0a48', 'warning': 'f808',
+} %}
+
+{% set _SURFACE = {
+  'surface':        '0006',
+  'surface_high':   '0008',
+  'surface_strong': '000b',
+} %}
+
+{# --- helpers ---------------------------------------------------------------- #}
+
+{% macro icon_glyph(name) -%}
+{{- (_ICONS[name] if name in _ICONS else '?')|safe -}}
+{%- endmacro %}
+
+{# === push_button ============================================================
+   Filled rectangle, click anywhere on the rectangle fires `name`.
+   The label is rendered on top WITHOUT action/scriptevents so it does not
+   intercept mouse events â€” the underlying quad receives them and the hover
+   script can match `ui-btn-<variant>` and animate the background.
+   ============================================================================ #}
+{% macro push_button(name, label, x=0, y=0, icon=None, variant='primary', size='md', z=200, halign='right', tooltip=None) %}
+  {% set s = _SIZES[size] %}
+  {% set bg = _BTN_BG[variant] %}
+  {% set glyph = (_ICONS[icon] if icon and icon in _ICONS else '') %}
+  {% set lbl_x = x - s.btn_w/2 if halign == 'right' else (x + s.btn_w/2 if halign == 'left' else x) %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ s.btn_w }} {{ s.btn_h }}"
+        bgcolor="{{ bg }}" halign="{{ halign }}" valign="center"
+        id="uibtn_{{ variant }}_{{ id }}__{{ name }}"
+        action="{{ id }}__{{ name }}" scriptevents="1"
+        class="ui-btn ui-btn-{{ variant }}"{% if tooltip %} data-tooltip="{{ tooltip }}"{% endif %} />
+  <label pos="{{ lbl_x }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="center" valign="center2"
+         text="$fff{% if glyph %}{{ glyph|safe }}  {% endif %}{{ label }}"
+         textsize="{{ s.font }}" textfont="GameFont" />
+{% endmacro %}
+
+{# === tool_button ============================================================
+   Square icon-only button. Same hover behavior as push_button.
+   ============================================================================ #}
+{% macro tool_button(name, icon, x=0, y=0, variant='primary', size='md', z=200, halign='right', tooltip=None) %}
+  {% set s = _SIZES[size] %}
+  {% set side = s.btn_h * 0.7 %}
+  {% set bg = _BTN_BG[variant] %}
+  {% set glyph = _ICONS[icon] if icon in _ICONS else '?' %}
+  {% set lbl_x = x - side/2 if halign == 'right' else (x + side/2 if halign == 'left' else x) %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ side }} {{ side }}"
+        bgcolor="{{ bg }}" halign="{{ halign }}" valign="center"
+        id="uibtn_{{ variant }}_{{ id }}__{{ name }}"
+        action="{{ id }}__{{ name }}" scriptevents="1"
+        class="ui-btn ui-btn-{{ variant }}"{% if tooltip %} data-tooltip="{{ tooltip }}"{% endif %} />
+  <label pos="{{ lbl_x }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="center" valign="center2"
+         text="$fff{{ glyph|safe }}" textsize="{{ s.font * 1.4 }}" textfont="GameFont" />
+{% endmacro %}
+
+{# === check_box ==============================================================
+   Toggleable square with optional label. Fires `name` on click; consumer is
+   responsible for flipping the persisted state and refreshing the view.
+   The label has no action â€” only the box quad is clickable (and a second
+   transparent quad covering the label area so the label is still hot to click).
+   ============================================================================ #}
+{% macro check_box(name, label='', checked=False, x=0, y=0, size='md', z=200) %}
+  {% set s = _SIZES[size] %}
+  {% set box = s.cb %}
+  {% set bg = '0d8f' if checked else '111b' %}
+  {% set border = 0.35 %}
+  {# outer "border" quad â€” slightly larger, lighter, sits behind the box.
+     Same anchor (right/center) as the inner box â†’ naturally centered. #}
+  <quad pos="{{ x + border }} {{ y }}" z-index="{{ z - 1 }}"
+        size="{{ box + border*2 }} {{ box + border*2 }}"
+        bgcolor="fffc" halign="right" valign="center" />
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ box }} {{ box }}"
+        bgcolor="{{ bg }}" halign="right" valign="center"
+        action="{{ id }}__{{ name }}" scriptevents="1"
+        class="ui-cb" />
+  {% if checked %}
+  <label pos="{{ x - box/2 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="center" valign="center2"
+         text="$fff{{ '&#xf00c;'|safe }}" textsize="{{ s.font * 0.95 }}"
+         textfont="GameFontBlack" />
+  {% endif %}
+  {% if label %}
+  <label pos="{{ x + 1 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="left" valign="center2"
+         text="$fff{{ label }}" textsize="{{ s.font }}" textfont="GameFont" />
+  {% endif %}
+{% endmacro %}
+
+{# === radio_box =============================================================
+   Single option in a radio group. Click fires signal
+       `<group>__set__<value>`
+   The consumer is responsible for storing the selected value and refreshing.
+   Visually: same square indicator family as check_box, but with a filled
+   center dot glyph when selected (instead of a checkmark).
+   ============================================================================ #}
+{% macro radio_box(group, value, label='', selected=None, x=0, y=0, size='md', z=200) %}
+  {% set s = _SIZES[size] %}
+  {% set box = s.cb %}
+  {% set is_sel = (selected == value) %}
+  {% set fill = '$0d8' if is_sel else '$111' %}
+  {# white "border" circle behind the fill circle #}
+  <label pos="{{ x - box/2 }} {{ y }}" z-index="{{ z - 1 }}"
+         halign="center" valign="center2"
+         text="$fff{{ '&#xf111;'|safe }}" textsize="{{ s.font * 1.45 }}"
+         textfont="GameFontBlack" />
+  {# colored fill circle (the actual radio background) #}
+  <label pos="{{ x - box/2 }} {{ y }}" z-index="{{ z }}"
+         halign="center" valign="center2"
+         text="{{ fill }}{{ '&#xf111;'|safe }}" textsize="{{ s.font * 1.3 }}"
+         textfont="GameFontBlack" />
+  {# small white inner dot when selected #}
+  {% if is_sel %}
+  <label pos="{{ x - box/2 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="center" valign="center2"
+         text="$fff{{ '&#xf111;'|safe }}" textsize="{{ s.font * 0.6 }}"
+         textfont="GameFontBlack" />
+  {% endif %}
+  {# invisible square click target sitting on top of the circle stack #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z + 2 }}" size="{{ box }} {{ box }}"
+        bgcolor="0000" halign="right" valign="center"
+        action="{{ id }}__{{ group }}__set__{{ value }}" scriptevents="1"
+        class="ui-cb" />
+  {% if label %}
+  <label pos="{{ x + 1 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="left" valign="center2"
+         text="$fff{{ label }}" textsize="{{ s.font }}" textfont="GameFont" />
+  {% endif %}
+{% endmacro %}
+
+{# === radio_group ============================================================
+   Convenience wrapper that lays out a list of options as radio_box rows
+   (vertical) or columns (horizontal).
+   `options` is a sequence of dicts/tuples; each item is normalized to
+   (value, label). Supports either:
+       options=[('a','Alpha'), ('b','Beta')]
+       options=[{'value':'a','label':'Alpha'}, ...]
+   `gap` is the spacing between option anchors.
+   ============================================================================ #}
+{% macro radio_group(group, options, selected=None, x=0, y=0, gap=6, orient='v', size='md', z=200) %}
+  {% for opt in options %}
+    {% if opt is mapping %}
+      {% set ov = opt['value'] %}{% set ol = opt.get('label', ov) %}
+    {% else %}
+      {% set ov = opt[0] %}{% set ol = opt[1] if opt|length > 1 else opt[0] %}
+    {% endif %}
+    {% if orient == 'h' %}
+      {{ radio_box(group, ov, label=ol, selected=selected,
+                   x=x + loop.index0 * gap, y=y, size=size, z=z) }}
+    {% else %}
+      {{ radio_box(group, ov, label=ol, selected=selected,
+                   x=x, y=y - loop.index0 * gap, size=size, z=z) }}
+    {% endif %}
+  {% endfor %}
+{% endmacro %}
+
+{# === line_edit ==============================================================
+   Text input. The entry's `name` becomes the key in the values dict:
+       values["entry_<view_id>__<name>"]
+   `placeholder` is accepted for API compatibility but not rendered â€” the
+   convention is to put a hint into `value` or include "..." as part of
+   the surrounding label.
+   ============================================================================ #}
+{% macro line_edit(name, value='', placeholder='', x=0, y=0, width=40, size='md', z=200) %}
+  {% set s = _SIZES[size] %}
+  {% set h = s.entry_h %}
+  {% set ctl = id ~ '__' ~ name %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ width }} {{ h }}"
+        bgcolor="fff2" halign="left" valign="center" />
+  <entry pos="{{ x + 0.5 }} {{ y }}" z-index="{{ z + 1 }}"
+         size="{{ width - 1 }} {{ h - 0.4 }}"
+         name="entry_{{ ctl }}" default="{{ value }}"
+         textcolor="ffff" textsize="{{ s.font }}" textfont="GameFont"
+         halign="left" valign="center2" />
+{% endmacro %}
+
+{# === search_input ===========================================================
+   `line_edit` + leading magnifier icon + trailing clear-X button. The text
+   input still posts its value as `entry_<view_id>__<name>`.
+   Signal: `<name>__clear` when the X is clicked (only shown if `value`).
+       {{ ui.search_input('q', value=query, x=4, y=-20, width=60,
+                          placeholder='Search maps...') }}
+   ============================================================================ #}
+{% macro search_input(name, value='', placeholder='', x=0, y=0, width=60, size='md', z=200) %}
+  {% set s = _SIZES[size] %}
+  {% set h = s.entry_h %}
+  {% set ctl = id ~ '__' ~ name %}
+  {% set icon_w = h %}
+  {% set clear_w = h if value else 0 %}
+  {# wrapper bg #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ width }} {{ h }}"
+        bgcolor="fff2" halign="left" valign="center" />
+  {# leading magnifier #}
+  <label pos="{{ x + icon_w/2 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="center" valign="center2"
+         text="$aaa{{ _ICONS['search']|safe }}"
+         textsize="{{ s.font * 1.2 }}" textfont="GameFont" />
+  {# placeholder (rendered BELOW the entry so typed text covers it) #}
+  {% if placeholder and not value %}
+    <label pos="{{ x + icon_w + 1 }} {{ y }}" z-index="{{ z + 1 }}"
+           halign="left" valign="center2"
+           text="$666{{ placeholder }}"
+           textsize="{{ s.font }}" textfont="GameFont" />
+  {% endif %}
+  {# entry (above placeholder) #}
+  <entry pos="{{ x + icon_w }} {{ y }}" z-index="{{ z + 3 }}"
+         size="{{ width - icon_w - clear_w - 0.4 }} {{ h - 0.4 }}"
+         name="entry_{{ ctl }}" default="{{ value }}"
+         textcolor="ffff" textsize="{{ s.font }}" textfont="GameFont"
+         halign="left" valign="center2" />
+  {# trailing clear button #}
+  {% if value %}
+    <quad pos="{{ x + width - clear_w }} {{ y }}" z-index="{{ z + 4 }}"
+          size="{{ clear_w }} {{ h }}" bgcolor="0000"
+          halign="left" valign="center"
+          id="uibtn_ghost_{{ id }}__{{ name }}__clear"
+          action="{{ id }}__{{ name }}__clear" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    <label pos="{{ x + width - clear_w/2 }} {{ y }}" z-index="{{ z + 5 }}"
+           halign="center" valign="center2"
+           text="$aaa{{ _ICONS['cross']|safe }}"
+           textsize="{{ s.font }}" textfont="GameFont" />
+  {% endif %}
+{% endmacro %}
+
+{# === banner / inline_alert ==================================================
+   Persistent, inline notification stripe. Complements `toast` (transient,
+   floating) and `dialog` (modal, blocking). Use at the top of a panel or
+   form to communicate validation, status, or context.
+   `variant` controls color: 'info' (blue), 'success' (green), 'warning'
+   (orange), 'danger' (red).
+   If `dismissible=True`, a trailing X emits `<name>__dismiss`.
+   `name` is required when dismissible.
+       {{ ui.banner('Configuration saved successfully.',
+                    variant='success', x=4, y=-20, w=152) }}
+       {{ ui.banner('Server is offline.', variant='danger',
+                    name='offline', dismissible=True,
+                    x=4, y=-20, w=152) }}
+   ============================================================================ #}
+{% macro banner(message='', variant='info', name=None, dismissible=False,
+                title=None, icon=None, x=0, y=0, w=120, h=8, z=200) %}
+  {% set palette = {
+    'info':    {'bg': '15d4', 'accent': '15df', 'icon': 'info'},
+    'success': {'bg': '0a44', 'accent': '0a8f', 'icon': 'check'},
+    'warning': {'bg': 'f803', 'accent': 'f80f', 'icon': 'warning'},
+    'danger':  {'bg': 'c333', 'accent': 'c33d', 'icon': 'error'},
+  } %}
+  {% set p = palette[variant] if variant in palette else palette['info'] %}
+  {% set ig = icon or p.icon %}
+  {% set glyph = _ICONS[ig] if ig in _ICONS else _ICONS['info'] %}
+  {# stripe bg #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
+        bgcolor="{{ p.bg }}" halign="left" valign="top" />
+  {# accent bar on the left edge #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z + 1 }}" size="0.6 {{ h }}"
+        bgcolor="{{ p.accent }}" halign="left" valign="top" />
+  {# icon #}
+  <label pos="{{ x + 3 }} {{ y - h/2 }}" z-index="{{ z + 1 }}"
+         halign="left" valign="center2"
+         text="$fff{{ glyph|safe }}"
+         textsize="1.4" textfont="GameFont" />
+  {# title + message #}
+  {% if title %}
+    <label pos="{{ x + 8 }} {{ y - h/2 + 1.5 }}" z-index="{{ z + 1 }}"
+           halign="left" valign="center2"
+           text="$fff{{ title }}"
+           textsize="1.0" textfont="GameFontBlack" />
+    <label pos="{{ x + 8 }} {{ y - h/2 - 1.5 }}" z-index="{{ z + 1 }}"
+           halign="left" valign="center2"
+           text="$ddd{{ message }}"
+           textsize="0.9" textfont="GameFont" />
+  {% else %}
+    <label pos="{{ x + 8 }} {{ y - h/2 }}" z-index="{{ z + 1 }}"
+           halign="left" valign="center2"
+           text="$fff{{ message }}"
+           textsize="1.0" textfont="GameFont" />
+  {% endif %}
+  {% if dismissible and name %}
+    <quad pos="{{ x + w - h }} {{ y }}" z-index="{{ z + 2 }}"
+          size="{{ h }} {{ h }}" bgcolor="0002"
+          halign="left" valign="top"
+          id="uibtn_ghost_{{ id }}__{{ name }}__dismiss"
+          action="{{ id }}__{{ name }}__dismiss" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    <label pos="{{ x + w - h/2 }} {{ y - h/2 }}" z-index="{{ z + 3 }}"
+           halign="center" valign="center2"
+           text="$fff{{ _ICONS['cross']|safe }}"
+           textsize="1.1" textfont="GameFont" />
+  {% endif %}
+{% endmacro %}
+
+{# === breadcrumbs ============================================================
+   Path nav row: Server  Maps  Tracks  Foo
+   `items` is a list of dicts: {'key': 'maps', 'label': 'Maps'}
+   The LAST item is rendered as plain text (the current page); all preceding
+   items are clickable and emit `<name>__nav__<key>`.
+   Optional `sep_icon` overrides the chevron (defaults to 'arrow_right').
+       {{ ui.breadcrumbs('nav', items=[
+            {'key': 'home',  'label': 'Server'},
+            {'key': 'maps',  'label': 'Maps'},
+            {'key': 'foo',   'label': 'Foo'},
+          ], x=4, y=-20) }}
+   ============================================================================ #}
+{% macro breadcrumbs(name, items, x=0, y=0, size='md', gap=1.5,
+                     color='ddd', active_color='fff',
+                     sep_color='666', sep_icon='arrow_right', z=200) %}
+  {% set s = _SIZES[size] %}
+  {% set xc = namespace(v=x) %}
+  {% set sep_glyph = _ICONS[sep_icon] if sep_icon in _ICONS else '>' %}
+  {% set last_i = (items|length) - 1 %}
+  {% for it in items %}
+    {% set is_last = (loop.index0 == last_i) %}
+    {% set txt = it.label %}
+    {% set txt_w = (txt|length) * s.font * 1.7 + 3 %}
+    {% if is_last %}
+      <label pos="{{ xc.v }} {{ y }}" z-index="{{ z + 1 }}"
+             halign="left" valign="center2"
+             text="${{ active_color }}{{ txt }}"
+             textsize="{{ s.font }}" textfont="GameFontBlack" />
+    {% else %}
+      {# clickable hit-area #}
+      <quad pos="{{ xc.v - 0.5 }} {{ y }}" z-index="{{ z }}"
+            size="{{ txt_w }} {{ s.entry_h }}" bgcolor="0001"
+            halign="left" valign="center"
+            id="uibtn_ghost_{{ id }}__{{ name }}__nav__{{ it.key }}"
+            action="{{ id }}__{{ name }}__nav__{{ it.key }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+      <label pos="{{ xc.v }} {{ y }}" z-index="{{ z + 1 }}"
+             halign="left" valign="center2"
+             text="${{ color }}{{ txt }}"
+             textsize="{{ s.font }}" textfont="GameFont" />
+    {% endif %}
+    {% set xc.v = xc.v + txt_w + gap %}
+    {% if not is_last %}
+      <label pos="{{ xc.v }} {{ y }}" z-index="{{ z + 1 }}"
+             halign="left" valign="center2"
+             text="${{ sep_color }}{{ sep_glyph|safe }}"
+             textsize="{{ s.font * 0.9 }}" textfont="GameFont" />
+      {% set xc.v = xc.v + s.font * 2.5 + gap %}
+    {% endif %}
+  {% endfor %}
+{% endmacro %}
+
+{# === status_bar =============================================================
+   Footer counterpart to `window`'s header. Anchored to the bottom edge of
+   a window by passing the window's `x`, `y` (header top), `w`, and `h`.
+   `left`, `center`, and `right` are short strings (or pre-formatted with
+   manialink color tags). Each slot is optional.
+   Place AFTER your body content so it draws on top.
+       {{ ui.status_bar(x=0, y=0, w=160, h=102,
+                        left='$0f0Connected',
+                        center='12 / 64 players',
+                        right='tick 5.2 ms') }}
+   ============================================================================ #}
+{% macro status_bar(x=0, y=0, w=120, h=90, footer_h=5,
+                    left='', center='', right='',
+                    bg='0009', accent='15dfa', z=120) %}
+  {% set by = y - h + footer_h %}
+  {# 1px accent line above the footer #}
+  <quad pos="{{ x }} {{ by }}" z-index="{{ z + 2 }}"
+        size="{{ w }} 0.25" bgcolor="{{ accent }}"
+        halign="left" valign="top" />
+  {# footer surface #}
+  <quad pos="{{ x }} {{ by }}" z-index="{{ z + 1 }}"
+        size="{{ w }} {{ footer_h }}" bgcolor="{{ bg }}"
+        halign="left" valign="top" />
+  {% if left %}
+    <label pos="{{ x + 3 }} {{ by - footer_h/2 }}" z-index="{{ z + 3 }}"
+           halign="left" valign="center2"
+           text="$fff{{ left }}" textsize="0.9" textfont="GameFont" />
+  {% endif %}
+  {% if center %}
+    <label pos="{{ x + w/2 }} {{ by - footer_h/2 }}" z-index="{{ z + 3 }}"
+           halign="center" valign="center2"
+           text="$fff{{ center }}" textsize="0.9" textfont="GameFont" />
+  {% endif %}
+  {% if right %}
+    <label pos="{{ x + w - 3 }} {{ by - footer_h/2 }}" z-index="{{ z + 3 }}"
+           halign="right" valign="center2"
+           text="$fff{{ right }}" textsize="0.9" textfont="GameFont" />
+  {% endif %}
+{% endmacro %}
+
+{# === label ==================================================================
+   Static text. `color` is a 3- or 4-hex string ('fff', 'aaa', 'f80', ...).
+   ============================================================================ #}
+{% macro label(text, x=0, y=0, size='md', color='fff', halign='left', valign='center2', z=200, bold=False) %}
+  {% set s = _SIZES[size] %}
+  <label pos="{{ x }} {{ y }}" z-index="{{ z }}"
+         halign="{{ halign }}" valign="{{ valign }}"
+         text="${{ color }}{% if bold %}$o{% endif %}{{ text }}"
+         textsize="{{ s.font }}" textfont="GameFont" />
+{% endmacro %}
+
+{# === heading ================================================================
+   Section title. Level 1 = largest, 3 = smallest.
+   Uses GameFont (not Black) for a less wide look; emphasis comes from size.
+   ============================================================================ #}
+{% macro heading(text, x=0, y=0, level=1, halign='left', color='fff', z=200) %}
+  {% set fs = {1: 1.4, 2: 1.1, 3: 0.95}[level] %}
+  <label pos="{{ x }} {{ y }}" z-index="{{ z }}"
+         halign="{{ halign }}" valign="center2"
+         text="${{ color }}{{ text }}" textsize="{{ fs }}" textfont="GameFont" />
+{% endmacro %}
+
+{# === link ===================================================================
+   Clickable text styled as a hyperlink (colored + underlined).
+   Two modes:
+     - `url` set      -> opens the URL in the in-game browser (manialink
+                         native attribute, no Python signal needed).
+     - `name` set     -> emits signal `<name>` for Python handling.
+   `icon` adds a leading glyph (e.g. 'arrow_right', 'eye').
+       {{ ui.link('Open docs', url='https://pypla.net/', x=4, y=-20) }}
+       {{ ui.link('View details', name='show_details',
+                  x=4, y=-26, icon='arrow_right') }}
+   ============================================================================ #}
+{% macro link(label, name=None, url=None, x=0, y=0, size='md',
+              color='5af', icon=None, halign='left', z=200) %}
+  {% set s = _SIZES[size] %}
+  {% set glyph = (_ICONS[icon] if icon and icon in _ICONS else '') %}
+  {% set txt = (glyph ~ ' ' if glyph else '') ~ label %}
+  {% set txt_w = (txt|length) * s.font * 1.7 + 2 %}
+  {% set hit_x = (x - txt_w if halign == 'right' else x) %}
+  {# underline #}
+  <quad pos="{{ hit_x }} {{ y - s.font * 1.0 }}" z-index="{{ z }}"
+        size="{{ txt_w }} 0.25" bgcolor="{{ color }}f"
+        halign="left" valign="center" />
+  <label pos="{{ x }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="{{ halign }}" valign="center2"
+         text="${{ color }}{{ txt|safe }}"
+         textsize="{{ s.font }}" textfont="GameFont"
+         {% if url %}url="{{ url }}"{% endif %} />
+  {% if name and not url %}
+    <quad pos="{{ hit_x }} {{ y }}" z-index="{{ z + 2 }}"
+          size="{{ txt_w }} {{ s.font * 1.6 }}" bgcolor="0000"
+          halign="left" valign="center"
+          id="uibtn_ghost_{{ id }}__{{ name }}"
+          action="{{ id }}__{{ name }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+  {% endif %}
+{% endmacro %}
+
+{# === tree_view ==============================================================
+   Hierarchical list of rows with expand/collapse chevrons. The caller passes
+   a pre-flattened `nodes` list (one entry per visible row); branches are
+   collapsed by omitting their children from the list. This keeps Jinja
+   scoping safe and gives the Python side full control over expand state.
+
+   Each node is a dict:
+     {
+       'key':      'maps/winter',      # unique id used in signals
+       'label':    'Winter pack',
+       'depth':    1,                  # 0 = root, 1 = first nesting, ...
+       'has_children': True,           # show chevron
+       'is_open':  False,              # chevron direction
+       'icon':     'folder',           # optional leading icon (after chevron)
+       'selected': False,              # highlight row
+     }
+   Signals:
+     - chevron click -> `<name>__toggle__<key>`
+     - row click     -> `<name>__select__<key>`
+       {{ ui.tree_view('files', nodes=tree_nodes, x=4, y=-20,
+                       w=70, row_h=5, indent=4) }}
+   ============================================================================ #}
+{% macro tree_view(name, nodes=None, x=0, y=0, w=60, row_h=5,
+                   indent=4, size='md', z=200) %}
+  {% set s = _SIZES[size] %}
+  {% for n in (nodes or []) %}
+    {% set ry = y - loop.index0 * row_h %}
+    {% set d  = n.depth|default(0) %}
+    {% set ix = x + d * indent %}
+    {# row background (clickable -> select) #}
+    <quad pos="{{ x }} {{ ry }}" z-index="{{ z }}"
+          size="{{ w }} {{ row_h - 0.4 }}"
+          bgcolor="{% if n.selected %}15d6{% else %}0003{% endif %}"
+          halign="left" valign="center"
+          id="uibtn_ghost_{{ id }}__{{ name }}__select__{{ n.key }}"
+          action="{{ id }}__{{ name }}__select__{{ n.key }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    {# chevron (or spacer) #}
+    {% if n.has_children %}
+      {% set chev = _ICONS['arrow_down'] if n.is_open else _ICONS['arrow_right'] %}
+      <quad pos="{{ ix }} {{ ry }}" z-index="{{ z + 1 }}"
+            size="{{ row_h }} {{ row_h - 0.4 }}" bgcolor="0000"
+            halign="left" valign="center"
+            id="uibtn_ghost_{{ id }}__{{ name }}__toggle__{{ n.key }}"
+            action="{{ id }}__{{ name }}__toggle__{{ n.key }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+      <label pos="{{ ix + row_h/2 }} {{ ry }}" z-index="{{ z + 2 }}"
+             halign="center" valign="center2"
+             text="$aaa{{ chev|safe }}"
+             textsize="{{ s.font * 0.95 }}" textfont="GameFont" />
+    {% endif %}
+    {# optional icon #}
+    {% set lx = ix + row_h + 0.5 %}
+    {% if n.icon %}
+      <label pos="{{ lx }} {{ ry }}" z-index="{{ z + 2 }}"
+             halign="left" valign="center2"
+             text="${{ '8cf' if n.has_children else 'ccc' }}{{ _ICONS[n.icon]|safe if n.icon in _ICONS else '' }}"
+             textsize="{{ s.font * 1.1 }}" textfont="GameFont" />
+      {% set lx = lx + s.font * 1.1 * 1.7 + 1.2 %}
+    {% endif %}
+    {# label #}
+    <label pos="{{ lx }} {{ ry }}" z-index="{{ z + 2 }}"
+           halign="left" valign="center2"
+           text="${{ 'fff' if n.selected else 'eee' }}{{ n.label }}"
+           textsize="{{ s.font }}" textfont="GameFont" />
+  {% endfor %}
+{% endmacro %}
+
+{# === icon ===================================================================
+   Standalone glyph.
+   ============================================================================ #}
+{% macro icon(name, x=0, y=0, size='md', color='fff', z=200, font=None) %}
+  {% set s = _SIZES[size] %}
+  {% set glyph = _ICONS[name] if name in _ICONS else '?' %}
+  {% set ts = font if font is not none else s.font * 1.2 %}
+  <label pos="{{ x }} {{ y }}" z-index="{{ z }}"
+         halign="center" valign="center2"
+         text="${{ color }}{{ glyph|safe }}"
+         textsize="{{ ts }}" textfont="GameFont" />
+{% endmacro %}
+
+{# === image ==================================================================
+   Bitmap quad. `src` is a URL (http(s):// or file://) or a Nadeo internal
+   path. Optional `src_focus` swaps the image on hover (manialink built-in).
+   `keepratio` controls scaling: 'Inactive' (stretch, default), 'Fit', 'Clip'.
+   If `action` is set, the image becomes clickable and emits `<action>`.
+       {{ ui.image('https://tm.mania-exchange.com/tracks/thumbnail/12345',
+                   x=4, y=-20, w=40, h=22) }}
+       {{ ui.image('file://Media/Manialinks/logo.dds',
+                   x=0, y=0, w=16, h=16, halign='center', valign='center') }}
+   ============================================================================ #}
+{% macro image(src, x=0, y=0, w=20, h=20, halign='left', valign='top',
+               keepratio='Inactive', src_focus=None, action=None,
+               opacity=1.0, z=200) %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
+        halign="{{ halign }}" valign="{{ valign }}"
+        image="{{ src }}"
+        {% if src_focus %}imagefocus="{{ src_focus }}"{% endif %}
+        keepratio="{{ keepratio }}"
+        opacity="{{ opacity }}"
+        {% if action %}id="uibtn_ghost_{{ id }}__{{ action }}"
+        action="{{ id }}__{{ action }}" scriptevents="1"
+        class="ui-btn ui-btn-ghost"{% endif %} />
+{% endmacro %}
+
+{# === text ===================================================================
+   Multi-line paragraph. `w` bounds horizontal width; ML wraps via
+   `autonewline="1"`. `maxline` caps line count (0 = unlimited).
+   ============================================================================ #}
+{% macro text(content, x=0, y=0, w=80, size='md', color='fff', halign='left', maxline=0, z=200) %}
+  {% set s = _SIZES[size] %}
+  <label pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} 200"
+         halign="{{ halign }}" valign="top"
+         text="${{ color }}{{ content }}"
+         textsize="{{ s.font }}" textfont="GameFont"
+         autonewline="1"{% if maxline %} maxline="{{ maxline }}"{% endif %} />
+{% endmacro %}
+
+{# === vlist ==================================================================
+   Vertical list with optional zebra stripes. Use as a call-block; the
+   callback receives `(x, y, item)` for each row.
+       {% call(rx, ry, item) ui.vlist(items, x=4, y=-20, w=110, row_h=8) %}
+         {{ ui.label(item.name, x=rx + 2, y=ry, color='fff') }}
+         {{ ui.label(item.value, x=rx + 60, y=ry, color='aaa') }}
+       {% endcall %}
+   `ry` is the row's vertical CENTER (so labels with valign=center2 line up).
+   ============================================================================ #}
+{% macro vlist(items, x=0, y=0, w=80, row_h=7, stripe=True, z=100) %}
+  {% for item in items %}
+    {% if stripe and loop.index0 % 2 == 1 %}
+    <quad pos="{{ x }} {{ y - loop.index0 * row_h }}" z-index="{{ z }}"
+          size="{{ w }} {{ row_h }}" bgcolor="fff1" halign="left" valign="top" />
+    {% endif %}
+    {{ caller(x, y - loop.index0 * row_h - row_h/2, item) }}
+  {% endfor %}
+{% endmacro %}
+
+{# === grid ===================================================================
+   N-column grid. Callback receives `(x, y, item)` = top-left of each cell.
+       {% call(cx, cy, item) ui.grid(items, x=4, y=-20, cols=4, cell_w=22, cell_h=8) %}
+         {{ ui.push_button(item.id, item.label, x=cx, y=cy - 4, halign='left') }}
+       {% endcall %}
+   ============================================================================ #}
+{% macro grid(items, x=0, y=0, cols=4, cell_w=20, cell_h=8, gap=2) %}
+  {% for item in items %}
+    {% set col = loop.index0 % cols %}
+    {% set row = loop.index0 // cols %}
+    {{ caller(x + col * (cell_w + gap), y - row * (cell_h + gap), item) }}
+  {% endfor %}
+{% endmacro %}
+
+{# === data_table ============================================================
+   Read-only table with clickable column headers for server-driven sort.
+   `columns` is a list of dicts:
+       {'key': 'login', 'label': 'Player', 'w': 30,
+        'align': 'left'|'right'|'center', 'sortable': True, 'color': 'fff'}
+   `rows` is a list of dicts (each row's keys match column keys).
+   Active sort column is highlighted; arrow indicates direction.
+   Signals:
+       `<name>__sort__<key>`  fired when a sortable header is clicked
+       `<name>__row__<idx>`   fired when a row is clicked (if `row_action`)
+       {{ ui.data_table('players', cols, players,
+                        x=4, y=-20, w=140, row_h=5, header_h=6,
+                        sort_key=sort_key, sort_dir=sort_dir) }}
+   ============================================================================ #}
+{% macro data_table(name, columns, rows, x=0, y=0, w=120, row_h=5,
+                    header_h=6, sort_key=None, sort_dir='asc',
+                    row_action=False, stripe=True, font=1.0, z=200) %}
+  {# header bar background #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ header_h }}"
+        bgcolor="222a" halign="left" valign="top" />
+  {# header cells #}
+  {% set cx = namespace(v=x) %}
+  {% for col in columns %}
+    {% set cw = col.get('w', 20) %}
+    {% set align = col.get('align', 'left') %}
+    {% set sortable = col.get('sortable', True) %}
+    {% set is_sort = (sort_key == col.key) %}
+    {% set arrow = '' %}
+    {% if is_sort %}
+      {% set arrow = ('  ' ~ ('&#xf106;' if sort_dir == 'asc' else '&#xf107;'))|safe %}
+    {% endif %}
+    {% if sortable %}
+      <quad pos="{{ cx.v }} {{ y }}" z-index="{{ z + 1 }}"
+            size="{{ cw }} {{ header_h }}"
+            bgcolor="{{ '15d6' if is_sort else '0000' }}"
+            halign="left" valign="top"
+            id="uibtn_ghost_{{ id }}__{{ name }}__sort__{{ col.key }}"
+            action="{{ id }}__{{ name }}__sort__{{ col.key }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+    {% endif %}
+    {% set lbl_x = cx.v + 1.5 if align == 'left' else (cx.v + cw - 1.5 if align == 'right' else cx.v + cw/2) %}
+    <label pos="{{ lbl_x }} {{ y - header_h/2 }}" z-index="{{ z + 2 }}"
+           halign="{{ align }}" valign="center2"
+           text="${{ 'fff' if is_sort else 'ddd' }}{{ col.label }}{{ arrow|safe }}"
+           textsize="{{ font * 0.9 }}" textfont="GameFontBlack" />
+    {% set cx.v = cx.v + cw %}
+  {% endfor %}
+  {# header underline accent #}
+  <quad pos="{{ x }} {{ y - header_h }}" z-index="{{ z + 3 }}"
+        size="{{ w }} 0.25" bgcolor="15dfa" halign="left" valign="top" />
+  {# rows #}
+  {% for row in rows %}
+    {% set ry = y - header_h - loop.index0 * row_h %}
+    {% if stripe and loop.index0 % 2 == 1 %}
+      <quad pos="{{ x }} {{ ry }}" z-index="{{ z }}"
+            size="{{ w }} {{ row_h }}" bgcolor="fff1"
+            halign="left" valign="top" />
+    {% endif %}
+    {% if row_action %}
+      <quad pos="{{ x }} {{ ry }}" z-index="{{ z + 1 }}"
+            size="{{ w }} {{ row_h }}" bgcolor="0000"
+            halign="left" valign="top"
+            id="uibtn_ghost_{{ id }}__{{ name }}__row__{{ loop.index0 }}"
+            action="{{ id }}__{{ name }}__row__{{ loop.index0 }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+    {% endif %}
+    {% set rcx = namespace(v=x) %}
+    {% for col in columns %}
+      {% set cw = col.get('w', 20) %}
+      {% set align = col.get('align', 'left') %}
+      {% set color = col.get('color', 'fff') %}
+      {% set raw = row.get(col.key, '') %}
+      {% set val = raw|string %}
+      {% set lbl_x = rcx.v + 1.5 if align == 'left' else (rcx.v + cw - 1.5 if align == 'right' else rcx.v + cw/2) %}
+      <label pos="{{ lbl_x }} {{ ry - row_h/2 }}" z-index="{{ z + 2 }}"
+             halign="{{ align }}" valign="center2"
+             text="${{ color }}{{ val }}" textsize="{{ font }}"
+             textfont="GameFont" />
+      {% set rcx.v = rcx.v + cw %}
+    {% endfor %}
+  {% endfor %}
+{% endmacro %}
+
+{# === form ===================================================================
+   Label-on-left + control-on-right rows (like Qt's QFormLayout).
+   `rows` is a sequence of `(label_text, payload)` pairs; payload is forwarded
+   to the callback so each row can render whatever control it needs.
+   Callback receives `(cx, cy, payload)` = top-left of the control slot.
+       {% call(cx, cy, p) ui.form(rows, x=4, y=-20, label_w=24, row_h=8) %}
+         {% if p.kind == 'entry' %}
+           {{ ui.line_edit(p.name, value=p.value, x=cx, y=cy - 3, width=60) }}
+         {% elif p.kind == 'check' %}
+           {{ ui.check_box(p.name, checked=p.value, x=cx + 4, y=cy - 3) }}
+         {% endif %}
+       {% endcall %}
+   ============================================================================ #}
+{% macro form(rows, x=0, y=0, label_w=24, row_h=8, label_color='aaa', z=200) %}
+  {% for pair in rows %}
+    {% set ry = y - loop.index0 * row_h %}
+    <label pos="{{ x }} {{ ry - row_h/2 }}" z-index="{{ z }}"
+           halign="left" valign="center2"
+           text="${{ label_color }}{{ pair[0] }}"
+           textsize="1.0" textfont="GameFont" />
+    {{ caller(x + label_w, ry, pair[1]) }}
+  {% endfor %}
+{% endmacro %}
+
+{# === frame ==================================================================
+   Container with a tinted backdrop. Use as a block:
+       {% call ui.frame(0, 0, 60, 40) %}...children...{% endcall %}
+   ============================================================================ #}
+{% macro frame(x=0, y=0, w=60, h=40, variant='surface', z=200) %}
+  {% set bg = _SURFACE[variant] if variant in _SURFACE else _SURFACE['surface'] %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
+        bgcolor="{{ bg }}" halign="left" valign="top" />
+  {{ caller() }}
+{% endmacro %}
+
+{# === hlist =================================================================
+   Horizontal counterpart to vlist. Caller receives (cx, cy, item) at the
+   top-left of each column slot. Optional column-stripe background.
+       {% call(cx, cy, item) ui.hlist(items, x=4, y=-20, h=8, col_w=22) %}
+         {{ ui.label(item.label, x=cx + 2, y=cy - 4) }}
+       {% endcall %}
+   ============================================================================ #}
+{% macro hlist(items, x=0, y=0, h=8, col_w=20, gap=0, stripe=False, z=100) %}
+  {% for item in items %}
+    {% set cx = x + loop.index0 * (col_w + gap) %}
+    {% if stripe and loop.index0 % 2 == 1 %}
+    <quad pos="{{ cx }} {{ y }}" z-index="{{ z }}"
+          size="{{ col_w }} {{ h }}" bgcolor="fff1" halign="left" valign="top" />
+    {% endif %}
+    {{ caller(cx, y, item) }}
+  {% endfor %}
+{% endmacro %}
+
+{# === group_box =============================================================
+   Titled container \u2014 thin border with the title inset into the top edge.
+   Useful for visually grouping related controls in dense layouts.
+       {% call ui.group_box('Connection', x=4, y=-20, w=60, h=30) %}
+         ...controls...
+       {% endcall %}
+   ============================================================================ #}
+{% macro group_box(title='', x=0, y=0, w=60, h=30, color='aaa', border='fff3', z=150) %}
+  {# 4 thin edges \u2014 top edge has a gap for the title #}
+  {% set t = 0.25 %}
+  {% set title_w = (title|length) * 0.9 + 2 if title else 0 %}
+  {% set title_x = x + 3 %}
+  {# top: left segment up to title #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}"
+        size="{{ (title_x - x) if title else w }} {{ t }}"
+        bgcolor="{{ border }}" halign="left" valign="top" />
+  {% if title %}
+    {# top: right segment after title #}
+    <quad pos="{{ title_x + title_w }} {{ y }}" z-index="{{ z }}"
+          size="{{ x + w - (title_x + title_w) }} {{ t }}"
+          bgcolor="{{ border }}" halign="left" valign="top" />
+    <label pos="{{ title_x + 0.5 }} {{ y }}" z-index="{{ z + 1 }}"
+           halign="left" valign="center2"
+           text="${{ color }}{{ title }}" textsize="0.85"
+           textfont="GameFontBlack" />
+  {% endif %}
+  {# bottom #}
+  <quad pos="{{ x }} {{ y - h }}" z-index="{{ z }}"
+        size="{{ w }} {{ t }}" bgcolor="{{ border }}"
+        halign="left" valign="top" />
+  {# left #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}"
+        size="{{ t }} {{ h }}" bgcolor="{{ border }}"
+        halign="left" valign="top" />
+  {# right #}
+  <quad pos="{{ x + w - t }} {{ y }}" z-index="{{ z }}"
+        size="{{ t }} {{ h }}" bgcolor="{{ border }}"
+        halign="left" valign="top" />
+  {{ caller() }}
+{% endmacro %}
+
+{# === splitter ==============================================================
+   Two-pane fixed layout. Calls the block twice with
+       (idx, px, py, pw, ph)
+   where idx is 0 or 1 and (px, py) is the top-left of that pane.
+   orient='h' splits left/right; orient='v' splits top/bottom.
+       {% call(i, px, py, pw, ph) ui.splitter(x=4, y=-20, w=140, h=40,
+                                              ratio=0.4, orient='h') %}
+         {% if i == 0 %} ...left pane... {% else %} ...right pane... {% endif %}
+       {% endcall %}
+   ============================================================================ #}
+{% macro splitter(x=0, y=0, w=60, h=40, ratio=0.5, orient='h', gap=2,
+                  divider=True, divider_color='fff3', z=150) %}
+  {% if orient == 'v' %}
+    {% set ph1 = h * ratio - gap/2 %}
+    {% set ph2 = h - h * ratio - gap/2 %}
+    {{ caller(0, x, y, w, ph1) }}
+    {% if divider %}
+    <quad pos="{{ x }} {{ y - h * ratio }}" z-index="{{ z }}"
+          size="{{ w }} 0.2" bgcolor="{{ divider_color }}"
+          halign="left" valign="center" />
+    {% endif %}
+    {{ caller(1, x, y - h * ratio - gap/2, w, ph2) }}
+  {% else %}
+    {% set pw1 = w * ratio - gap/2 %}
+    {% set pw2 = w - w * ratio - gap/2 %}
+    {{ caller(0, x, y, pw1, h) }}
+    {% if divider %}
+    <quad pos="{{ x + w * ratio }} {{ y }}" z-index="{{ z }}"
+          size="0.2 {{ h }}" bgcolor="{{ divider_color }}"
+          halign="center" valign="top" />
+    {% endif %}
+    {{ caller(1, x + w * ratio + gap/2, y, pw2, h) }}
+  {% endif %}
+{% endmacro %}
+
+{# === stack =================================================================
+   Show exactly one of N children, keyed by `active`. The non-tabbed cousin
+   of `tabs` \u2014 useful for wizards, multi-step forms, or any place you'd
+   swap content based on app state.
+       {% call(key) ui.stack(['intro','setup','done'], active=current_step) %}
+         {% if key == 'intro' %} ... {% elif key == 'setup' %} ... {% endif %}
+       {% endcall %}
+   ============================================================================ #}
+{% macro stack(keys, active=None) %}
+  {% for k in keys %}
+    {% if k == active %}{{ caller(k) }}{% endif %}
+  {% endfor %}
+{% endmacro %}
+
+{# === tabs ===================================================================
+   Server-driven tab strip. `tabs_list` is a list of dicts with keys
+   `key` and `label` (optional `icon`). The active tab is rendered via the
+   call block; clicking a tab fires signal `<name>__tab__<key>` which the
+   view must connect to update its stored active key and refresh().
+       {% call(key, t) ui.tabs('mytabs', tab_items, active=active_tab,
+                                x=0, y=0, w=120, tab_h=5) %}
+         {% if key == 'overview' %} ... {% elif key == 'logs' %} ... {% endif %}
+       {% endcall %}
+   The block is invoked exactly once â€” for the active tab â€” with
+   `(key, tab_dict)`. Connect: `self.connect('mytabs__tab__overview', handler)`.
+   ============================================================================ #}
+{% macro tabs(name, tabs_list, active=None, x=0, y=0, w=120, tab_h=5, body_h=0, size='sm', z=100) %}
+  {% set s = _SIZES[size] %}
+  {% set active_key = active if active is not none else tabs_list[0].key %}
+  {% set tab_w = w / (tabs_list|length) %}
+  {% for t in tabs_list %}
+    {% set is_active = (t.key == active_key) %}
+    <quad pos="{{ x + loop.index0 * tab_w }} {{ y }}" z-index="{{ z + 1 }}"
+          size="{{ tab_w - 0.4 }} {{ tab_h }}"
+          bgcolor="{% if is_active %}0d4a{% else %}2225{% endif %}"
+          halign="left" valign="top"
+          action="{{ id }}__{{ name }}__tab__{{ t.key }}" scriptevents="1" />
+    <label pos="{{ x + loop.index0 * tab_w + tab_w/2 }} {{ y - tab_h/2 }}"
+           z-index="{{ z + 2 }}"
+           halign="center" valign="center2"
+           text="${% if is_active %}fff{% else %}999{% endif %}{{ t.label }}"
+           textsize="{{ s.font }}" textfont="GameFont" />
+  {% endfor %}
+  {# accent line under tabs #}
+  <quad pos="{{ x }} {{ y - tab_h }}" z-index="{{ z + 2 }}" size="{{ w }} 0.25"
+        bgcolor="15dfa" halign="left" valign="top" />
+  {# optional body tint so the active panel reads as a distinct card.
+     Uses a faint LIGHT overlay (not another dark layer) to avoid stacking
+     with the window background and turning the area near-black. #}
+  {% if body_h > 0 %}
+    {% set by = y - tab_h %}
+    <quad pos="{{ x }} {{ by }}" z-index="{{ z }}" size="{{ w }} {{ body_h }}"
+          bgcolor="fff1" halign="left" valign="top" />
+  {% endif %}
+  {# render only the active tab's body #}
+  {% for t in tabs_list if t.key == active_key %}
+    {{ caller(t.key, t) }}
+  {% endfor %}
+{% endmacro %}
+
+{# === scroll_area ============================================================
+   *** WORK IN PROGRESS â€” DO NOT USE IN PRODUCTION ***
+   ManiaScript has no real clipping primitive for <frame> children, so items
+   scrolled outside the visible band remain visible (they draw on top of
+   surrounding widgets). Tried multiple workarounds (opaque masks, per-frame
+   `Hide()` via `CMlFrame.Controls`) but none are reliable in TM2020.
+   This macro will be redesigned; the current implementation only positions
+   content and renders scroll buttons + a thumb indicator, with NO clipping.
+   ----------------------------------------------------------------------------
+   Vertically scrollable region. Viewport-with-offset: the content frame is
+   translated by the stored `offset` (in ML units) and up/down buttons fire
+   signals `<name>__scroll_up` / `<name>__scroll_down` for the view to handle.
+   ============================================================================ #}
+{% macro scroll_area(name, x=0, y=0, w=80, h=40, content_h=0, offset=0, z=100) %}
+  {% set sb_w = 3 %}
+  {% set inner_w = w - sb_w - 0.5 %}
+  {% set ctl = id ~ '__' ~ name %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
+        bgcolor="0006" halign="left" valign="top" />
+  {# viewport marker: invisible quad at the exact visible bounds. The hover
+     script reads its AbsolutePosition_V3 + Size to know what to clip. #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w - sb_w }} {{ h }}"
+        bgcolor="0000" halign="left" valign="top"
+        id="scrollvp_{{ ctl }}" />
+  {# content frame shifted UP by `offset`. Marked with a class so the script
+     can find it and Hide() children whose center sits outside the viewport. #}
+  <frame pos="{{ x }} {{ y + offset }}" z-index="{{ z + 1 }}"
+         id="scrollcontent_{{ ctl }}" class="ui-scroll-content">
+    {{ caller(inner_w) }}
+  </frame>
+  {# up button #}
+  <quad pos="{{ x + w - sb_w }} {{ y }}" z-index="{{ z + 5 }}"
+        size="{{ sb_w }} {{ sb_w }}" bgcolor="2228" halign="left" valign="top"
+        action="{{ id }}__{{ name }}__scroll_up" scriptevents="1" />
+  <label pos="{{ x + w - sb_w/2 }} {{ y - sb_w/2 }}" z-index="{{ z + 6 }}"
+         halign="center" valign="center2"
+         text="$fff{{ '&#xf106;'|safe }}" textsize="1.0" textfont="GameFont" />
+  {# down button #}
+  <quad pos="{{ x + w - sb_w }} {{ y - h + sb_w }}" z-index="{{ z + 5 }}"
+        size="{{ sb_w }} {{ sb_w }}" bgcolor="2228" halign="left" valign="top"
+        action="{{ id }}__{{ name }}__scroll_down" scriptevents="1" />
+  <label pos="{{ x + w - sb_w/2 }} {{ y - h + sb_w/2 }}" z-index="{{ z + 6 }}"
+         halign="center" valign="center2"
+         text="$fff{{ '&#xf107;'|safe }}" textsize="1.0" textfont="GameFont" />
+  {# thumb (visible only when content overflows) #}
+  {% if content_h > h %}
+    {% set track_h = h - 2 * sb_w - 1 %}
+    {% set thumb_h = ((h / content_h) * track_h) if track_h > 0 else 0 %}
+    {% set scroll_range = content_h - h %}
+    {% set thumb_off = ((offset / scroll_range) * (track_h - thumb_h)) if scroll_range > 0 else 0 %}
+    <quad pos="{{ x + w - sb_w + 0.5 }} {{ y - sb_w - 0.5 - thumb_off }}"
+          z-index="{{ z + 5 }}"
+          size="{{ sb_w - 1 }} {{ thumb_h }}" bgcolor="aaab"
+          halign="left" valign="top" />
+  {% endif %}
+{% endmacro %}
+
+{# === progress_bar ===========================================================
+   Horizontal bar from 0..1. `value` is clamped. Optional inline text label
+   (e.g. "62%" or "12 / 30") centered on the bar.
+       {{ ui.progress_bar(value=0.62, x=4, y=-20, w=80, h=3) }}
+   ============================================================================ #}
+{% macro progress_bar(value=0.0, x=0, y=0, w=60, h=3, color='15df', bg='0006', text=None, z=200) %}
+  {% set v = (0.0 if value < 0 else (1.0 if value > 1 else value)) %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
+        bgcolor="{{ bg }}" halign="left" valign="top" />
+  {% if v > 0 %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z + 1 }}" size="{{ w * v }} {{ h }}"
+        bgcolor="{{ color }}" halign="left" valign="top" />
+  {% endif %}
+  {% if text is not none %}
+  <label pos="{{ x + w/2 }} {{ y - h/2 }}" z-index="{{ z + 2 }}"
+         halign="center" valign="center2"
+         text="$fff{{ text }}" textsize="{{ (h * 0.45)|round(2) }}"
+         textfont="GameFont" />
+  {% endif %}
+{% endmacro %}
+
+{# === badge =================================================================
+   Small pill-style label with colored background. Good for statuses
+   ("ADMIN", "ONLINE", "12") and tags.
+       {{ ui.badge('ADMIN', x=4, y=-10, variant='success') }}
+   variants: primary, success, danger, warning, ghost, neutral
+   ============================================================================ #}
+{% macro badge(text, x=0, y=0, variant='neutral', size='md', z=200, halign='left') %}
+  {% set s = _SIZES[size] %}
+  {% set palette = {
+       'primary': ('15df', 'fff'),
+       'success': ('0d8f', 'fff'),
+       'danger':  ('f44f', 'fff'),
+       'warning': ('f80f', '000'),
+       'ghost':   ('fff3', 'fff'),
+       'neutral': ('333d', 'eee'),
+     } %}
+  {% set bg = palette[variant][0] if variant in palette else palette['neutral'][0] %}
+  {% set fg = palette[variant][1] if variant in palette else palette['neutral'][1] %}
+  {% set font = s.font * 0.9 %}
+  {% set h = font * 2.4 %}
+  {% set pad = font * 1.8 %}
+  {% set w = (text|length) * font * 0.85 + pad %}
+  {% set ax = x - w if halign == 'right' else (x - w/2 if halign == 'center' else x) %}
+  <quad pos="{{ ax }} {{ y + h/2 }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
+        bgcolor="{{ bg }}" halign="left" valign="top" />
+  <label pos="{{ ax + w/2 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="center" valign="center2"
+         text="${{ fg }}{{ text }}" textsize="{{ font }}"
+         textfont="GameFontBlack" />
+{% endmacro %}
+
+{# === separator ==============================================================
+   Thin line â€” horizontal (default) or vertical. Use to divide sections.
+       {{ ui.separator(x=4, y=-20, length=80) }}
+       {{ ui.separator(x=40, y=-10, length=40, orient='v') }}
+   ============================================================================ #}
+{% macro separator(x=0, y=0, length=40, orient='h', color='fff3', thickness=0.2, z=200) %}
+  {% if orient == 'v' %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}"
+        size="{{ thickness }} {{ length }}" bgcolor="{{ color }}"
+        halign="center" valign="top" />
+  {% else %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}"
+        size="{{ length }} {{ thickness }}" bgcolor="{{ color }}"
+        halign="left" valign="center" />
+  {% endif %}
+{% endmacro %}
+
+{# === spacer =================================================================
+   Invisible placeholder that takes up space. Mostly useful inside `form`,
+   `vlist` or `grid` callers when you want a slot to render nothing but still
+   advance the layout. Emits a single 0-alpha quad so the loop still sees
+   "something" was produced.
+       {{ ui.spacer() }}
+   ============================================================================ #}
+{% macro spacer(x=0, y=0, w=0.01, h=0.01, z=0) %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
+        bgcolor="0000" halign="left" valign="top" />
+{% endmacro %}
+
+{# === combo_box =============================================================
+   Dropdown selector. Server-driven open/closed state â€” view stores an
+   `open` flag and a `selected` value, refresh()es on each interaction.
+       {{ ui.combo_box('region', region_options,
+                       selected=region_value, open=region_open,
+                       x=4, y=-20, w=40) }}
+   Signals:
+       `<name>__toggle`      â€” fired when the main bar is clicked
+       `<name>__pick__<val>` â€” fired when an option in the open list is clicked
+   `options` items: ('value','label') tuples OR {'value':..,'label':..} dicts.
+   ============================================================================ #}
+{% macro combo_box(name, options, selected=None, open=False, x=0, y=0, w=40, size='md', z=300) %}
+  {% set s = _SIZES[size] %}
+  {% set h = s.entry_h %}
+  {% set ns = namespace(label='') %}
+  {% for opt in options %}
+    {% if opt is mapping %}
+      {% set ov = opt['value'] %}{% set ol = opt.get('label', ov) %}
+    {% else %}
+      {% set ov = opt[0] %}{% set ol = opt[1] if opt|length > 1 else opt[0] %}
+    {% endif %}
+    {% if ov == selected %}{% set ns.label = ol %}{% endif %}
+  {% endfor %}
+  {# main bar #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
+        bgcolor="111c" halign="left" valign="center"
+        id="uibtn_ghost_{{ id }}__{{ name }}__toggle"
+        action="{{ id }}__{{ name }}__toggle" scriptevents="1"
+        class="ui-btn ui-btn-ghost" />
+  <label pos="{{ x + 1.5 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="left" valign="center2"
+         text="$fff{{ ns.label or '- select -' }}"
+         textsize="{{ s.font }}" textfont="GameFont" />
+  <label pos="{{ x + w - 1.5 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="right" valign="center2"
+         text="$fff{{ ('&#xf106;' if open else '&#xf107;')|safe }}"
+         textsize="{{ s.font * 1.1 }}" textfont="GameFont" />
+  {# dropdown panel #}
+  {% if open %}
+    {% set row_h = h %}
+    {% set panel_h = (options|length) * row_h %}
+    <quad pos="{{ x }} {{ y - h/2 }}" z-index="{{ z + 2 }}"
+          size="{{ w }} {{ panel_h }}" bgcolor="000d"
+          halign="left" valign="top" />
+    {% for opt in options %}
+      {% if opt is mapping %}
+        {% set ov = opt['value'] %}{% set ol = opt.get('label', ov) %}
+      {% else %}
+        {% set ov = opt[0] %}{% set ol = opt[1] if opt|length > 1 else opt[0] %}
+      {% endif %}
+      {% set ry = y - h/2 - loop.index0 * row_h %}
+      {% set is_sel = (ov == selected) %}
+      <quad pos="{{ x }} {{ ry }}" z-index="{{ z + 3 }}"
+            size="{{ w }} {{ row_h }}"
+            bgcolor="{{ '15d6' if is_sel else '0000' }}"
+            halign="left" valign="top"
+            id="uibtn_ghost_{{ id }}__{{ name }}__pick__{{ ov }}"
+            action="{{ id }}__{{ name }}__pick__{{ ov }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+      <label pos="{{ x + 1.5 }} {{ ry - row_h/2 }}" z-index="{{ z + 4 }}"
+             halign="left" valign="center2"
+             text="$fff{{ ol }}" textsize="{{ s.font }}" textfont="GameFont" />
+    {% endfor %}
+  {% endif %}
+{% endmacro %}
+
+{# === stepper ================================================================
+   `[ âˆ’ ]  value  [ + ]` numeric control. Caller stores the numeric value
+   and handles increment/decrement.
+   Signals: `<name>__dec` and `<name>__inc`.
+       {{ ui.stepper('volume', value=str(volume), x=4, y=-20, w=24) }}
+   ============================================================================ #}
+{% macro stepper(name, value='0', x=0, y=0, w=22, size='md', z=200) %}
+  {% set s = _SIZES[size] %}
+  {% set h = s.entry_h %}
+  {% set btn = h %}
+  {# minus button #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ btn }} {{ h }}"
+        bgcolor="0d48" halign="left" valign="center"
+        id="uibtn_primary_{{ id }}__{{ name }}__dec"
+        action="{{ id }}__{{ name }}__dec" scriptevents="1"
+        class="ui-btn ui-btn-primary" />
+  <label pos="{{ x + btn/2 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="center" valign="center2"
+         text="$fff{{ '&#xf056;'|safe }}" textsize="{{ s.font * 1.2 }}" textfont="GameFont" />
+  {# value field #}
+  <quad pos="{{ x + btn }} {{ y }}" z-index="{{ z }}" size="{{ w - btn*2 }} {{ h }}"
+        bgcolor="111c" halign="left" valign="center" />
+  <label pos="{{ x + w/2 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="center" valign="center2"
+         text="$fff{{ value }}" textsize="{{ s.font }}" textfont="GameFontBlack" />
+  {# plus button #}
+  <quad pos="{{ x + w - btn }} {{ y }}" z-index="{{ z }}" size="{{ btn }} {{ h }}"
+        bgcolor="0d48" halign="left" valign="center"
+        id="uibtn_primary_{{ id }}__{{ name }}__inc"
+        action="{{ id }}__{{ name }}__inc" scriptevents="1"
+        class="ui-btn ui-btn-primary" />
+  <label pos="{{ x + w - btn/2 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="center" valign="center2"
+         text="$fff{{ '&#xf055;'|safe }}" textsize="{{ s.font * 1.2 }}" textfont="GameFont" />
+{% endmacro %}
+
+{# === modal ==================================================================
+   Full-screen dim overlay + centered window. Use as a block; the caller
+   renders body content positioned relative to the modal's TOP-LEFT corner
+   (x = -w/2 + pad, y = -header_h - pad, etc â€” easiest is to use the
+   pos arguments passed to the caller).
+       {% call(mx, my, mw, mh) ui.modal('confirm', title='Delete map?',
+                                        w=70, h=30) %}
+         {{ ui.label('This cannot be undone.', x=mx+4, y=my-4) }}
+         {{ ui.push_button('confirm_ok', 'Delete', variant='danger',
+                           x=mx+mw-4, y=my-mh+5, halign='right') }}
+       {% endcall %}
+   The dim overlay catches clicks (does NOT dismiss â€” caller decides) and
+   the modal header has a Ã— close button firing `<name>__close`.
+   ============================================================================ #}
+{% macro modal(name, title='', w=70, h=30, z=800, header_h=7) %}
+  {# full-screen dim â€” oversized so it covers ultrawide viewports too.
+     `scriptevents` + a benign action makes the quad EAT clicks so the
+     UI behind the modal cannot be interacted with. #}
+  <quad pos="-320 180" z-index="{{ z }}" size="640 360"
+        bgcolor="0008" halign="left" valign="top"
+        id="ui_modal_{{ id }}__{{ name }}__backdrop"
+        action="{{ id }}__{{ name }}__backdrop" scriptevents="1" />
+  {# centered panel â€” pos at top-left of panel #}
+  {% set px = -w/2 %}
+  {% set py = h/2 %}
+  <quad pos="{{ px }} {{ py }}" z-index="{{ z + 1 }}" size="{{ w }} {{ header_h }}"
+        bgcolor="15df" halign="left" valign="top" />
+  <quad pos="{{ px }} {{ py - header_h }}" z-index="{{ z + 1 }}"
+        size="{{ w }} {{ h - header_h }}"
+        bgcolor="111e" halign="left" valign="top" />
+  <label pos="{{ px + 3 }} {{ py - header_h/2 }}" z-index="{{ z + 3 }}"
+         halign="left" valign="center2"
+         text="$fff{{ title }}" textsize="1.2" textfont="GameFontBlack" />
+  {# close button #}
+  <quad pos="{{ px + w - 1.5 }} {{ py - 1.5 }}" z-index="{{ z + 3 }}" size="5 5"
+        bgcolor="c33b" halign="right" valign="top"
+        id="uibtn_danger_{{ id }}__{{ name }}__close"
+        action="{{ id }}__{{ name }}__close" scriptevents="1"
+        class="ui-btn ui-btn-danger" />
+  <label pos="{{ px + w - 4 }} {{ py - 4 }}" z-index="{{ z + 4 }}"
+         halign="center" valign="center2"
+         text="$fff{{ '&#xf00d;'|safe }}" textsize="1.1" textfont="GameFont" />
+  {# Caller content must render ABOVE the body quad. The 5th arg is the
+     base z-index callers should pass to widgets inside the modal. #}
+  {{ caller(px, py - header_h, w, h - header_h, z + 5) }}
+{% endmacro %}
+
+{# === _dialog_frame (internal) ===============================================
+   Shared chrome for info/error/confirm dialogs: dim backdrop + centered panel
+   with a colored header band, large glyph on the left of the body, and a
+   wrapped message label. Caller renders the action buttons.
+     caller(px, py, w, h, z, btn_y) where btn_y is the recommended y for
+     bottom-aligned buttons (2.5u above the bottom edge).
+   ============================================================================ #}
+{% macro _dialog_frame(name, title, message, icon='info', accent='15df', w=90, h=32, z=820) %}
+  {% set px = -w/2 %}
+  {% set py = h/2 %}
+  {% set header_h = 7 %}
+  {% set glyph = _ICONS[icon] if icon in _ICONS else _ICONS['info'] %}
+  {# full-screen dim (blocks clicks to UI behind the dialog) #}
+  <quad pos="-320 180" z-index="{{ z }}" size="640 360"
+        bgcolor="0009" halign="left" valign="top"
+        id="ui_dlg_{{ id }}__{{ name }}__backdrop"
+        action="{{ id }}__{{ name }}__backdrop" scriptevents="1" />
+  {# panel: header band + body #}
+  <quad pos="{{ px }} {{ py }}" z-index="{{ z + 1 }}"
+        size="{{ w }} {{ header_h }}" bgcolor="{{ accent }}"
+        halign="left" valign="top" />
+  <quad pos="{{ px }} {{ py - header_h }}" z-index="{{ z + 1 }}"
+        size="{{ w }} {{ h - header_h }}" bgcolor="111e"
+        halign="left" valign="top" />
+  {# title #}
+  <label pos="{{ px + 3 }} {{ py - header_h/2 }}" z-index="{{ z + 3 }}"
+         halign="left" valign="center2"
+         text="$fff{{ title }}" textsize="1.2" textfont="GameFontBlack" />
+  {# large glyph #}
+  <label pos="{{ px + 7 }} {{ py - header_h - (h - header_h)/2 - 3 }}"
+         z-index="{{ z + 3 }}" halign="center" valign="center2"
+         text="$fff{{ glyph|safe }}" textsize="3.2" textfont="GameFont" />
+  {# message (left-aligned, wrapped via maxline=2 not supported; rely on caller-sized w) #}
+  <label pos="{{ px + 14 }} {{ py - header_h - 4 }}" z-index="{{ z + 3 }}"
+         halign="left" valign="top"
+         size="{{ w - 18 }} {{ h - header_h - 12 }}"
+         autonewline="1"
+         text="$fff{{ message }}" textsize="1.0" textfont="GameFont" />
+  {% set btn_y = py - h + 2.5 + 3.5 %}
+  {{ caller(px, py - header_h, w, h - header_h, z + 5, btn_y) }}
+{% endmacro %}
+
+{# === dialog =================================================================
+   Unified modal dialog. One widget covers info / error / confirm / custom-
+   action use cases. Knobs:
+
+     variant       'primary' (blue, default) | 'danger' (red) |
+                   'warning' (orange) | 'success' (green) | 'ghost' (grey)
+                   \u2014 themes both the header band and the OK button.
+     icon          glyph from `_ICONS` for the large left-side body icon.
+     ok_label      text on the confirm button (default 'OK').
+     ok_icon       glyph on the confirm button or None (default 'check').
+     cancel_label  text on the cancel button. If None (default), no cancel
+                   button is rendered (info/error style, single OK).
+     cancel_icon   glyph on the cancel button or None (default None).
+     extra_label   text on an optional third button (e.g. "Don't save",
+                   "Apply", "Skip"). If None (default), not rendered.
+                   Renders to the LEFT of the cancel button, right-aligned.
+     extra_icon    glyph on the extra button or None (default None).
+     extra_variant theme of the extra button (default 'ghost').
+     w / h         panel size in mlu (default 100\u00d732).
+     z             base z-index (default 820).
+
+   Signals: `<name>__ok` always; `<name>__cancel` when cancel_label is set;
+            `<name>__extra` when extra_label is set.
+
+     {{ ui.dialog('about', title='About tmsm.ui',
+                  message='Declarative widget framework for PyPlanet.',
+                  variant='primary', icon='info',
+                  open=about_open) }}
+     {{ ui.dialog('err', title='Operation failed',
+                  message=str(exc),
+                  variant='danger', icon='error',
+                  open=err_open) }}
+     {{ ui.dialog('del', title='Delete map?',
+                  message='This cannot be undone.',
+                  variant='danger', icon='trash',
+                  ok_label='Delete', ok_icon='trash',
+                  cancel_label='Cancel',
+                  open=del_open) }}
+     {{ ui.dialog('restart', title='Restart server?',
+                  message='Players will be reconnected.',
+                  variant='warning', icon='reload',
+                  ok_label='Restart', ok_icon='reload',
+                  cancel_label='Cancel',
+                  open=restart_open) }}
+     3-button: classic "Save / Don't save / Cancel"
+     {{ ui.dialog('save_quit', title='Unsaved changes',
+                  message='Save changes before closing?',
+                  variant='primary', icon='save',
+                  ok_label='Save',         ok_icon='save',
+                  cancel_label='Cancel',
+                  extra_label="Don't save", extra_icon='cross',
+                  open=save_quit_open) }}
+   ============================================================================ #}
+{% macro dialog(name, title='', message='', open=True,
+                variant='primary', icon='info',
+                ok_label='OK', ok_icon='check',
+                cancel_label=None, cancel_icon=None,
+                extra_label=None, extra_icon=None, extra_variant='ghost',
+                w=100, h=32, z=820) %}
+  {% if open %}
+    {% set _accents = {
+         'primary': '15df', 'danger': 'c33d', 'success': '0d8f',
+         'warning': 'f80f', 'ghost':  '666d',
+       } %}
+    {% set accent = _accents[variant] if variant in _accents else _accents['primary'] %}
+    {% call(px, py, pw, ph, pz, btn_y) _dialog_frame(
+        name, title, message, icon=icon, accent=accent, w=w, h=h, z=z) %}
+      {% if extra_label is not none %}
+        {{ push_button(name + '__extra', extra_label, icon=extra_icon,
+                       x=px + pw - 49, y=btn_y, variant=extra_variant,
+                       size='md', z=pz, halign='right') }}
+      {% endif %}
+      {% if cancel_label is not none %}
+        {{ push_button(name + '__cancel', cancel_label, icon=cancel_icon,
+                       x=px + pw - 26, y=btn_y, variant='ghost',
+                       size='md', z=pz, halign='right') }}
+      {% endif %}
+      {{ push_button(name + '__ok', ok_label, icon=ok_icon,
+                     x=px + pw - 3, y=btn_y, variant=variant,
+                     size='md', z=pz, halign='right') }}
+    {% endcall %}
+  {% endif %}
+{% endmacro %}
+
+{# === info_dialog / error_dialog / confirm_dialog (compatibility shims) =====
+   Thin wrappers around `dialog`. New code should use `dialog` directly.
+   ============================================================================ #}
+{% macro info_dialog(name, title='Information', message='', open=True,
+                    icon='info', w=90, h=32, ok_label='OK', z=820) %}
+  {{ dialog(name, title=title, message=message, open=open,
+            variant='primary', icon=icon,
+            ok_label=ok_label, w=w, h=h, z=z) }}
+{% endmacro %}
+
+{% macro error_dialog(name, title='Error', message='', open=True,
+                     icon='error', w=90, h=32, ok_label='OK', z=820) %}
+  {{ dialog(name, title=title, message=message, open=open,
+            variant='danger', icon=icon,
+            ok_label=ok_label, w=w, h=h, z=z) }}
+{% endmacro %}
+
+{% macro confirm_dialog(name, title='Confirm', message='', open=True,
+                       icon='question', w=100, h=32,
+                       ok_label='OK', ok_icon='check',
+                       cancel_label='Cancel', cancel_icon=None,
+                       variant=None, danger=False, z=820) %}
+  {% if variant is none %}
+    {% set variant = 'danger' if danger else 'primary' %}
+  {% endif %}
+  {{ dialog(name, title=title, message=message, open=open,
+            variant=variant, icon=icon,
+            ok_label=ok_label, ok_icon=ok_icon,
+            cancel_label=cancel_label, cancel_icon=cancel_icon,
+            w=w, h=h, z=z) }}
+{% endmacro %}
+
+
+{# === toast ==================================================================
+   One-off notification banner. Renders only if `message` is truthy.
+   Caller is responsible for clearing the state after a delay (asyncio.sleep
+   + view.refresh()).
+       {{ ui.toast(message=toast_msg, variant=toast_variant, x=0, y=80) }}
+   ============================================================================ #}
+{% macro toast(message=None, variant='primary', x=0, y=0, w=80, z=900) %}
+  {% if message %}
+    {% set palette = {
+         'primary': '15df', 'success': '0d8f', 'danger': 'f44f',
+         'warning': 'f80f', 'neutral': '333d',
+       } %}
+    {% set bg = palette[variant] if variant in palette else palette['primary'] %}
+    {% set h = 6 %}
+    <quad pos="{{ x - w/2 }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
+          bgcolor="{{ bg }}" halign="left" valign="top" />
+    <label pos="{{ x }} {{ y - h/2 }}" z-index="{{ z + 1 }}"
+           halign="center" valign="center2"
+           text="$fff{{ message }}" textsize="1.1" textfont="GameFontBlack" />
+  {% endif %}
+{% endmacro %}
+
+{# === tag_list ===============================================================
+   Horizontal row of chips. Each chip optionally has an Ã— remove button.
+   Signal (per chip): `<name>__remove__<value>`.
+       {{ ui.tag_list('filters', current_tags, x=4, y=-20) }}
+   `tags` items: ('value','label') tuples, dicts {'value','label'}, or plain
+   strings (value == label).
+   ============================================================================ #}
+{% macro tag_list(name, tags, x=0, y=0, gap=1.5, removable=True, size='sm', z=200) %}
+  {% set s = _SIZES[size] %}
+  {% set font = s.font %}
+  {% set h = font * 2.6 %}
+  {% set xoff = namespace(v=0) %}
+  {% for t in tags %}
+    {% if t is mapping %}
+      {% set tv = t['value'] %}{% set tl = t.get('label', tv) %}
+    {% elif t is string %}
+      {% set tv = t %}{% set tl = t %}
+    {% else %}
+      {% set tv = t[0] %}{% set tl = t[1] if t|length > 1 else t[0] %}
+    {% endif %}
+    {# text zone width: pessimistic per-char estimate so wide letters fit;
+       button zone is a separate fixed-size square appended on the right. #}
+    {% set text_zone = (tl|length) * font * 1.7 + font * 2.5 %}
+    {% set btn_zone = h + font * 0.4 if removable else 0 %}
+    {% set tw = text_zone + btn_zone %}
+    {% set tx = x + xoff.v %}
+    <quad pos="{{ tx }} {{ y + h/2 }}" z-index="{{ z }}" size="{{ tw }} {{ h }}"
+          bgcolor="2226" halign="left" valign="top" />
+    <label pos="{{ tx + font }} {{ y }}" z-index="{{ z + 1 }}"
+           halign="left" valign="center2"
+           text="$fff{{ tl }}" textsize="{{ font }}" textfont="GameFont" />
+    {% if removable %}
+      <quad pos="{{ tx + text_zone }} {{ y + h/2 }}" z-index="{{ z + 2 }}"
+            size="{{ h }} {{ h }}" bgcolor="c33a"
+            halign="left" valign="top"
+            id="uibtn_danger_{{ id }}__{{ name }}__remove__{{ tv }}"
+            action="{{ id }}__{{ name }}__remove__{{ tv }}" scriptevents="1"
+            class="ui-btn ui-btn-danger" />
+      <label pos="{{ tx + text_zone + h/2 }} {{ y }}" z-index="{{ z + 3 }}"
+             halign="center" valign="center2"
+             text="$fff{{ '&#xf00d;'|safe }}" textsize="{{ font * 0.9 }}"
+             textfont="GameFont" />
+    {% endif %}
+    {% set xoff.v = xoff.v + tw + gap %}
+  {% endfor %}
+{% endmacro %}
+
+{# === switch =================================================================
+   Styled boolean toggle (iOS-style pill + thumb). Same data model as
+   `check_box` but feels more "settings panel". `on` is the current state.
+   Signal: `<name>__toggle` (caller flips the bool and refreshes).
+       {{ ui.switch('notify_join', on=notify_join, x=4, y=-20,
+                    label='Notify on join') }}
+   ============================================================================ #}
+{% macro switch(name, on=False, x=0, y=0, label='', size='md', z=200) %}
+  {% set s = _SIZES[size] %}
+  {% set tw = s.font * 5.0 %}      {# track width  #}
+  {% set th = s.font * 2.2 %}      {# track height #}
+  {% set pad = 0.4 %}
+  {% set thumb = th - pad * 2 %}
+  {% set track_bg = '0a48' if on else '6663' %}
+  {# track #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ tw }} {{ th }}"
+        bgcolor="{{ track_bg }}" halign="left" valign="center"
+        id="uibtn_ghost_{{ id }}__{{ name }}__toggle"
+        action="{{ id }}__{{ name }}__toggle" scriptevents="1"
+        class="ui-btn ui-btn-ghost" />
+  {# thumb #}
+  {% set thumb_x = (x + tw - thumb - pad) if on else (x + pad) %}
+  <quad pos="{{ thumb_x }} {{ y }}" z-index="{{ z + 1 }}"
+        size="{{ thumb }} {{ thumb }}" bgcolor="fffe"
+        halign="left" valign="center" />
+  {% if label %}
+    <label pos="{{ x + tw + 2 }} {{ y }}" z-index="{{ z + 1 }}"
+           halign="left" valign="center2"
+           text="$fff{{ label }}" textsize="{{ s.font }}"
+           textfont="GameFont" />
+  {% endif %}
+{% endmacro %}
+
+{# === slider =================================================================
+   Discrete-tick value slider. Manialink can't drag, so the bar is split into
+   `ticks` clickable segments. Optional `-` / `+` buttons step by `step`.
+   Signals:
+       `<name>__set__<int>`  fired when a segment is clicked (value = 0..ticks)
+       `<name>__dec`         when `-` clicked (if buttons=True)
+       `<name>__inc`         when `+` clicked (if buttons=True)
+   The caller maps the integer tick to the actual value range.
+       {{ ui.slider('volume', value=vol, min=0, max=100, step=10,
+                    ticks=10, x=4, y=-20, w=80, buttons=True,
+                    suffix='%') }}
+   ============================================================================ #}
+{% macro slider(name, value=0, min=0, max=100, step=1, ticks=10,
+                x=0, y=0, w=60, h=3, buttons=True,
+                color='15df', bg='0006', suffix='', z=200) %}
+  {% set s = _SIZES['md'] %}
+  {% set btn_w = 6 if buttons else 0 %}
+  {% set bar_x = x + btn_w %}
+  {% set bar_w = w - btn_w * 2 %}
+  {% set seg_w = bar_w / ticks %}
+  {% set rng = (max - min) if (max - min) != 0 else 1 %}
+  {% set frac = (value - min) / rng %}
+  {% if frac < 0 %}{% set frac = 0 %}{% endif %}
+  {% if frac > 1 %}{% set frac = 1 %}{% endif %}
+  {# decrement button #}
+  {% if buttons %}
+    <quad pos="{{ x }} {{ y }}" z-index="{{ z + 1 }}"
+          size="{{ btn_w }} {{ h + 2 }}" bgcolor="333a"
+          halign="left" valign="center"
+          id="uibtn_ghost_{{ id }}__{{ name }}__dec"
+          action="{{ id }}__{{ name }}__dec" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    <label pos="{{ x + btn_w/2 }} {{ y }}" z-index="{{ z + 2 }}"
+           halign="center" valign="center2"
+           text="$fff{{ _ICONS['minus']|safe }}" textsize="0.8" textfont="GameFont" />
+  {% endif %}
+  {# track background #}
+  <quad pos="{{ bar_x }} {{ y }}" z-index="{{ z }}" size="{{ bar_w }} {{ h }}"
+        bgcolor="{{ bg }}" halign="left" valign="center" />
+  {# fill #}
+  <quad pos="{{ bar_x }} {{ y }}" z-index="{{ z + 1 }}"
+        size="{{ bar_w * frac }} {{ h }}" bgcolor="{{ color }}"
+        halign="left" valign="center" />
+  {# clickable segments (transparent overlays) #}
+  {% for i in range(ticks) %}
+    {% set tick_val = min + (rng * (i + 1) / ticks) | round(0, 'floor') | int %}
+    <quad pos="{{ bar_x + i * seg_w }} {{ y }}" z-index="{{ z + 2 }}"
+          size="{{ seg_w }} {{ h + 2 }}" bgcolor="0001"
+          halign="left" valign="center"
+          id="uibtn_ghost_{{ id }}__{{ name }}__set__{{ tick_val }}"
+          action="{{ id }}__{{ name }}__set__{{ tick_val }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+  {% endfor %}
+  {# increment button #}
+  {% if buttons %}
+    <quad pos="{{ x + w - btn_w }} {{ y }}" z-index="{{ z + 1 }}"
+          size="{{ btn_w }} {{ h + 2 }}" bgcolor="333a"
+          halign="left" valign="center"
+          id="uibtn_ghost_{{ id }}__{{ name }}__inc"
+          action="{{ id }}__{{ name }}__inc" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    <label pos="{{ x + w - btn_w/2 }} {{ y }}" z-index="{{ z + 2 }}"
+           halign="center" valign="center2"
+           text="$fff{{ _ICONS['plus']|safe }}" textsize="0.8" textfont="GameFont" />
+  {% endif %}
+  {# value readout to the right #}
+  <label pos="{{ x + w + 2 }} {{ y }}" z-index="{{ z + 1 }}"
+         halign="left" valign="center2"
+         text="$ff0{{ value }}{{ suffix }}" textsize="{{ s.font }}"
+         textfont="GameFont" />
+{% endmacro %}
+
+{# === pagination =============================================================
+   Page-nav row: « ‹ 1 ... 3 4 [5] 6 7 ... 12 › »
+   Signals:
+       `<name>__page__<n>`  fired when a page number (1-based) is clicked
+       `<name>__first`, `<name>__prev`, `<name>__next`, `<name>__last`
+       {{ ui.pagination('players', page=page, total_pages=total_pages,
+                        x=4, y=-20, max_visible=7) }}
+   ============================================================================ #}
+{% macro pagination(name, page=1, total_pages=1, x=0, y=0,
+                    max_visible=7, btn_w=6, btn_h=5, gap=0.5, z=200) %}
+  {% set s = _SIZES['md'] %}
+  {% if total_pages < 1 %}{% set total_pages = 1 %}{% endif %}
+  {% if page < 1 %}{% set page = 1 %}{% endif %}
+  {% if page > total_pages %}{% set page = total_pages %}{% endif %}
+  {% set half = (max_visible // 2) %}
+  {% set start = page - half %}
+  {% set end = page + half %}
+  {% if start < 1 %}{% set end = end + (1 - start) %}{% set start = 1 %}{% endif %}
+  {% if end > total_pages %}{% set start = start - (end - total_pages) %}{% set end = total_pages %}{% endif %}
+  {% if start < 1 %}{% set start = 1 %}{% endif %}
+  {# nav-btns + numbered page-btns, all rendered inline so they share scope #}
+  {% set xc = namespace(v=x) %}
+  {# build the full list of cells: (kind, label, action, enabled) #}
+  {% set cells = namespace(list=[]) %}
+  {% set _ = cells.list.append(('nav', '&#xf100;', 'first', page > 1)) %}
+  {% set _ = cells.list.append(('nav', '&#xf104;', 'prev',  page > 1)) %}
+  {% if start > 1 %}
+    {% set _ = cells.list.append(('page', '1', 'page__1', True)) %}
+    {% if start > 2 %}
+      {% set _ = cells.list.append(('dots', '...', None, False)) %}
+    {% endif %}
+  {% endif %}
+  {% for n in range(start, end + 1) %}
+    {% set _ = cells.list.append(('page', n|string, 'page__' ~ n, n != page)) %}
+  {% endfor %}
+  {% if end < total_pages %}
+    {% if end < total_pages - 1 %}
+      {% set _ = cells.list.append(('dots', '...', None, False)) %}
+    {% endif %}
+    {% set _ = cells.list.append(('page', total_pages|string,
+                                   'page__' ~ total_pages, True)) %}
+  {% endif %}
+  {% set _ = cells.list.append(('nav', '&#xf105;', 'next', page < total_pages)) %}
+  {% set _ = cells.list.append(('nav', '&#xf101;', 'last', page < total_pages)) %}
+  {# render each cell #}
+  {% for cell in cells.list %}
+    {% set kind = cell[0] %}{% set lbl = cell[1] %}
+    {% set act = cell[2] %}{% set enabled = cell[3] %}
+    {% if kind == 'dots' %}
+      <label pos="{{ xc.v + btn_w/2 }} {{ y }}" z-index="{{ z + 1 }}"
+             halign="center" valign="center2"
+             text="$aaa..." textsize="0.9" textfont="GameFont" />
+    {% else %}
+      {% set is_active = (kind == 'page' and lbl == page|string) %}
+      <quad pos="{{ xc.v }} {{ y }}" z-index="{{ z }}"
+            size="{{ btn_w }} {{ btn_h }}"
+            bgcolor="{{ '15dfd' if is_active else ('333a' if enabled else '1112') }}"
+            halign="left" valign="center"
+            {% if enabled %}id="uibtn_ghost_{{ id }}__{{ name }}__{{ act }}"
+            action="{{ id }}__{{ name }}__{{ act }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost"{% endif %} />
+      <label pos="{{ xc.v + btn_w/2 }} {{ y }}" z-index="{{ z + 1 }}"
+             halign="center" valign="center2"
+             text="${{ 'fff' if (is_active or enabled) else '555' }}{{ lbl|safe }}"
+             textsize="0.9"
+             textfont="{{ 'GameFontBlack' if is_active else 'GameFont' }}" />
+    {% endif %}
+    {% set xc.v = xc.v + btn_w + gap %}
+  {% endfor %}
+{% endmacro %}
+
+{# === menu ===================================================================
+   Button-triggered action menu (a real dropdown of actions, not a selector).
+   `items` is a list of dicts:
+       {'key': 'rename', 'label': 'Rename', 'icon': 'edit',
+        'variant': 'primary'|'danger'|'ghost'|..., 'separator': False}
+   Render the trigger button yourself (any push_button) wired to the
+   `<name>__toggle` signal; this macro draws the panel that appears below.
+   Signals:
+       `<name>__toggle`        — caller flips `open`
+       `<name>__pick__<key>`   — when an item is clicked (also closes)
+       {{ ui.push_button('act_toggle', 'Actions', icon='cog',
+                         x=4, y=-20, halign='left') }}
+       {{ ui.menu('act', items=menu_items, open=menu_open,
+                  x=4, y=-26, w=30) }}
+   ============================================================================ #}
+{% macro menu(name, items, open=False, x=0, y=0, w=30, item_h=5, z=400) %}
+  {% if open %}
+    {% set total = items|length %}
+    {% set panel_h = total * item_h + 1 %}
+    {# backdrop click-blocker — clicking emits __toggle to close cleanly.
+       Oversized so it covers the whole viewport regardless of parent frame
+       offset. #}
+    <quad pos="-1000 1000" z-index="{{ z - 1 }}" size="2000 2000"
+          bgcolor="0001" halign="left" valign="top"
+          id="uibtn_ghost_{{ id }}__{{ name }}__toggle"
+          action="{{ id }}__{{ name }}__toggle" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    <quad pos="{{ x }} {{ y }}" z-index="{{ z }}"
+          size="{{ w }} {{ panel_h }}" bgcolor="111e"
+          halign="left" valign="top" />
+    {% set ry = namespace(v=y - 0.5) %}
+    {% for item in items %}
+      {% if item.get('separator') %}
+        <quad pos="{{ x + 1 }} {{ ry.v - item_h/2 }}" z-index="{{ z + 1 }}"
+              size="{{ w - 2 }} 0.2" bgcolor="fff3"
+              halign="left" valign="center" />
+      {% else %}
+        {% set var = item.get('variant', 'ghost') %}
+        {% set tx_color = 'fff' if var != 'ghost' else 'ddd' %}
+        <quad pos="{{ x + 0.5 }} {{ ry.v }}" z-index="{{ z + 1 }}"
+              size="{{ w - 1 }} {{ item_h - 0.2 }}"
+              bgcolor="{{ _BTN_BG[var] if var in _BTN_BG else '0000' }}"
+              halign="left" valign="top"
+              id="uibtn_{{ var }}_{{ id }}__{{ name }}__pick__{{ item.key }}"
+              action="{{ id }}__{{ name }}__pick__{{ item.key }}" scriptevents="1"
+              class="ui-btn ui-btn-{{ var }}" />
+        {% if item.get('icon') %}
+          {% set glyph = _ICONS[item.icon] if item.icon in _ICONS else '' %}
+          <label pos="{{ x + 2 }} {{ ry.v - item_h/2 }}" z-index="{{ z + 2 }}"
+                 halign="left" valign="center2"
+                 text="${{ tx_color }}{{ glyph|safe }}"
+                 textsize="0.95" textfont="GameFont" />
+        {% endif %}
+        <label pos="{{ x + (5 if item.get('icon') else 2) }} {{ ry.v - item_h/2 }}"
+               z-index="{{ z + 2 }}" halign="left" valign="center2"
+               text="${{ tx_color }}{{ item.label }}"
+               textsize="0.95" textfont="GameFont" />
+      {% endif %}
+      {% set ry.v = ry.v - item_h %}
+    {% endfor %}
+  {% endif %}
+{% endmacro %}
+
+{# === accordion ==============================================================
+   Stack of collapsible sections. `sections` is a list of dicts:
+       {'key': 'general', 'title': 'General settings', 'icon': 'cog'}
+   `open_keys` is a list/set of currently-expanded keys.
+   `body_h_for(key)` is an optional dict mapping key → body height; if not
+   provided, all bodies use `body_h`.
+   Use as a call-block; caller renders body content per OPEN section:
+       (key, cx, cy, cw, ch) = top-left of body slot + content area size
+   Signal: `<name>__toggle__<key>` (caller toggles membership in open_keys).
+       {% call(key, cx, cy, cw, ch) ui.accordion('settings', sections,
+                                                  open_keys=opened,
+                                                  x=4, y=-20, w=120) %}
+         {% if key == 'general' %}
+           {{ ui.form(general_rows, x=cx + 2, y=cy - 2, label_w=24) }}
+         {% endif %}
+       {% endcall %}
+   ============================================================================ #}
+{% macro accordion(name, sections, open_keys=None, x=0, y=0, w=80,
+                   header_h=6, body_h=24, gap=0.5, z=150) %}
+  {% set _open = open_keys or [] %}
+  {% set ry = namespace(v=y) %}
+  {% for sec in sections %}
+    {% set is_open = sec.key in _open %}
+    {# header bar #}
+    <quad pos="{{ x }} {{ ry.v }}" z-index="{{ z }}"
+          size="{{ w }} {{ header_h }}"
+          bgcolor="{{ '15d6' if is_open else '2226' }}"
+          halign="left" valign="top"
+          id="uibtn_ghost_{{ id }}__{{ name }}__toggle__{{ sec.key }}"
+          action="{{ id }}__{{ name }}__toggle__{{ sec.key }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    {# chevron #}
+    <label pos="{{ x + 1.5 }} {{ ry.v - header_h/2 }}" z-index="{{ z + 1 }}"
+           halign="left" valign="center2"
+           text="$fff{{ (_ICONS['arrow_down'] if is_open else _ICONS['arrow_right'])|safe }}"
+           textsize="0.9" textfont="GameFont" />
+    {# optional icon #}
+    {% if sec.get('icon') %}
+      {% set glyph = _ICONS[sec.icon] if sec.icon in _ICONS else '' %}
+      <label pos="{{ x + 5 }} {{ ry.v - header_h/2 }}" z-index="{{ z + 1 }}"
+             halign="left" valign="center2"
+             text="$fff{{ glyph|safe }}"
+             textsize="1.0" textfont="GameFont" />
+    {% endif %}
+    {# title #}
+    <label pos="{{ x + (9 if sec.get('icon') else 5) }} {{ ry.v - header_h/2 }}"
+           z-index="{{ z + 1 }}" halign="left" valign="center2"
+           text="$fff{{ sec.title }}" textsize="1.0"
+           textfont="GameFontBlack" />
+    {% set ry.v = ry.v - header_h %}
+    {% if is_open %}
+      {% set ch = sec.get('body_h', body_h) %}
+      {# body background #}
+      <quad pos="{{ x }} {{ ry.v }}" z-index="{{ z - 1 }}"
+            size="{{ w }} {{ ch }}" bgcolor="1116"
+            halign="left" valign="top" />
+      {{ caller(sec.key, x, ry.v, w, ch) }}
+      {% set ry.v = ry.v - ch %}
+    {% endif %}
+    {% set ry.v = ry.v - gap %}
+  {% endfor %}
+{% endmacro %}
+
+{# === window =================================================================
+   A "chrome'd" panel: header bar (icon + title) on top, body surface below,
+   close button in the header's top-right. Place your content AFTER the macro
+   call at positions inside the body area (y starts below the header).
+   The close button fires the framework-reserved `_close` signal, which
+   BaseView wires to `self.hide([player])` automatically.
+       {{ ui.window('Title', icon='cog', x=0, y=0, w=120, h=90) }}
+       ...your widgets...
+   ============================================================================ #}
+{% macro window(title='', icon=None, x=0, y=0, w=120, h=90, z=100, header_h=8) %}
+  {# header strip #}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z + 1 }}" size="{{ w }} {{ header_h }}"
+        bgcolor="000a" halign="left" valign="top" />
+  {# 1px-ish accent line under the header #}
+  <quad pos="{{ x }} {{ y - header_h }}" z-index="{{ z + 2 }}" size="{{ w }} 0.3"
+        bgcolor="15dfa" halign="left" valign="top" />
+  {% if icon %}
+  <label pos="{{ x + 3 }} {{ y - header_h/2 }}" z-index="{{ z + 2 }}"
+         halign="left" valign="center2"
+         text="$15f{{ _ICONS[icon]|safe if icon in _ICONS else '?' }}"
+         textsize="2.2" textfont="GameFont" />
+  {% endif %}
+  <label pos="{{ x + (10 if icon else 3) }} {{ y - header_h/2 }}" z-index="{{ z + 2 }}"
+         halign="left" valign="center2"
+         text="$fff{{ title }}" textsize="1.3" textfont="GameFont" />
+
+  {# body surface #}
+  <quad pos="{{ x }} {{ y - header_h }}" z-index="{{ z }}"
+        size="{{ w }} {{ h - header_h }}"
+        bgcolor="000a" halign="left" valign="top" />
+
+  {# close button â€” quad + glyph, wired to BaseView._on_close via `_close` signal #}
+  <quad pos="{{ x + w - 1.5 }} {{ y - 1.5 }}" z-index="{{ z + 3 }}" size="5 5"
+        bgcolor="c33b" halign="right" valign="top"
+        id="uibtn_danger_{{ id }}___close"
+        action="{{ id }}___close" scriptevents="1"
+        class="ui-btn ui-btn-danger" />
+  <label pos="{{ x + w - 4 }} {{ y - 4 }}" z-index="{{ z + 4 }}"
+         halign="center" valign="center2"
+         text="$fff{{ '&#xf00d;'|safe }}" textsize="1.1" textfont="GameFont" />
+{% endmacro %}
+
+{# === hover_script ===========================================================
+   Single Maniascript block animating hover for any push_button / tool_button.
+   Each button quad is emitted with id `uibtn_<variant>_<view_id>__<name>`.
+   On MouseOver/MouseOut we look the quad up via `Page.GetFirstChild` and
+   swap its `BgColor`. Uses the same TextLib pattern as PyPlanet's own widgets.
+   Include once per template:  {{ ui.hover_script() }}
+   ============================================================================ #}
+{% macro hover_script() %}
+<script><!--
+#Include "TextLib" as TL
+
+Void _SetIdle(CMlControl C, Vec3 Color, Real Op) {
+  declare CMlQuad Q <=> (C as CMlQuad);
+  if (Q == Null) return;
+  Q.BgColor = Color;
+  Q.Opacity = Op;
+}
+
+main() {
+  declare Vec3 IdlePrimary = <0.07, 0.33, 0.87>;
+  declare Vec3 IdleDanger  = <0.80, 0.20, 0.20>;
+  declare Vec3 IdleSuccess = <0.07, 0.60, 0.27>;
+  declare Vec3 IdleWarning = <0.93, 0.47, 0.07>;
+  declare Vec3 IdleGhost   = <1.00, 1.00, 1.00>;
+  declare Real IdleOp      = 0.55;
+  declare Real IdleGhostOp = 0.15;
+
+  declare Vec3 HoverPrimary = <0.15, 0.55, 1.00>;
+  declare Vec3 HoverDanger  = <1.00, 0.35, 0.35>;
+  declare Vec3 HoverSuccess = <0.15, 0.85, 0.45>;
+  declare Vec3 HoverWarning = <1.00, 0.65, 0.20>;
+  declare Vec3 HoverGhost   = <1.00, 1.00, 1.00>;
+  declare Real HoverOp      = 0.90;
+  declare Real HoverGhostOp = 0.40;
+
+  // Normalise initial colors so MouseOut resets to a value matching init.
+  Page.GetClassChildren("ui-btn-primary", Page.MainFrame, True);
+  foreach (C in Page.GetClassChildren_Result) _SetIdle(C, IdlePrimary, IdleOp);
+  Page.GetClassChildren("ui-btn-danger", Page.MainFrame, True);
+  foreach (C in Page.GetClassChildren_Result) _SetIdle(C, IdleDanger, IdleOp);
+  Page.GetClassChildren("ui-btn-success", Page.MainFrame, True);
+  foreach (C in Page.GetClassChildren_Result) _SetIdle(C, IdleSuccess, IdleOp);
+  Page.GetClassChildren("ui-btn-warning", Page.MainFrame, True);
+  foreach (C in Page.GetClassChildren_Result) _SetIdle(C, IdleWarning, IdleOp);
+  Page.GetClassChildren("ui-btn-ghost", Page.MainFrame, True);
+  foreach (C in Page.GetClassChildren_Result) _SetIdle(C, IdleGhost, IdleGhostOp);
+
+  while (True) {
+    yield;
+
+    foreach (Event in PendingEvents) {
+      if (Event.Type != CMlScriptEvent::Type::MouseOver
+          && Event.Type != CMlScriptEvent::Type::MouseOut) continue;
+      if (!TL::StartsWith("uibtn_", Event.ControlId)) continue;
+
+      declare CMlQuad Q <=> (Page.GetFirstChild(Event.ControlId) as CMlQuad);
+      if (Q == Null) continue;
+
+      declare Vec3 Idle  = IdlePrimary;
+      declare Vec3 Hover = HoverPrimary;
+      declare Real OpI   = IdleOp;
+      declare Real OpH   = HoverOp;
+
+      if (TL::StartsWith("uibtn_primary_", Event.ControlId)) {
+        Idle = IdlePrimary; Hover = HoverPrimary;
+      } else if (TL::StartsWith("uibtn_danger_", Event.ControlId)) {
+        Idle = IdleDanger;  Hover = HoverDanger;
+      } else if (TL::StartsWith("uibtn_success_", Event.ControlId)) {
+        Idle = IdleSuccess; Hover = HoverSuccess;
+      } else if (TL::StartsWith("uibtn_warning_", Event.ControlId)) {
+        Idle = IdleWarning; Hover = HoverWarning;
+      } else if (TL::StartsWith("uibtn_ghost_", Event.ControlId)) {
+        Idle = IdleGhost;   Hover = HoverGhost;
+        OpI = IdleGhostOp;  OpH = HoverGhostOp;
+      } else {
+        continue;
+      }
+
+      if (Event.Type == CMlScriptEvent::Type::MouseOver) {
+        Q.BgColor = Hover; Q.Opacity = OpH;
+      } else {
+        Q.BgColor = Idle;  Q.Opacity = OpI;
+      }
+    }
+  }
+}
+--></script>
+{% endmacro %}
+
+{# === tooltip_layer ==========================================================
+   Floating tooltip â€” pairs with `tooltip="..."` kwarg on push_button /
+   tool_button. Emits a hidden bg quad + label and a ManiaScript loop that
+   reads `data-tooltip` from the hovered control and shows it near the
+   mouse cursor. Include once per template (after hover_script):
+       {{ ui.tooltip_layer() }}
+   ============================================================================ #}
+{% macro tooltip_layer(z=950, bg='000d') %}
+<quad id="ui_tt_bg" pos="0 0" z-index="{{ z }}" size="0 0"
+      bgcolor="{{ bg }}" halign="left" valign="top" hidden="1" />
+<label id="ui_tt_lbl" pos="0 0" z-index="{{ z + 1 }}"
+       halign="left" valign="center2"
+       text="" textsize="0.9" textfont="GameFont" hidden="1" />
+{% endmacro %}

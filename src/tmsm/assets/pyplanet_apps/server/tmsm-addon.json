@@ -1,0 +1,4 @@
+{
+  "description": "Two master-only hub apps: Server Settings (dedicated XML-RPC SetServerOptions) and Mode Settings (live SetModeScriptSettings with type-aware inputs from GetModeScriptInfo).",
+  "author": "tmsm"
+}

@@ -1,0 +1,23 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# Tiny pinned launcher button. Bottom-right of the screen so it stays
+   clear of the chat (top-left) and the leaderboard (top-right of the
+   default UI). Clicking fires the `toggle` signal which the hub app
+   uses to show/hide the main hub window for that player. #}
+<frame pos="155 -85" z-index="60">
+  <quad pos="0 0" z-index="0" size="20 6" bgcolor="000a"
+        halign="left" valign="top" />
+  <quad pos="0 -6" z-index="1" size="20 0.3" bgcolor="15dfa"
+        halign="left" valign="top" />
+  <quad pos="0 0" z-index="2" size="20 6" bgcolor="0000"
+        halign="left" valign="top"
+        id="uibtn_ghost_{{ id }}__toggle"
+        action="{{ id }}__toggle" scriptevents="1"
+        class="ui-btn ui-btn-ghost" />
+  <label pos="2 -3" z-index="3" halign="left" valign="center2"
+         text="$15f{{ '&#xf0c9;'|safe }}" textsize="1.2" textfont="GameFont" />
+  <label pos="6 -3" z-index="3" halign="left" valign="center2"
+         text="$fffHub" textsize="1.1" textfont="GameFont" />
+</frame>
+
+{{ ui.hover_script() }}

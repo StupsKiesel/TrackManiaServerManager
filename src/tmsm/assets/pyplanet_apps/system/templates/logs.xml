@@ -1,0 +1,56 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context: files=[{path,label,size}], active, filter, lines, log_path #}
+
+<frame pos="-100 60" z-index="200">
+
+  {{ ui.window('Logs viewer', icon='file', x=0, y=0, w=200, h=130) }}
+
+  {# left column: file list #}
+  <quad pos="2 -10" z-index="201" size="48 108" bgcolor="0006" />
+  {{ ui.label('Log files', x=4, y=-12, size='sm', color='8af', bold=True) }}
+  {% for f in files %}
+    {% set y = -17 - loop.index0 * 5.0 %}
+    <quad pos="3 {{ y + 2 }}" z-index="202" size="46 4.5"
+          bgcolor="{% if f.path == active %}1568{% else %}0000{% endif %}" />
+    <quad pos="3 {{ y + 2 }}" z-index="203" size="46 4.5" bgcolor="fff0"
+          id="pickbtn_{{ id }}__pick__{{ loop.index0 }}"
+          action="{{ id }}__pick__{{ loop.index0 }}"
+          ScriptEvents="1" />
+    {{ ui.label(f.label, x=4, y=y, size='sm',
+                color=('fff' if f.path == active else 'ccc')) }}
+    {{ ui.label(f.size, x=49, y=y, size='sm', halign='right', color='888') }}
+  {% endfor %}
+
+  {# right column: log content #}
+  <quad pos="52 -10" z-index="201" size="146 100" bgcolor="0006" />
+  {% set max_lines = 28 %}
+  {% set ln = lines[-max_lines:] %}
+  {% for line in ln|reverse %}
+    {% set y = -12 - loop.index0 * 3.2 %}
+    {% set color = 'f88' if 'ERROR' in line or 'Traceback' in line
+                   else ('ff8' if 'WARNING' in line or '[warn]' in line
+                   else 'ddd') %}
+    <label pos="54 {{ y }}" z-index="202" halign="left" valign="center2"
+           text="${{ color }}{{ line }}" textsize="0.85" textfont="GameFont" />
+  {% endfor %}
+
+  {# filter row #}
+  {{ ui.label('filter', x=52, y=-114, color='888', size='sm') }}
+  {{ ui.line_edit('filter', value=filter, x=63, y=-114, width=110, size='sm') }}
+  {{ ui.push_button('apply', 'Apply', icon='search',
+                    x=175, y=-114, variant='primary', halign='left', size='sm') }}
+
+  {# controls #}
+  {{ ui.push_button('refresh', 'Refresh', icon='reload',
+                    x=2, y=-125, variant='ghost', halign='left', size='sm') }}
+  {{ ui.push_button('back', '< Back to hub', icon='arrow_left',
+                    x=22, y=-125, variant='primary', halign='left', size='sm') }}
+
+  {{ ui.status_bar(x=0, y=0, w=200, h=130,
+                   left='file: ' + (log_path or '(none)'),
+                   center='',
+                   right=(lines|length|string) + ' lines') }}
+
+  {{ ui.hover_script() }}
+</frame>

@@ -1,0 +1,52 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# active_tab + viewer_level + visible_tabs + entries_by_role
+   are injected per-player by HubView.get_per_player_data. #}
+
+<frame pos="-70 45" z-index="200">
+
+  {{ ui.window('tmsm hub', icon='cog', x=0, y=0, w=140, h=90) }}
+
+  {% if visible_tabs and visible_tabs|length > 0 %}
+    {% call(tab_key, t) ui.tabs('role', visible_tabs, active=active_tab,
+                                x=2, y=-10, w=136, tab_h=5, body_h=68, z=300) %}
+      {% set tiles = entries_by_role.get(tab_key, []) %}
+      {% if tiles|length == 0 %}
+        {{ ui.label('No apps registered for ' + t.label + '.', x=4, y=-20, color='aaa') }}
+      {% else %}
+        {% call(cx, cy, entry) ui.grid(tiles, x=4, y=-18, cols=4, cell_w=32, cell_h=20, gap=2) %}
+          {# tile: ghost button quad covering the whole cell, icon + name on top #}
+          <quad pos="{{ cx }} {{ cy }}" z-index="201" size="32 20" bgcolor="fff1"
+                halign="left" valign="top" />
+          <quad pos="{{ cx }} {{ cy }}" z-index="202" size="32 20" bgcolor="0000"
+                halign="left" valign="top"
+                id="uibtn_ghost_{{ id }}__open__{{ entry.key }}"
+                action="{{ id }}__open__{{ entry.key }}" scriptevents="1"
+                class="ui-btn ui-btn-ghost"
+                tooltip="{{ entry.description }}" />
+          {{ ui.icon(entry.icon, x=cx + 16, y=cy - 8, color='15f', font=3.6, z=203) }}
+          <label pos="{{ cx + 16 }} {{ cy - 16.5 }}" z-index="203"
+                 halign="center" valign="center2"
+                 text="$fff{{ entry.name }}" textsize="1.0" textfont="GameFont" />
+          {% if entry.badge %}
+            <quad pos="{{ cx + 30 }} {{ cy - 1 }}" z-index="204" size="5 3"
+                  bgcolor="c33d" halign="right" valign="top" />
+            <label pos="{{ cx + 29.5 }} {{ cy - 2.5 }}" z-index="205"
+                   halign="right" valign="center2"
+                   text="$fff{{ entry.badge }}" textsize="0.7" textfont="GameFont" />
+          {% endif %}
+        {% endcall %}
+      {% endif %}
+    {% endcall %}
+  {% else %}
+    {{ ui.label('No apps registered.', x=4, y=-14, color='aaa') }}
+    {{ ui.label('Apps appear here when they register with the hub on startup.', x=4, y=-20, color='888', size='sm') }}
+  {% endif %}
+
+  {{ ui.status_bar(x=0, y=0, w=140, h=90,
+                   left='$0f0connected as ' + (viewer_level_label or 'player'),
+                   center=(total_entries|string) + ' apps',
+                   right='tmsm hub v0.1') }}
+
+  {{ ui.hover_script() }}
+</frame>

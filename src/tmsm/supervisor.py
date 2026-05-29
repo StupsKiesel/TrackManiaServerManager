@@ -17,8 +17,28 @@ from typing import Sequence
 
 import psutil
 
+from . import paths
+
 
 SCREEN_PREFIX = "tmsm-"
+
+
+def _screen_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Env with SCREENDIR forced to a persistent, 0700 dir under ~/.tmsm.
+
+    The default /run/screen/S-<user> gets wiped on WSL boot and frequently
+    ends up with the wrong perms, which makes `screen` exit 1 with no log.
+    Routing every screen invocation through ~/.tmsm/screen makes this
+    self-healing across reboots.
+    """
+    env = dict(base) if base is not None else os.environ.copy()
+    paths.SCREEN_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        paths.SCREEN_DIR.chmod(0o700)
+    except OSError:
+        pass
+    env["SCREENDIR"] = str(paths.SCREEN_DIR)
+    return env
 
 
 class Status(str, Enum):
@@ -44,6 +64,7 @@ def _list_sessions() -> dict[str, int]:
     try:
         out = subprocess.run(
             ["screen", "-ls"], capture_output=True, text=True, check=False,
+            env=_screen_env(),
         ).stdout
     except FileNotFoundError:
         return {}
@@ -79,8 +100,28 @@ def status(name: str) -> ProcInfo:
             cpu = p.cpu_percent(interval=None)
             mem = p.memory_info().rss / (1024 * 1024)
         return ProcInfo(Status.RUNNING, pid=target_pid, cpu=cpu, mem_mb=mem)
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
+    except psutil.NoSuchProcess:
+        # Stale screen socket from before reboot/crash.
+        return ProcInfo(Status.STOPPED)
+    except psutil.AccessDenied:
         return ProcInfo(Status.RUNNING, pid=target_pid)
+
+
+def prune_stale_sessions() -> None:
+    """Remove dead screen session sockets (e.g. after a host reboot).
+
+    `screen -ls` keeps listing sockets in $SCREENDIR even after the
+    corresponding processes died, which makes `status()` report stale
+    sessions as RUNNING (their PID is often reused by an unrelated
+    process after reboot). `screen -wipe` deletes those sockets.
+    """
+    try:
+        subprocess.run(
+            ["screen", "-wipe"], capture_output=True, text=True, check=False,
+            env=_screen_env(),
+        )
+    except FileNotFoundError:
+        pass
 
 
 def start(
@@ -125,6 +166,7 @@ def start(
     full_env = os.environ.copy()
     if env:
         full_env.update(env)
+    full_env = _screen_env(full_env)
     try:
         subprocess.run(cmd, cwd=str(cwd), env=full_env, check=True)
     except FileNotFoundError as e:
@@ -168,7 +210,7 @@ def stop(name: str, grace: float = 10.0) -> bool:
     sessions = _list_sessions()
     if sess not in sessions:
         return False
-    subprocess.run(["screen", "-S", sess, "-X", "quit"], check=False)
+    subprocess.run(["screen", "-S", sess, "-X", "quit"], check=False, env=_screen_env())
     deadline = time.monotonic() + grace
     while time.monotonic() < deadline:
         if sess not in _list_sessions():
@@ -192,7 +234,7 @@ def restart(name: str, argv: Sequence[str], cwd: Path, log_file: Path,
 
 def attach_command(name: str) -> list[str]:
     """Command to attach to the screen session interactively. Detach with Ctrl-A d."""
-    return ["screen", "-r", session_name(name)]
+    return ["env", f"SCREENDIR={paths.SCREEN_DIR}", "screen", "-r", session_name(name)]
 
 
 @dataclass
@@ -222,7 +264,7 @@ def list_all_sessions() -> list[ScreenSession]:
 
 def attach_command_raw(session: str) -> list[str]:
     """Attach command for an arbitrary screen session name."""
-    return ["screen", "-r", session]
+    return ["env", f"SCREENDIR={paths.SCREEN_DIR}", "screen", "-r", session]
 
 
 def kill_session(session: str, grace: float = 5.0) -> bool:
@@ -230,7 +272,7 @@ def kill_session(session: str, grace: float = 5.0) -> bool:
     sessions = _list_sessions()
     if session not in sessions:
         return False
-    subprocess.run(["screen", "-S", session, "-X", "quit"], check=False)
+    subprocess.run(["screen", "-S", session, "-X", "quit"], check=False, env=_screen_env())
     deadline = time.monotonic() + grace
     while time.monotonic() < deadline:
         if session not in _list_sessions():

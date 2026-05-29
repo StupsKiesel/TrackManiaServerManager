@@ -71,10 +71,22 @@ class MariaDBInstance(Instance):
             return None
 
     def _pid_alive(self, pid: int) -> bool:
+        # Verify the PID actually belongs to mysqld -- after a host reboot
+        # the recorded PID is often reused by an unrelated process, and a
+        # bare `os.kill(pid, 0)` would falsely report MariaDB as running.
         try:
-            os.kill(pid, 0)
-            return True
-        except (OSError, ProcessLookupError):
+            p = psutil.Process(pid)
+            name = (p.name() or "").lower()
+            if "mysqld" in name or "mariadb" in name:
+                return True
+            try:
+                exe = (p.exe() or "").lower()
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                exe = ""
+            if "mysqld" in exe or "mariadb" in exe:
+                return True
+            return False
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
             return False
 
     def status(self) -> ProcInfo:

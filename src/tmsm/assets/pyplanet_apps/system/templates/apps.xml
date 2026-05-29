@@ -1,0 +1,53 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context: addons=[{key,module,description,enabled,dirty}], apps_py,
+   dirty_count, status_text, status_color #}
+
+<frame pos="-90 55" z-index="200">
+
+  {{ ui.window('PyPlanet apps', icon='cog', x=0, y=0, w=180, h=110) }}
+
+  {{ ui.label('Toggle tmsm-managed addons. Save rewrites apps.py and the pool restarts.',
+              x=4, y=-12, color='aaa', size='sm') }}
+  {{ ui.label(apps_py, x=176, y=-12, halign='right', color='666', size='sm') }}
+
+  {# rows #}
+  {% set row_h = 5.5 %}
+  {% for a in addons %}
+    {% set y = -20 - loop.index0 * row_h %}
+    {# checkbox surrogate (we own a clickable quad) #}
+    {% set color = ('0f0' if a.enabled else '888') %}
+    {% set mark = 'check' if a.enabled else 'cross' %}
+    <quad pos="4 {{ y + 2 }}" z-index="202" size="172 5" bgcolor="fff0"
+          id="togbtn_{{ id }}__toggle__{{ a.key }}"
+          action="{{ id }}__toggle__{{ a.key }}"
+          ScriptEvents="1" />
+    {{ ui.icon(mark, x=5, y=y, color=color, font=2.2) }}
+    {{ ui.label(a.key, x=11, y=y, size='sm',
+                color=('fff' if a.enabled else 'aaa'), bold=a.enabled) }}
+    {{ ui.label(a.description, x=50, y=y, size='sm', color='888') }}
+    {% if a.dirty %}
+      {{ ui.label('*', x=4, y=y, size='sm', color='fc4', bold=True) }}
+    {% endif %}
+  {% endfor %}
+
+  {# controls #}
+  {{ ui.push_button('save', 'Save (' ~ dirty_count|string ~ ' changes)',
+                    icon='save', x=4, y=-104,
+                    variant=('success' if dirty_count else 'ghost'),
+                    halign='left', size='sm') }}
+  {{ ui.push_button('refresh', 'Reset', icon='reload',
+                    x=50, y=-104, variant='ghost', halign='left', size='sm') }}
+  {{ ui.push_button('back', '< Back to hub', icon='arrow_left',
+                    x=70, y=-104, variant='primary', halign='left', size='sm') }}
+
+  {{ ui.label(status_text, x=176, y=-104, halign='right',
+              color=status_color, size='sm') }}
+
+  {{ ui.status_bar(x=0, y=0, w=180, h=110,
+                   left=addons|length|string + ' addons',
+                   center='',
+                   right=dirty_count|string + ' pending') }}
+
+  {{ ui.hover_script() }}
+</frame>

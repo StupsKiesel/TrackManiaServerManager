@@ -1,0 +1,4 @@
+{
+  "description": "tmsm UI framework: PySide6-style widget primitives (push_button, check_box, line_edit, label, heading, icon, frame) plus BaseView, FormView, Audience, Z. Required by addons that import 'tmsm_ui/widgets.xml'.",
+  "author": "tmsm"
+}

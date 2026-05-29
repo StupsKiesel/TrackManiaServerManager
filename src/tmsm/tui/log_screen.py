@@ -19,6 +19,7 @@ class LogScreen(Screen):
         Binding("q",      "close", "Close"),
         Binding("f",      "toggle_follow", "Follow"),
         Binding("c",      "clear_view", "Clear view"),
+        Binding("y",      "copy", "Copy"),
         Binding("g",      "scroll_top", "Top"),
         Binding("G",      "scroll_bottom", "Bottom"),
     ]
@@ -120,6 +121,20 @@ class LogScreen(Screen):
 
     def action_clear_view(self) -> None:
         self.query_one(RichLog).clear()
+
+    def action_copy(self) -> None:
+        try:
+            data = self.path.read_bytes() if self.path.is_file() else b""
+        except OSError as e:
+            self.notify(f"Read failed: {e}", severity="error")
+            return
+        text = data.decode("utf-8", errors="replace")
+        try:
+            self.app.copy_to_clipboard(text)
+        except Exception as e:
+            self.notify(f"Copy failed: {e}", severity="error")
+            return
+        self.notify(f"Copied {len(text)} chars to clipboard.")
 
     def action_scroll_top(self) -> None:
         view = self.query_one(RichLog)

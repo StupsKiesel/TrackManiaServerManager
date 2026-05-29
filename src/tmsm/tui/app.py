@@ -22,8 +22,26 @@ class TmsmApp(App):
 
     def on_mount(self) -> None:
         self.cfg = load_config()
+        self._cleanup_stale_state()
         self.push_screen(MainScreen())
         self.run_worker(self._check_for_update, thread=True, exclusive=True, name="update-check")
+
+    def _cleanup_stale_state(self) -> None:
+        """After a host reboot/crash, drop any leftover supervisor state so
+        instances aren't shown as 'running' when the processes are long gone."""
+        from .. import supervisor
+        from ..instances.service import MariaDBInstance
+        supervisor.prune_stale_sessions()
+        try:
+            mdb = MariaDBInstance(self.cfg)
+            pid = mdb._read_pid()
+            if pid is not None and not mdb._pid_alive(pid):
+                try:
+                    mdb._pid_file().unlink()
+                except FileNotFoundError:
+                    pass
+        except Exception:
+            pass
 
     def _check_for_update(self) -> None:
         from .. import updater

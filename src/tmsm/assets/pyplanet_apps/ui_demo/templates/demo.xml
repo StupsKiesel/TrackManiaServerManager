@@ -1,0 +1,422 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+<frame pos="-100 60" z-index="200">
+
+  {{ ui.window('tmsm.ui v1 widget showcase', icon='cog', x=0, y=0, w=200, h=130) }}
+  {{ ui.status_bar(x=0, y=0, w=200, h=130,
+                   left='$0f0Connected',
+                   center='tab: ' + active_tab,
+                   right='12 / 64 players') }}
+
+  {# Full-width tab strip directly under the window header. Body fills the
+     remaining space with matching 2u padding on all sides (left/right/bottom). #}
+  {% call(tab_key, t) ui.tabs('main', main_tabs, active=active_tab,
+                              x=2, y=-10, w=196, tab_h=5, body_h=113) %}
+
+    {% if tab_key == 'buttons' %}
+      {{ ui.heading('Variants', x=4, y=-18, level=2) }}
+      {{ ui.push_button('primary_btn', 'Primary', x=4,   y=-24, variant='primary', size='md', halign='left') }}
+      {{ ui.push_button('success_btn', 'Success', x=30,  y=-24, variant='success', size='md', halign='left') }}
+      {{ ui.push_button('warning_btn', 'Warning', x=56,  y=-24, variant='warning', size='md', halign='left') }}
+      {{ ui.push_button('danger_btn',  'Danger',  x=82,  y=-24, variant='danger',  size='md', halign='left') }}
+      {{ ui.push_button('ghost_btn',   'Ghost',   x=108, y=-24, variant='ghost',   size='md', halign='left') }}
+
+      {{ ui.heading('Small + tool + checkbox', x=4, y=-38, level=2) }}
+      {{ ui.push_button('reload_btn', 'Reload', icon='reload', x=4,  y=-46, variant='primary', size='sm', halign='left', tooltip='Reload all data from disk') }}
+      {{ ui.push_button('save_btn',   'Save',   icon='save',   x=22, y=-46, variant='success', size='sm', halign='left', tooltip='Save current settings (Ctrl+S)') }}
+      {{ ui.tool_button('cog_btn',    'cog',    x=40, y=-46, variant='ghost',  halign='left', tooltip='Open settings panel') }}
+      {{ ui.tool_button('trash_btn',  'trash',  x=47, y=-46, variant='danger', halign='left', tooltip='Delete selected item') }}
+      {{ ui.check_box('toggle_cb', label='Toggle me', checked=checked, x=72, y=-46, size='md') }}
+      {{ ui.label(('ON' if checked else 'OFF'),
+                  x=98, y=-46, color=('0f0' if checked else 'f44'), bold=True) }}
+
+    {% elif tab_key == 'inputs' %}
+      {{ ui.heading('Line edit + submit', x=4, y=-18, level=2) }}
+      {{ ui.line_edit('title', value=text_value, x=4, y=-26, width=110) }}
+      {{ ui.push_button('submit', 'Submit', icon='check',
+                        x=118, y=-26, variant='success', halign='left', size='sm') }}
+      {{ ui.label('last submitted: ' + (text_value or '(none)'),
+                  x=4, y=-34, color='aaa', size='sm') }}
+
+      {{ ui.heading('Form', x=4, y=-44, level=2) }}
+      {% call(cx, cy, p) ui.form(form_rows, x=4, y=-52, label_w=24, row_h=7) %}
+        {% if p.kind == 'entry' %}
+          {{ ui.line_edit(p.name, value=p.value, x=cx, y=cy - 3.5, width=80, size='sm') }}
+        {% elif p.kind == 'check' %}
+          {{ ui.check_box(p.name, checked=public_checked, x=cx + 4, y=cy - 3.5, size='sm') }}
+        {% endif %}
+      {% endcall %}
+
+      {{ ui.heading('Radio group (difficulty)', x=4, y=-76, level=2) }}
+      {{ ui.radio_group('difficulty', radio_options, selected=radio_choice,
+                        x=8, y=-84, orient='h', gap=22, size='md') }}
+      {{ ui.label('selected: ' + radio_choice,
+                  x=100, y=-84, color='ff0', bold=True) }}
+
+    {% elif tab_key == 'lists' %}
+      {{ ui.heading('Vlist (zebra)', x=4, y=-18, level=2) }}
+      {% call(rx, ry, p) ui.vlist(players, x=4, y=-26, w=70, row_h=6) %}
+        {{ ui.label(p.login,               x=rx + 2,  y=ry, color='fff') }}
+        {{ ui.label('[' + p.country + ']', x=rx + 30, y=ry, color='4af') }}
+        {{ ui.label(p.score|string,        x=rx + 66, y=ry, color='ff0', halign='right') }}
+      {% endcall %}
+
+      {{ ui.heading('Grid', x=82, y=-18, level=2) }}
+      {% call(cx, cy, t) ui.grid(tools, x=82, y=-26, cols=2, cell_w=36, cell_h=8, gap=2) %}
+        {{ ui.push_button(t.id, t.label, icon=t.icon, x=cx, y=cy - 4,
+                          variant=t.variant, size='sm', halign='left') }}
+      {% endcall %}
+
+    {% elif tab_key == 'scroll' %}
+      {{ ui.heading('Scroll area', x=4, y=-18, level=2) }}
+      {{ ui.label('$f80⚠ WORK IN PROGRESS — ML has no real frame clipping; '
+                  'items outside the viewport remain visible.',
+                  x=4, y=-26, color='fff', size='sm') }}
+      {% call(iw) ui.scroll_area('demo_scroll', x=4, y=-32, w=152, h=56,
+                                 content_h=scroll_content_h, offset=scroll_offset) %}
+        {% for item in scroll_items %}
+          {{ ui.label(item, x=2, y=-2 - loop.index0 * 5, color='fff') }}
+        {% endfor %}
+      {% endcall %}
+
+    {% elif tab_key == 'misc' %}
+      {{ ui.heading('Progress bars', x=4, y=-18, level=2) }}
+      {{ ui.label('Download',     x=4,  y=-26, color='aaa', size='sm') }}
+      {{ ui.progress_bar(value=0.25, x=30, y=-25, w=80, h=3, text='25%') }}
+      {{ ui.label('Install',      x=4,  y=-32, color='aaa', size='sm') }}
+      {{ ui.progress_bar(value=0.62, x=30, y=-31, w=80, h=3, color='0d8f', text='62%') }}
+      {{ ui.label('Players',      x=4,  y=-38, color='aaa', size='sm') }}
+      {{ ui.progress_bar(value=0.90, x=30, y=-37, w=80, h=3, color='f80f', text='27 / 30') }}
+
+      {{ ui.separator(x=4, y=-44, length=152) }}
+
+      {{ ui.heading('Badges', x=4, y=-50, level=2) }}
+      {{ ui.badge('ADMIN',   x=4,   y=-58, variant='success') }}
+      {{ ui.badge('BANNED',  x=26,  y=-58, variant='danger') }}
+      {{ ui.badge('PENDING', x=50,  y=-58, variant='warning') }}
+      {{ ui.badge('INFO',    x=78,  y=-58, variant='primary') }}
+      {{ ui.badge('GHOST',   x=98,  y=-58, variant='ghost') }}
+      {{ ui.badge('12',      x=122, y=-58, variant='neutral') }}
+
+      {{ ui.separator(x=4, y=-66, length=152) }}
+
+      {{ ui.heading('Separators', x=4, y=-72, level=2) }}
+      {{ ui.label('horizontal ↑ / ↓   vertical →',
+                  x=4, y=-80, color='aaa', size='sm') }}
+      {{ ui.separator(x=60, y=-78, length=12, orient='v') }}
+
+      {{ ui.separator(x=4, y=-86, length=152) }}
+
+      {{ ui.heading('Images', x=4, y=-92, level=2) }}
+      {{ ui.label('External URL (placeholder PNG):',
+                  x=4, y=-100, color='aaa', size='sm') }}
+      {{ ui.image('https://placehold.co/240x80/15df15/ffffff.png?text=tmsm.ui',
+                  x=4, y=-104, w=40, h=12, keepratio='Fit') }}
+      {{ ui.label('Clickable + hover swap:',
+                  x=60, y=-100, color='aaa', size='sm') }}
+      {{ ui.image('https://placehold.co/80x80/333/fff.png?text=click',
+                  src_focus='https://placehold.co/80x80/c33d33/fff.png?text=hot',
+                  x=60, y=-104, w=12, h=12, keepratio='Fit',
+                  action='img_clicked') }}
+      {{ ui.label(image_msg or '(click the square on the right)',
+                  x=78, y=-110, color='ff0', size='sm') }}
+
+      {{ ui.heading('Current map thumbnail (.Map.Gbx)',
+                    x=82, y=-92, level=2) }}
+      {% if thumb_uid %}
+        {{ ui.image('http://127.0.0.1:' ~ thumb_port ~ '/thumb.jpg?uid=' ~ thumb_uid,
+                    x=82, y=-100, w=40, h=22, keepratio='Fit') }}
+        {{ ui.label(thumb_name or thumb_uid,
+                    x=124, y=-100, color='fff', size='sm') }}
+      {% else %}
+        {{ ui.label('No current map.',
+                    x=82, y=-100, color='aaa', size='sm') }}
+      {% endif %}
+    {% elif tab_key == 'advanced' %}
+      {{ ui.heading('Combo box (dropdown)', x=4, y=-18, level=2) }}
+      {{ ui.label('Region:', x=4, y=-26, color='aaa', size='sm') }}
+      {{ ui.combo_box('region', region_options, selected=region_value,
+                      open=region_open, x=20, y=-26, w=40) }}
+      {{ ui.label('value: ' + region_value, x=66, y=-26, color='ff0') }}
+
+      {{ ui.heading('Stepper', x=4, y=-50, level=2) }}
+      {{ ui.label('Volume:', x=4, y=-58, color='aaa', size='sm') }}
+      {{ ui.stepper('volume', value=stepper_value|string, x=20, y=-58, w=24) }}
+
+      {{ ui.heading('Modal + Toast', x=70, y=-50, level=2) }}
+      {{ ui.push_button('open_modal', 'Open modal', x=70, y=-58,
+                        variant='warning', size='sm', halign='left') }}
+      {{ ui.push_button('show_toast', 'Show toast', x=92, y=-58,
+                        variant='success', size='sm', halign='left') }}
+
+      {{ ui.heading('Tag list', x=4, y=-72, level=2) }}
+      {{ ui.tag_list('filters', tags, x=4, y=-80) }}
+    {% elif tab_key == 'data' %}
+      {{ ui.heading('Sortable data table', x=4, y=-18, level=2) }}
+      {{ ui.label('Click any column header to sort. Click again to flip direction.',
+                  x=4, y=-26, color='aaa', size='sm') }}
+      {{ ui.data_table('players_tbl', table_columns, table_rows,
+                       x=4, y=-32, w=130, row_h=5, header_h=6,
+                       sort_key=table_sort_key, sort_dir=table_sort_dir) }}
+    {% elif tab_key == 'layout' %}
+      {{ ui.heading('hlist', x=4, y=-18, level=2) }}
+      {% call(cx, cy, it) ui.hlist(hlist_items, x=4, y=-26, h=8, col_w=22, gap=1, stripe=True) %}
+        {{ ui.icon(it.icon,  x=cx + 3, y=cy - 4, color='15d') }}
+        {{ ui.label(it.label, x=cx + 8, y=cy - 4, color='fff') }}
+      {% endcall %}
+
+      {{ ui.heading('group_box + splitter', x=4, y=-40, level=2) }}
+      {% call(i, px, py, pw, ph) ui.splitter(x=4, y=-48, w=152, h=22,
+                                              ratio=0.5, orient='h', gap=2) %}
+        {% if i == 0 %}
+          {% call ui.group_box('Server', x=px, y=py, w=pw, h=ph) %}
+            {{ ui.label('host: tmsm.local', x=px+2, y=py-4,  color='fff', size='sm') }}
+            {{ ui.label('port: 2350',       x=px+2, y=py-9,  color='fff', size='sm') }}
+            {{ ui.label('players: 12/30',   x=px+2, y=py-14, color='ff0', size='sm') }}
+          {% endcall %}
+        {% else %}
+          {% call ui.group_box('Status', x=px, y=py, w=pw, h=ph) %}
+            {{ ui.badge('ONLINE',  x=px+2,  y=py-6,  variant='success', size='sm') }}
+            {{ ui.badge('PUBLIC',  x=px+22, y=py-6,  variant='primary', size='sm') }}
+            {{ ui.label('uptime: 4h 12m',  x=px+2, y=py-14, color='aaa', size='sm') }}
+          {% endcall %}
+        {% endif %}
+      {% endcall %}
+
+      {{ ui.heading('stack (wizard)', x=4, y=-74, level=2) }}
+      {{ ui.push_button('stack_prev', '< Prev', x=4,  y=-82, variant='ghost',
+                        size='sm', halign='left') }}
+      {{ ui.push_button('stack_next', 'Next >', x=24, y=-82, variant='primary',
+                        size='sm', halign='left') }}
+      {{ ui.label('step: ' + stack_step, x=46, y=-82, color='ff0', bold=True) }}
+      {% call(k) ui.stack(['intro', 'setup', 'done'], active=stack_step) %}
+        {% if k == 'intro' %}
+          {{ ui.label('Welcome to the wizard!  This is the intro step.',
+                      x=4, y=-90, color='fff', size='sm') }}
+        {% elif k == 'setup' %}
+          {{ ui.label('Configure your server settings here.',
+                      x=4, y=-90, color='fff', size='sm') }}
+        {% elif k == 'done' %}
+          {{ ui.label('All set!  Press Prev to start over.',
+                      x=4, y=-90, color='0f8', size='sm') }}
+        {% endif %}
+      {% endcall %}
+    {% elif tab_key == 'dialogs' %}
+      {{ ui.heading('Modal dialogs', x=4, y=-18, level=2) }}
+      {{ ui.label('Open one of the standard dialogs. They render centered on '
+                  'the screen, dim the background and emit signals on OK/Cancel.',
+                  x=4, y=-26, color='aaa', size='sm') }}
+
+      {{ ui.push_button('open_info',    'Info',    icon='info',
+                        x=4,  y=-36, variant='primary', size='md', halign='left') }}
+      {{ ui.push_button('open_error',   'Error',   icon='error',
+                        x=30, y=-36, variant='danger',  size='md', halign='left') }}
+
+      {{ ui.label('Confirm dialog — one per theme:',
+                  x=4, y=-46, color='aaa', size='sm') }}
+      {{ ui.push_button('open_confirm',         'Delete',  icon='trash',
+                        x=4,   y=-54, variant='danger',  size='md', halign='left') }}
+      {{ ui.push_button('open_confirm_action',  'Restart', icon='reload',
+                        x=30,  y=-54, variant='warning', size='md', halign='left') }}
+      {{ ui.push_button('open_confirm_save',    'Save',    icon='save',
+                        x=56,  y=-54, variant='primary', size='md', halign='left') }}
+      {{ ui.push_button('open_confirm_publish', 'Publish', icon='check',
+                        x=82,  y=-54, variant='success', size='md', halign='left') }}
+      {{ ui.push_button('open_confirm_reveal',  'Show',    icon='eye',
+                        x=108, y=-54, variant='ghost',   size='md', halign='left') }}
+
+      {{ ui.label('Three-button dialog (extra slot for "Don\'t save" / "Skip" / etc.):',
+                  x=4, y=-64, color='aaa', size='sm') }}
+      {{ ui.push_button('open_dlg_savequit', 'Unsaved changes', icon='save',
+                        x=4, y=-72, variant='primary', size='md', halign='left') }}
+
+      {{ ui.separator(x=4, y=-84, length=152) }}
+      {{ ui.heading('Last results', x=4, y=-90, level=2) }}
+      {{ ui.label('confirm: '   + (confirm_result or '(none)'),
+                  x=4,  y=-98, color='ff0', size='sm') }}
+    {% elif tab_key == 'more' %}
+      {{ ui.heading('Switch', x=4, y=-18, level=2) }}
+      {{ ui.switch('sw_notify',  on=sw_notify,  x=4, y=-26, label='Notify on join') }}
+      {{ ui.switch('sw_replays', on=sw_replays, x=4, y=-34, label='Save replays') }}
+      {{ ui.switch('sw_public',  on=sw_public,  x=4, y=-42, label='Public listing') }}
+
+      {{ ui.separator(x=70, y=-22, length=20, orient='v') }}
+
+      {{ ui.heading('Slider', x=80, y=-18, level=2) }}
+      {{ ui.label('Volume:',  x=80, y=-26, color='aaa', size='sm') }}
+      {{ ui.slider('vol',  value=vol,  min=0, max=100, step=10, ticks=10,
+                   x=96, y=-26, w=50, suffix='%') }}
+      {{ ui.label('Timeout:', x=80, y=-36, color='aaa', size='sm') }}
+      {{ ui.slider('tmo',  value=tmo,  min=0, max=60,  step=5,  ticks=12,
+                   x=96, y=-36, w=50, color='f80f', suffix='s') }}
+
+      {{ ui.separator(x=4, y=-50, length=152) }}
+
+      {{ ui.heading('Pagination', x=4, y=-56, level=2) }}
+      {{ ui.label('Page ' + page|string + ' / ' + total_pages|string,
+                  x=4, y=-64, color='aaa', size='sm') }}
+      {{ ui.pagination('pg', page=page, total_pages=total_pages,
+                       x=30, y=-64, max_visible=7) }}
+
+      {{ ui.separator(x=4, y=-72, length=152) }}
+
+      {{ ui.heading('Action menu', x=4, y=-78, level=2) }}
+      {{ ui.push_button('menu_toggle', 'Actions', icon='cog',
+                        x=4, y=-86, variant='primary', size='md', halign='left') }}
+      {{ ui.label('result: ' + (menu_result or '(none)'),
+                  x=30, y=-86, color='ff0', size='sm') }}
+      {{ ui.menu('menu', items=menu_items, open=menu_open,
+                 x=4, y=-90, w=36) }}
+
+      {{ ui.heading('Accordion', x=80, y=-78, level=2) }}
+      {% call(key, cx, cy, cw, ch) ui.accordion('acc', acc_sections,
+                                                  open_keys=acc_open,
+                                                  x=80, y=-86, w=72,
+                                                  header_h=6, body_h=14) %}
+        {% if key == 'general' %}
+          {{ ui.label('Server name:', x=cx + 2, y=cy - 4, color='aaa', size='sm') }}
+          {{ ui.label('tmsm-test',    x=cx + 24, y=cy - 4, color='fff') }}
+          {{ ui.label('Region:',      x=cx + 2, y=cy - 10, color='aaa', size='sm') }}
+          {{ ui.label('Europe',       x=cx + 24, y=cy - 10, color='fff') }}
+        {% elif key == 'network' %}
+          {{ ui.label('Port: 2350',   x=cx + 2, y=cy - 4, color='fff') }}
+          {{ ui.label('P2P enabled',  x=cx + 2, y=cy - 10, color='fff') }}
+        {% elif key == 'advanced' %}
+          {{ ui.label('No advanced settings yet.', x=cx + 2, y=cy - 4,
+                      color='aaa', size='sm') }}
+        {% endif %}
+      {% endcall %}
+    {% elif tab_key == 'more2' %}
+      {{ ui.heading('Breadcrumbs', x=4, y=-18, level=2) }}
+      {{ ui.breadcrumbs('crumbs', items=crumb_items, x=4, y=-26) }}
+      {{ ui.label('current: ' + crumb_current,
+                  x=100, y=-26, color='ff0', size='sm') }}
+
+      {{ ui.separator(x=4, y=-32, length=192) }}
+
+      {{ ui.heading('Search input', x=4, y=-38, level=2) }}
+      {{ ui.search_input('q', value=q_value, placeholder='Search maps...',
+                         x=4, y=-46, width=80) }}
+      {{ ui.label('value: ' + (q_value or '(empty)'),
+                  x=92, y=-46, color='ff0', size='sm') }}
+
+      {{ ui.separator(x=4, y=-52, length=192) }}
+
+      {{ ui.heading('Banners (floating, outside window)', x=4, y=-58, level=2) }}
+      {{ ui.label('Banners render at the top-right of the screen, '
+                  'independent of any window.',
+                  x=4, y=-64, color='aaa', size='sm') }}
+
+      {{ ui.separator(x=4, y=-70, length=192) }}
+
+      {{ ui.heading('Links', x=4, y=-76, level=2) }}
+      {{ ui.link('Open PyPlanet docs', url='https://pypla.net/',
+                 x=4, y=-84) }}
+      {{ ui.link('Show details', name='lk_details', icon='arrow_right',
+                 x=70, y=-84) }}
+      {{ ui.label('clicked: ' + (link_msg or '(none)'),
+                  x=110, y=-84, color='ff0', size='sm') }}
+
+    {% elif tab_key == 'more3' %}
+      {{ ui.heading('Tree view', x=4, y=-18, level=2) }}
+      {{ ui.tree_view('tv', nodes=tree_nodes,
+                      x=4, y=-26, w=140, row_h=5, indent=4) }}
+      {{ ui.label('selected: ' + (tree_selected or '(none)'),
+                  x=150, y=-26, color='ff0', size='sm') }}
+    {% endif %}
+
+  {% endcall %}
+
+</frame>
+
+{# modal + toast live OUTSIDE the demo's offset <frame> so they render at
+   absolute screen coordinates (modal needs perfect centering, toast pins
+   top-center). #}
+{% if modal_open %}
+  {% call(mx, my, mw, mh, mz) ui.modal('confirm', title='Delete map?',
+                                        w=110, h=30) %}
+    {{ ui.label('This cannot be undone. Are you sure you want to remove the map?',
+                x=mx+4, y=my-6, color='fff', size='sm', z=mz) }}
+    {{ ui.push_button('confirm_cancel', 'Cancel',
+                      x=mx+mw-38, y=my-mh+5, variant='ghost',
+                      size='sm', halign='left', z=mz) }}
+    {{ ui.push_button('confirm_ok', 'Delete', icon='trash',
+                      x=mx+mw-4, y=my-mh+5, variant='danger',
+                      size='sm', halign='right', z=mz) }}
+  {% endcall %}
+{% endif %}
+
+{{ ui.toast(message=toast_msg, variant=toast_variant, x=0, y=44, w=80) }}
+
+{# Banners — floating notifications anchored top-right of the screen,
+   independent of any window. Stacked vertically with a small gap. #}
+{% set bx = 88 %}
+{% set bw = 70 %}
+{% set bns = namespace(y=42) %}
+{% if banner_info %}
+  {{ ui.banner('PyPlanet update available — version 0.11.13.',
+               variant='info', name='b_info', dismissible=True,
+               x=bx, y=bns.y, w=bw, z=400) }}
+  {% set bns.y = bns.y - 10 %}
+{% endif %}
+{{ ui.banner('Configuration saved successfully.',
+             variant='success', x=bx, y=bns.y, w=bw, z=400) }}
+{% set bns.y = bns.y - 10 %}
+{{ ui.banner(message='3 maps failed validation. Review before publishing.',
+             title='Validation issues', variant='warning',
+             x=bx, y=bns.y, w=bw, h=12, z=400) }}
+{% set bns.y = bns.y - 14 %}
+{{ ui.banner('Dedicated server is offline. Restart to continue.',
+             variant='danger', name='b_offline', dismissible=banner_off_dismiss,
+             x=bx, y=bns.y, w=bw, z=400) }}
+
+{# Dialogs (info / error / confirm / file browser). Each is gated by an
+   `open` flag in the view context and renders absolutely centered. #}
+{{ ui.info_dialog('info', title='About tmsm.ui',
+                  message='tmsm.ui v1 — a declarative widget framework for '
+                          'PyPlanet manialinks. Inspired by Qt/PySide.',
+                  open=info_open) }}
+{{ ui.error_dialog('error', title='Operation failed',
+                   message='Could not connect to the dedicated server on '
+                           'port 2350. Check that the server is running and '
+                           'try again.',
+                   open=error_open) }}
+{{ ui.confirm_dialog('confirm_dlg', title='Delete map?',
+                     message='This cannot be undone. Are you sure you want '
+                             'to remove the selected map from rotation?',
+                     ok_label='Delete', ok_icon='trash', variant='danger',
+                     open=confirm_open) }}
+{{ ui.confirm_dialog('confirm_action', title='Restart server?',
+                     message='All connected players will be reconnected. '
+                             'Continue?',
+                     icon='reload',
+                     ok_label='Restart', ok_icon='reload', variant='warning',
+                     open=confirm_action_open) }}
+{{ ui.confirm_dialog('confirm_save', title='Save changes?',
+                     message='Your edits will be written to disk.',
+                     icon='save',
+                     ok_label='Save', ok_icon='save', variant='primary',
+                     open=confirm_save_open) }}
+{{ ui.confirm_dialog('confirm_publish', title='Publish setup?',
+                     message='The current map pool will go live for all '
+                             'players on this server.',
+                     icon='check',
+                     ok_label='Publish', ok_icon='check', variant='success',
+                     open=confirm_publish_open) }}
+{{ ui.confirm_dialog('confirm_reveal', title='Show hidden players?',
+                     message='Spectators will appear in the player list.',
+                     icon='eye',
+                     ok_label='Show', variant='ghost',
+                     open=confirm_reveal_open) }}
+{{ ui.dialog('dlg_savequit', title='Unsaved changes',
+             message='You have unsaved changes to the map pool. Save '
+                     'before closing?',
+             variant='primary', icon='save',
+             ok_label='Save',         ok_icon='save',
+             cancel_label='Cancel',
+             extra_label="Don't save", extra_icon='cross',
+             extra_variant='danger',
+             w=110,
+             open=dlg_savequit_open) }}
+
+{{ ui.hover_script() }}

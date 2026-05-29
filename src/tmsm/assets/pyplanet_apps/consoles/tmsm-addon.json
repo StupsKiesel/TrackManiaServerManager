@@ -1,0 +1,4 @@
+{
+  "description": "Two master-only hub apps: GBX (dedicated server XML-RPC) console and PyPlanet chat-command console. Each shows a live log tail with an input + send.",
+  "author": "tmsm"
+}

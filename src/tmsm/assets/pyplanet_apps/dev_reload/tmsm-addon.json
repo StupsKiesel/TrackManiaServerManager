@@ -1,0 +1,4 @@
+{
+  "description": "Master-admin-only bottom-right button that restarts the current PyPlanet pool process (relies on PyPlanet's god to bring it back up).",
+  "author": "tmsm"
+}

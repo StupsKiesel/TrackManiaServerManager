@@ -1,0 +1,66 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context: mode_name, fields=[{key,label,kind,value,default,dirty}],
+   status, status_color, dirty_count, loading #}
+
+<frame pos="-100 60" z-index="200">
+
+  {{ ui.window('Mode settings — ' ~ mode_name, icon='flag', x=0, y=0, w=200, h=130) }}
+
+  {% if loading %}
+    {{ ui.label('loading…', x=100, y=-65, halign='center', color='888') }}
+  {% endif %}
+
+  {% set row_h = 4.5 %}
+  {% set max_rows = 22 %}
+  {% for f in fields[:max_rows] %}
+    {% set y = -12 - loop.index0 * row_h %}
+    {{ ui.label(f.label, x=4, y=y, size='sm',
+                color=('fff' if f.dirty else 'ccc'),
+                bold=f.dirty) }}
+    {{ ui.label(f.key, x=4, y=y-1.7, size='sm', color='666') }}
+    {% if f.kind == 'bool' %}
+      {% set on = (f.value == '1') %}
+      {% set color = ('0f0' if on else '888') %}
+      {% set mark = 'check' if on else 'cross' %}
+      <quad pos="120 {{ y + 1.5 }}" z-index="202" size="20 3.5" bgcolor="fff0"
+            id="togbtn_{{ id }}__toggle__{{ f.key }}"
+            action="{{ id }}__toggle__{{ f.key }}"
+            ScriptEvents="1" />
+      {{ ui.icon(mark, x=122, y=y, color=color, font=2.0) }}
+      {{ ui.label(('true' if on else 'false'), x=128, y=y,
+                  size='sm', color=color) }}
+    {% else %}
+      {{ ui.line_edit('field__' ~ f.key, value=f.value,
+                      x=120, y=y, width=72, size='sm') }}
+    {% endif %}
+    {% if f.dirty %}
+      {{ ui.label('*', x=2, y=y, size='sm', color='fc4', bold=True) }}
+    {% endif %}
+  {% endfor %}
+
+  {% if fields|length > max_rows %}
+    {{ ui.label('… (+' ~ (fields|length - max_rows)|string ~ ' more — not shown)',
+                x=4, y=-115, size='sm', color='888') }}
+  {% endif %}
+
+  {# controls #}
+  {{ ui.push_button('save', 'Save (' ~ dirty_count|string ~ ' changes)',
+                    icon='save', x=4, y=-125,
+                    variant=('success' if dirty_count else 'ghost'),
+                    halign='left', size='sm') }}
+  {{ ui.push_button('refresh', 'Reset', icon='reload',
+                    x=50, y=-125, variant='ghost', halign='left', size='sm') }}
+  {{ ui.push_button('back', '< Back to hub', icon='arrow_left',
+                    x=70, y=-125, variant='primary', halign='left', size='sm') }}
+
+  {{ ui.label(status, x=196, y=-125, halign='right',
+              color=status_color, size='sm') }}
+
+  {{ ui.status_bar(x=0, y=0, w=200, h=130,
+                   left='mode: ' + (mode_name or '?'),
+                   center='',
+                   right=fields|length|string + ' params') }}
+
+  {{ ui.hover_script() }}
+</frame>

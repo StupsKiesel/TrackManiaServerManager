@@ -1,0 +1,50 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# Per-player ctx provides: title, kind, lines (list[str], most-recent last),
+   prompt, hint, input_value, last_status, last_status_color, log_path #}
+
+<frame pos="-100 60" z-index="200">
+
+  {{ ui.window(title, icon='cog', x=0, y=0, w=200, h=130) }}
+
+  {# log area: simple line-by-line render of the last N entries.
+     We render newest line at the top so the most recent output is visible
+     without any scrolling. #}
+  <quad pos="2 -10" z-index="201" size="196 96" bgcolor="0006"
+        halign="left" valign="top" />
+  {% set max_lines = 28 %}
+  {% set ln = lines[-max_lines:] %}
+  {% for line in ln|reverse %}
+    {% set y = -12 - loop.index0 * 3.2 %}
+    {% set color = 'f88' if '[err]' in line or 'ERROR' in line or 'Traceback' in line
+                   else ('ff8' if 'WARNING' in line or '[warn]' in line
+                   else ('8f8' if line.startswith('$') or line.startswith('>') else 'ddd')) %}
+    <label pos="4 {{ y }}" z-index="202" halign="left" valign="center2"
+           text="${{ color }}{{ line }}" textsize="0.85" textfont="GameFont" />
+  {% endfor %}
+
+  {# input row #}
+  {{ ui.label(prompt, x=2, y=-110, color='15f', bold=True) }}
+  {{ ui.line_edit('cmd', value=input_value, x=10, y=-110, width=148, size='md') }}
+  {{ ui.push_button('send', 'Send', icon='check',
+                    x=160, y=-110, variant='success', halign='left', size='md') }}
+  {{ ui.push_button('clear', 'Clear', icon='trash',
+                    x=178, y=-110, variant='danger', halign='left', size='md') }}
+
+  {# hint + status line #}
+  {{ ui.label(hint, x=2, y=-117, color='888', size='sm') }}
+  {{ ui.label(last_status, x=198, y=-117, color=last_status_color, halign='right', size='sm') }}
+
+  {# controls #}
+  {{ ui.push_button('refresh', 'Refresh', icon='reload',
+                    x=2, y=-125, variant='ghost', halign='left', size='sm') }}
+  {{ ui.push_button('back', '< Back to hub', icon='arrow_left',
+                    x=22, y=-125, variant='primary', halign='left', size='sm') }}
+
+  {{ ui.status_bar(x=0, y=0, w=200, h=130,
+                   left='kind: ' + kind,
+                   center=log_path or '(no log file)',
+                   right=(lines|length|string) + ' lines') }}
+
+  {{ ui.hover_script() }}
+</frame>

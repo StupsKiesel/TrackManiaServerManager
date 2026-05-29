@@ -23,8 +23,13 @@ class AssetsScreen(Screen):
     ]
 
     DEFAULT_CSS = """
-    #addons-wrap { height: 1fr; }
-    #addons-info { height: auto; padding: 1; color: $text-muted; }
+    AssetsScreen #addons-wrap { height: 1fr; }
+    AssetsScreen #addons-info-wrap {
+        height: auto;
+        max-height: 50%;
+        border: round $accent;
+    }
+    AssetsScreen #addons-info { height: auto; padding: 1; color: $text-muted; }
     """
 
     def __init__(self) -> None:
@@ -35,7 +40,7 @@ class AssetsScreen(Screen):
         yield Header(show_clock=False)
         with Container(id="addons-wrap"):
             yield DataTable(id="addons", cursor_type="row", zebra_stripes=True)
-        yield Vertical(Static("", id="addons-info"))
+        yield Vertical(Static("", id="addons-info"), id="addons-info-wrap")
         yield Footer()
 
     def on_mount(self) -> None:

@@ -129,22 +129,64 @@ class _NetSnap(NamedTuple):
     ts: float
 
 
+def _pick_primary_nic() -> str | None:
+    """Pick the most likely 'primary' network interface.
+
+    eth0 used to be a safe bet on bare metal Linux, but VMs (and modern
+    systemd-named hosts) ship interfaces like ens33, enp0s3, eth1, wlan0,
+    etc. We pick the interface that is (a) up, (b) not loopback/docker/
+    virtual bridge, and (c) has the most traffic so far. Falls back to
+    any up non-loopback interface, then to None.
+    """
+    try:
+        stats = psutil.net_if_stats()
+    except Exception:
+        stats = {}
+    counters = psutil.net_io_counters(pernic=True)
+
+    def _is_virtual(name: str) -> bool:
+        prefixes = ("lo", "docker", "br-", "veth", "virbr", "vmnet",
+                    "tun", "tap", "wg", "zt")
+        return any(name == p or name.startswith(p) for p in prefixes)
+
+    candidates: list[tuple[int, str]] = []
+    for name, st in stats.items():
+        if not st.isup or _is_virtual(name):
+            continue
+        c = counters.get(name)
+        traffic = (c.bytes_sent + c.bytes_recv) if c else 0
+        candidates.append((traffic, name))
+
+    if candidates:
+        candidates.sort(reverse=True)
+        return candidates[0][1]
+
+    # Fallback: any up non-loopback interface
+    for name, st in stats.items():
+        if st.isup and name != "lo":
+            return name
+    return None
+
+
 def _net_panel(
     prev: _NetSnap | None,
     up_hist: deque[float],
     dn_hist: deque[float],
+    nic: str | None,
 ) -> tuple[Panel, _NetSnap | None]:
     counters = psutil.net_io_counters(pernic=True)
-    eth = counters.get("eth0")
-    if eth is None:
+    iface = counters.get(nic) if nic else None
+    if iface is None:
+        available = ", ".join(sorted(counters.keys())) or "(none)"
         panel = Panel(
-            "[dim]eth0 not found[/dim]",
-            title="[bold green]Network (eth0)[/bold green]",
+            f"[dim]No active network interface detected.\n"
+            f"Available: {available}[/dim]",
+            title="[bold green]Network[/bold green]",
             border_style="green",
         )
         return panel, None
 
-    now = _NetSnap(eth.bytes_sent, eth.bytes_recv, time.monotonic())
+    now = _NetSnap(iface.bytes_sent, iface.bytes_recv, time.monotonic())
     if prev is not None and (now.ts - prev.ts) > 0:
         dt = now.ts - prev.ts
         up_bps = max(0.0, (now.sent - prev.sent) / dt)
@@ -159,11 +201,11 @@ def _net_panel(
         f"  [green]↑ Upload  [/green] {_speed(up_bps)}  {_sparkline(up_hist, 'green')}",
         f"  [cyan]↓ Download[/cyan] {_speed(dn_bps)}  {_sparkline(dn_hist, 'cyan')}",
         "",
-        f"  [dim]Total  sent: {_gb(eth.bytes_sent)}   recv: {_gb(eth.bytes_recv)}[/dim]",
+        f"  [dim]Total  sent: {_gb(iface.bytes_sent)}   recv: {_gb(iface.bytes_recv)}[/dim]",
     ]
     return Panel(
         "\n".join(lines),
-        title="[bold green]Network (eth0)[/bold green]",
+        title=f"[bold green]Network ({nic})[/bold green]",
         border_style="green",
         padding=(0, 1),
     ), now
@@ -266,6 +308,7 @@ class StatsScreen(Screen):
     def __init__(self) -> None:
         super().__init__()
         self._net_prev: _NetSnap | None = None
+        self._nic: str | None = None
         self._cpu_hist: deque[float] = deque([0.0] * HISTORY_LEN, maxlen=HISTORY_LEN)
         self._up_hist: deque[float] = deque([0.0] * HISTORY_LEN, maxlen=HISTORY_LEN)
         self._dn_hist: deque[float] = deque([0.0] * HISTORY_LEN, maxlen=HISTORY_LEN)
@@ -284,10 +327,13 @@ class StatsScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        # Prime network counter so first tick shows a real delta
-        eth = psutil.net_io_counters(pernic=True).get("eth0")
-        if eth:
-            self._net_prev = _NetSnap(eth.bytes_sent, eth.bytes_recv, time.monotonic())
+        # Detect primary NIC (eth0 on bare metal, ens33/enp0s3/etc. on VMs).
+        self._nic = _pick_primary_nic()
+        if self._nic:
+            iface = psutil.net_io_counters(pernic=True).get(self._nic)
+            if iface:
+                self._net_prev = _NetSnap(iface.bytes_sent, iface.bytes_recv,
+                                          time.monotonic())
         self.update_stats()
         self.set_interval(2.0, self.update_stats)
 
@@ -299,7 +345,7 @@ class StatsScreen(Screen):
         self.query_one("#stats-mem", Static).update(_mem_panel())
         self.query_one("#stats-disk", Static).update(_disk_panel())
 
-        net, self._net_prev = _net_panel(self._net_prev, self._up_hist, self._dn_hist)
+        net, self._net_prev = _net_panel(self._net_prev, self._up_hist, self._dn_hist, self._nic)
         self.query_one("#stats-net", Static).update(net)
 
         gpu = _gpu_panel()

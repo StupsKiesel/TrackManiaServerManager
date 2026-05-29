@@ -32,6 +32,7 @@ class MainScreen(Screen):
         Binding("y", "systemctl",   "Services"),
         Binding("a", "addons",      "Addons"),
         Binding("l", "tmsm_logs",   "App logs"),
+        Binding("d", "diagnostics", "Diagnose"),
         Binding("u", "update_tmsm", "Update tmsm"),
     ]
 
@@ -189,6 +190,10 @@ class MainScreen(Screen):
     def action_tmsm_logs(self) -> None:
         from .tmsm_logs_screen import TmsmLogsScreen
         self.app.push_screen(TmsmLogsScreen())
+
+    def action_diagnostics(self) -> None:
+        from .diagnostics_screen import DiagnosticsScreen
+        self.app.push_screen(DiagnosticsScreen(), lambda _: self.refresh_instances())
 
     def action_update_tmsm(self) -> None:
         from .install_screen import InstallScreen

@@ -139,6 +139,10 @@ class SystemctlScreen(Screen):
             return
         def _got(pw: str | None) -> None:
             if pw is None:
+                # User cancelled the auth prompt — services screen is useless
+                # without sudo, so bail back to the previous screen.
+                self.notify("Authentication cancelled.", severity="warning")
+                self.app.pop_screen()
                 return
             self._password = pw
             self.app.sudo_password = pw  # type: ignore[attr-defined]

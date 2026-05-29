@@ -17,15 +17,27 @@ class ConfirmScreen(ModalScreen[bool]):
 
     DEFAULT_CSS = """
     ConfirmScreen { align: center middle; }
-    #confirm-box {
-        width: 60;
+    ConfirmScreen > #confirm-box {
+        width: auto;
+        min-width: 40;
+        max-width: 72;
         height: auto;
         padding: 1 2;
-        border: round $warning;
+        border: round $primary;
         background: $surface;
     }
-    #confirm-buttons { padding-top: 1; align-horizontal: center; }
-    Button { margin: 0 1; }
+    ConfirmScreen.-destructive > #confirm-box { border: round $error; }
+    ConfirmScreen #confirm-msg {
+        width: auto;
+        max-width: 68;
+        padding: 0 0 1 0;
+    }
+    ConfirmScreen #confirm-buttons {
+        width: 100%;
+        height: auto;
+        align-horizontal: right;
+    }
+    ConfirmScreen #confirm-buttons Button { margin: 0 0 0 2; min-width: 10; }
     """
 
     def __init__(self, message: str, *, title: str = "Confirm",
@@ -39,15 +51,18 @@ class ConfirmScreen(ModalScreen[bool]):
         self.destructive = destructive
 
     def compose(self) -> ComposeResult:
-        with Container(id="confirm-box"):
-            yield Label(f"[b]{self.title_text}[/b]")
-            yield Label(self.message)
+        box = Container(id="confirm-box")
+        box.border_title = self.title_text
+        with box:
+            yield Label(self.message, id="confirm-msg")
             with Horizontal(id="confirm-buttons"):
+                yield Button(self.cancel_label, id="cancel")
                 ok_variant = "error" if self.destructive else "primary"
                 yield Button(self.ok_label, id="ok", variant=ok_variant)
-                yield Button(self.cancel_label, id="cancel")
 
     def on_mount(self) -> None:
+        if self.destructive:
+            self.add_class("-destructive")
         self.query_one("#cancel", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

@@ -27,8 +27,17 @@ TMSM_ROOT = Path.home() / ".tmsm"
 PYPL_ROOT = TMSM_ROOT / "pyplanet"
 PYPL_APPS_DIR = PYPL_ROOT / "src" / "pyplanet" / "apps" / "tmsm"
 APPS_PY = PYPL_ROOT / "pools" / "pypl" / "settings" / "apps.py"
+# Legacy explicit markers — still recognised for old apps.py files,
+# but new writes use the header-based block managed by tmsm.assets.apps_py.
 MARK_BEGIN = "# >>> tmsm-managed (uncomment a line to activate the addon) >>>"
 MARK_END = "# <<< tmsm-managed <<<"
+
+# Header-based block markers (current format). The block is the contiguous
+# run of group headers + entries; nothing else surrounds it.
+_HEADER_RE = re.compile(
+    r"^[ \t]*#[ \t]*---[ \t]*(?:TrackManiaServerManager|Community made|other)[ \t]*---[ \t]*$"
+)
+_ENTRY_RE = re.compile(r"""^[ \t]*(\#[ \t]*)?["']([A-Za-z0-9_.]+)["'][ \t]*,?[ \t]*$""")
 
 
 def _read_meminfo() -> dict[str, int]:
@@ -383,25 +392,56 @@ class SystemApp(AppConfig):
     def _read_apps_block(self) -> tuple[list[str], list[str], list[str]]:
         """Return (head_lines, managed_module_names, tail_lines).
 
-        managed_module_names contains every module currently active inside the
-        tmsm-managed block (with or without leading whitespace, no leading #).
+        managed_module_names contains every module currently active inside
+        the tmsm-managed block (uncommented entries only). Supports both the
+        current header-based block and the legacy >>> / <<< markers.
         """
         text = APPS_PY.read_text(encoding="utf-8") if APPS_PY.is_file() else ""
         lines = text.splitlines()
+
+        # Legacy marker format takes priority — it's unambiguous.
         try:
             i_begin = next(i for i, l in enumerate(lines) if MARK_BEGIN in l)
             i_end = next(i for i, l in enumerate(lines) if MARK_END in l)
+            active: list[str] = []
+            for raw in lines[i_begin + 1:i_end]:
+                s = raw.strip()
+                if not s or s.startswith("#"):
+                    continue
+                m = re.match(r"['\"]([^'\"]+)['\"]\s*,?", s)
+                if m:
+                    active.append(m.group(1))
+            return lines[:i_begin + 1], active, lines[i_end:]
         except StopIteration:
+            pass
+
+        # Header-based format: find the contiguous run of group headers /
+        # entry lines / blank lines anchored at the first matching header.
+        first_idx = next((i for i, l in enumerate(lines) if _HEADER_RE.match(l)), None)
+        if first_idx is None:
             return lines, [], []
-        active: list[str] = []
-        for raw in lines[i_begin + 1:i_end]:
-            s = raw.strip()
-            if not s or s.startswith("#"):
+        # Include preceding blank lines so we replace them too on rewrite.
+        start_idx = first_idx
+        while start_idx > 0 and lines[start_idx - 1].strip() == "":
+            start_idx -= 1
+        last_content = first_idx
+        i = first_idx
+        while i < len(lines):
+            stripped = lines[i].strip()
+            if stripped == "":
+                i += 1
                 continue
-            m = re.match(r"['\"]([^'\"]+)['\"]\s*,?", s)
-            if m:
-                active.append(m.group(1))
-        return lines[:i_begin + 1], active, lines[i_end:]
+            if _HEADER_RE.match(lines[i]) or _ENTRY_RE.match(lines[i]):
+                last_content = i
+                i += 1
+                continue
+            break
+        active = []
+        for raw in lines[start_idx:last_content + 1]:
+            em = _ENTRY_RE.match(raw)
+            if em and em.group(1) is None:   # uncommented = active
+                active.append(em.group(2))
+        return lines[:start_idx], active, lines[last_content + 1:]
 
     def apps_context(self, login: str | None) -> dict[str, Any]:
         head, active, tail = self._read_apps_block()
@@ -425,9 +465,49 @@ class SystemApp(AppConfig):
                 "status_text": status_text, "status_color": status_color}
 
     def _write_apps_block(self, enabled_modules: list[str]) -> None:
+        """Rewrite the tmsm-managed block. Uses the shared writer when the
+        tmsm package is importable (the usual case in tmsm-managed pools),
+        which preserves grouped headers and the on-disk format used by new
+        pools. Falls back to a minimal in-place rewrite otherwise.
+        """
+        try:
+            from tmsm.assets import apps_py as apps_py_mod  # type: ignore
+        except Exception:
+            apps_py_mod = None  # type: ignore
+
+        if apps_py_mod is not None:
+            # Collect every module we want to keep tracked (active + inactive
+            # on disk + everything currently discoverable on the filesystem).
+            _, active_on_disk, _ = self._read_apps_block()
+            tracked: set[str] = set(active_on_disk)
+            for a in self._discover_addons():
+                tracked.add(a["module"])
+            tracked.update(enabled_modules)
+
+            # First pass: sync the full list (preserves per-module state).
+            apps_py_mod.sync_apps_py(APPS_PY, sorted(tracked))
+
+            # Second pass: force each entry to the user's chosen state.
+            wanted_active = set(enabled_modules)
+            out: list[str] = []
+            for line in APPS_PY.read_text(encoding="utf-8").splitlines():
+                em = _ENTRY_RE.match(line)
+                if not em:
+                    out.append(line)
+                    continue
+                module = em.group(2)
+                indent = re.match(r"^([ \t]*)", line).group(1)  # type: ignore[union-attr]
+                if module in wanted_active:
+                    out.append(f"{indent}'{module}',")
+                else:
+                    out.append(f"{indent}# '{module}',")
+            APPS_PY.write_text("\n".join(out) + "\n", encoding="utf-8")
+            return
+
+        # Fallback (tmsm not importable from this venv): minimal rewrite.
         head, _active, tail = self._read_apps_block()
-        if not head or not tail:
-            raise RuntimeError("tmsm-managed markers not found in apps.py")
+        if not head and not tail:
+            raise RuntimeError("could not locate tmsm-managed block in apps.py")
         body = ["        '" + m + "'," for m in enabled_modules]
         new_lines = head + body + tail
         APPS_PY.write_text("\n".join(new_lines) + "\n", encoding="utf-8")

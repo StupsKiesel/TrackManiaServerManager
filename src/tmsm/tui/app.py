@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-from textual.app import App
+from datetime import datetime
+from pathlib import Path
+from typing import Iterable
+
+from textual.app import App, SystemCommand
+from textual.screen import Screen
 
 from .. import __version__
+from .. import paths
 from ..config import load as load_config
 from .main_screen import MainScreen
 
@@ -65,4 +71,48 @@ class TmsmApp(App):
             "↑/↓ select · Enter actions · n new · R refresh · ? help · q quit",
             title="Keys",
             timeout=8,
+        )
+
+    def action_screenshot(
+        self, filename: str | None = None, path: str | None = None
+    ) -> None:
+        """Save an SVG screenshot to ~/.tmsm/screenshots/ by default.
+
+        Textual's built-in action calls ``deliver_screenshot`` which uses a
+        terminal file-transfer escape sequence; almost no terminal (Windows
+        Terminal, gnome-terminal, xterm, tmux, …) supports it, so the
+        screenshot silently disappears. We generate the SVG with
+        ``export_screenshot`` and write it ourselves under TMSM_HOME so it
+        always works and is easy to find.
+        """
+        target_dir = paths.HOME / "screenshots" if path is None else Path(path)
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            self.notify(f"Cannot create {target_dir}: {e}",
+                        severity="error", timeout=10)
+            return
+        if filename is None:
+            filename = f"tmsm-{datetime.now().strftime('%Y%m%d-%H%M%S')}.svg"
+        out = target_dir / filename
+        try:
+            svg = self.export_screenshot(title=str(self.title))
+            out.write_text(svg, encoding="utf-8")
+        except Exception as e:
+            self.notify(f"Screenshot failed: {e}", severity="error", timeout=10)
+            return
+        self.notify(f"Screenshot saved: {out}", title="Screenshot", timeout=8)
+
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        """Replace Textual's built-in 'Screenshot' command (which uses the
+        terminal file-delivery escape sequence and silently fails on every
+        common terminal) with one that writes the SVG to disk directly."""
+        for cmd in super().get_system_commands(screen):
+            if cmd.title.lower().startswith("screenshot"):
+                continue
+            yield cmd
+        yield SystemCommand(
+            "Save screenshot",
+            f"Save an SVG screenshot under {paths.HOME / 'screenshots'}",
+            lambda: self.set_timer(0.1, self.action_screenshot),
         )

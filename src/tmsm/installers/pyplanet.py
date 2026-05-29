@@ -154,22 +154,53 @@ TIMEZONE = "UTC"
 '''
 
 _SETTINGS_APPS_TEMPLATE = '''\
-"""Apps loaded for pool {pool_name}. Add or remove contrib apps here."""
+"""Apps loaded for pool {pool_name}. Add or remove contrib apps here.
+
+Every PyPlanet contrib app shipped with this install is listed below.
+Comment a line out to disable it; uncomment a commented one to enable.
+
+A few apps need extra configuration (API keys, external URLs, etc.) and
+are commented out by default so the pool starts cleanly.
+"""
 
 # These are added *after* the mandatory core apps (core.pyplanet,
 # core.maniaplanet, core.trackmania, …) which PyPlanet always loads.
 APPS = {{
     "default": [
+        # --- admin & player management ---
         "pyplanet.apps.contrib.admin",
-        "pyplanet.apps.contrib.jukebox",
-        "pyplanet.apps.contrib.karma",
-        "pyplanet.apps.contrib.local_records",
         "pyplanet.apps.contrib.players",
-        "pyplanet.apps.contrib.info",
+
+        # --- maps / jukebox / voting ---
+        "pyplanet.apps.contrib.jukebox",
         "pyplanet.apps.contrib.mx",
-        "pyplanet.apps.contrib.transactions",
-        "pyplanet.apps.contrib.clock",
+        "pyplanet.apps.contrib.queue",
+        "pyplanet.apps.contrib.voting",
+        # Requires Openplanet/Nadeo Club access; uncomment if configured:
+        # "pyplanet.apps.contrib.nadeo_add_maps",
+
+        # --- records & scoring ---
+        "pyplanet.apps.contrib.local_records",
+        "pyplanet.apps.contrib.live_rankings",
+        "pyplanet.apps.contrib.rankings",
+        "pyplanet.apps.contrib.sector_times",
+        "pyplanet.apps.contrib.best_cps",
+        "pyplanet.apps.contrib.dynamic_points",
+        # Requires a Dedimania server key; uncomment after configuring it:
+        # "pyplanet.apps.contrib.dedimania",
+
+        # --- karma / info / chat ---
+        "pyplanet.apps.contrib.karma",
+        "pyplanet.apps.contrib.info",
         "pyplanet.apps.contrib.funcmd",
+        "pyplanet.apps.contrib.transactions",
+        "pyplanet.apps.contrib.ads",
+
+        # --- HUD / time / music ---
+        "pyplanet.apps.contrib.clock",
+        "pyplanet.apps.contrib.dynatime",
+        # Needs a music stream URL; uncomment after configuring it:
+        # "pyplanet.apps.contrib.music_server",
     ]
 }}
 '''
@@ -215,6 +246,20 @@ def create_pool(name: str, target_server: str, super_pw: str, xmlrpc_port: int, 
         pool_name=name,
     ))
     log(f"Wrote settings for pool '{name}'")
+
+    # Populate the tmsm-managed block with any addons (bundled + community)
+    # that are already installed system-wide. Entries land commented-out so
+    # the pool boots even if an addon has setup requirements.
+    try:
+        from ..assets.state import load_state
+        from ..assets import apps_py as apps_py_mod
+        installed = load_state().installed
+        if installed:
+            modules = [a.module_name for a in installed.values()]
+            apps_py_mod.sync_apps_py(root / "settings" / "apps.py", modules)
+            log(f"Registered {len(modules)} installed tmsm/community addon(s) (commented-out by default)")
+    except Exception as e:
+        log(f"WARNING: could not sync installed addons into apps.py: {e}")
 
     PoolMeta(
         name=name,

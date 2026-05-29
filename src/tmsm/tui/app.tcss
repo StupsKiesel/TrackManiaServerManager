@@ -3,14 +3,19 @@ Screen {
 }
 
 #table-wrap {
-    height: 60%;
+    height: 1fr;
     border: round $accent;
 }
 
 #details {
-    height: 1fr;
+    height: auto;
+    max-height: 50%;
     border: round $accent;
     padding: 1 2;
+}
+
+#details-body {
+    height: auto;
 }
 
 DataTable {

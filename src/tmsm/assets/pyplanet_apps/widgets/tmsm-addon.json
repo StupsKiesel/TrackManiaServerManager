@@ -1,0 +1,4 @@
+{
+  "description": "tmsm widgets: registry + position editor + animated hide rules + popup dispatch for HUD widgets. Apps register a widget by subclassing WidgetAppBase.",
+  "author": "tmsm"
+}

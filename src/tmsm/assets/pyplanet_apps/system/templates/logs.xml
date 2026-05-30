@@ -1,56 +1,155 @@
 {% import 'tmsm_ui/widgets.xml' as ui with context %}
 
-{# context: files=[{path,label,size}], active, filter, lines, log_path #}
+{# context:
+   files=[{path,label,category,size,size_bytes}], active, filter,
+   lines (current page only, oldest->newest, already h-scrolled & escaped), log_path,
+   page, total_pages, line_count,
+   hscroll, max_line_len (longest raw line in page, for end-detection),
+   selected (last clicked line, for copying),
+   status, status_color, confirm_delete (path pending confirm or '')
+#}
 
-<frame pos="-100 60" z-index="200">
+{% set W = 300 %}
+{% set H = 160 %}
+{% set LEFT_W = 70 %}
+{% set RIGHT_X = LEFT_W + 4 %}
+{% set RIGHT_W = W - RIGHT_X - 2 %}
+{% set ROWS_VISIBLE = 27 %}
+{% set LOG_TOP = -20 %}
+{% set LOG_BOTTOM = -132 %}
+{% set LINE_STEP = 3.0 %}
+{% set HS_Y = LOG_BOTTOM - 4 %}
+{% set BOTTOM_Y = -H + 6 %}
+{% set LEFT_BG_H = 134 %}
 
-  {{ ui.window('Logs viewer', icon='file', x=0, y=0, w=200, h=130) }}
+<frame pos="-150 80" z-index="200">
 
-  {# left column: file list #}
-  <quad pos="2 -10" z-index="201" size="48 108" bgcolor="0006" />
-  {{ ui.label('Log files', x=4, y=-12, size='sm', color='8af', bold=True) }}
-  {% for f in files %}
-    {% set y = -17 - loop.index0 * 5.0 %}
-    <quad pos="3 {{ y + 2 }}" z-index="202" size="46 4.5"
-          bgcolor="{% if f.path == active %}1568{% else %}0000{% endif %}" />
-    <quad pos="3 {{ y + 2 }}" z-index="203" size="46 4.5" bgcolor="fff0"
-          id="pickbtn_{{ id }}__pick__{{ loop.index0 }}"
-          action="{{ id }}__pick__{{ loop.index0 }}"
-          ScriptEvents="1" />
-    {{ ui.label(f.label, x=4, y=y, size='sm',
-                color=('fff' if f.path == active else 'ccc')) }}
-    {{ ui.label(f.size, x=49, y=y, size='sm', halign='right', color='888') }}
+  {{ ui.window('Logs Viewer', icon='file', x=0, y=0, w=W, h=H) }}
+
+  {# ---------- left: file list ---------- #}
+  <quad pos="2 -12" z-index="201" size="{{ LEFT_W }} {{ LEFT_BG_H }}" bgcolor="0006" />
+  {{ ui.label('Log files (' + (files|length|string) + ')',
+              x=4, y=-14, size='sm', color='8af', bold=True) }}
+
+  {% for f in files[:ROWS_VISIBLE] %}
+    {% set i = loop.index0 %}
+    {% set y = -19 - i * 4.5 %}
+    {% set is_active = (f.path == active) %}
+    {# row highlight #}
+    <quad pos="3 {{ y + 2 }}" z-index="202" size="{{ LEFT_W - 2 }} 4.2"
+          bgcolor="{% if is_active %}1568{% else %}0000{% endif %}" />
+    {# select hit-area (covers the row except the trailing X button) #}
+    <quad pos="3 {{ y + 2 }}" z-index="203" size="{{ LEFT_W - 8 }} 4.2" bgcolor="fff0"
+          id="lbtn_{{ id }}__pick__{{ i }}"
+          action="{{ id }}__pick__{{ i }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    {# [cat] name #}
+    {{ ui.label('[' ~ f.category ~ '] ' ~ f.label,
+                x=4, y=y, size='sm',
+                color=('fff' if is_active else 'ccc')) }}
+    {# delete X (per-row) — tiny, far right #}
+    <quad pos="{{ LEFT_W - 4 }} {{ y + 2 }}" z-index="204" size="4 4.2"
+          bgcolor="{% if confirm_delete == f.path %}c33d{% else %}3334{% endif %}"
+          id="dbtn_{{ id }}__delfile__{{ i }}"
+          action="{{ id }}__delfile__{{ i }}" scriptevents="1"
+          class="ui-btn" />
+    <label pos="{{ LEFT_W - 2 }} {{ y }}" z-index="205"
+           halign="center" valign="center2"
+           text="$fff&#xf00d;" textsize="0.7" textfont="Icons" />
   {% endfor %}
 
-  {# right column: log content #}
-  <quad pos="52 -10" z-index="201" size="146 100" bgcolor="0006" />
-  {% set max_lines = 28 %}
-  {% set ln = lines[-max_lines:] %}
-  {% for line in ln|reverse %}
-    {% set y = -12 - loop.index0 * 3.2 %}
-    {% set color = 'f88' if 'ERROR' in line or 'Traceback' in line
-                   else ('ff8' if 'WARNING' in line or '[warn]' in line
-                   else 'ddd') %}
-    <label pos="54 {{ y }}" z-index="202" halign="left" valign="center2"
-           text="${{ color }}{{ line }}" textsize="0.85" textfont="GameFont" />
-  {% endfor %}
+  {% if files|length > ROWS_VISIBLE %}
+    {{ ui.label('(+' ~ (files|length - ROWS_VISIBLE) ~ ' more)',
+                x=4, y=-19 - ROWS_VISIBLE * 4.5, size='sm', color='666') }}
+  {% endif %}
 
-  {# filter row #}
-  {{ ui.label('filter', x=52, y=-114, color='888', size='sm') }}
-  {{ ui.line_edit('filter', value=filter, x=63, y=-114, width=110, size='sm') }}
+  {# ---------- right: filter bar at top ---------- #}
+  {{ ui.label('Filter:', x=RIGHT_X, y=-14, size='sm', color='888') }}
+  {{ ui.line_edit('filter', value=filter,
+                  x=RIGHT_X + 9, y=-14, width=RIGHT_W - 38, size='sm') }}
   {{ ui.push_button('apply', 'Apply', icon='search',
-                    x=175, y=-114, variant='primary', halign='left', size='sm') }}
+                    x=RIGHT_X + RIGHT_W - 26, y=-14,
+                    variant='primary', halign='left', size='sm') }}
 
-  {# controls #}
+  {# ---------- right: log content panel ---------- #}
+  <quad pos="{{ RIGHT_X }} {{ LOG_TOP + 2 }}" z-index="201"
+        size="{{ RIGHT_W }} {{ LOG_TOP - LOG_BOTTOM }}" bgcolor="0008" />
+
+  {% for line in lines %}
+    {% set i = loop.index0 %}
+    {% set y = LOG_TOP - i * LINE_STEP %}
+    {% set color = 'f88' if 'ERROR' in line or 'CRITICAL' in line or 'Traceback' in line
+                   else ('ff8' if 'WARNING' in line or 'WARN' in line
+                   else ('8af' if 'INFO' in line
+                   else 'ddd')) %}
+    {# clickable strip — clicking pushes the line into the copy buffer #}
+    <quad pos="{{ RIGHT_X + 1 }} {{ y + 1 }}" z-index="202"
+          size="{{ RIGHT_W - 2 }} {{ LINE_STEP - 0.2 }}" bgcolor="fff0"
+          id="lnbtn_{{ id }}__copyline__{{ i }}"
+          action="{{ id }}__copyline__{{ i }}" scriptevents="1" />
+    <label pos="{{ RIGHT_X + 1.5 }} {{ y }}" z-index="203"
+           halign="left" valign="center2"
+           text="${{ color }}{{ line }}" textsize="0.75" textfont="GameFont" />
+  {% endfor %}
+
+  {% if lines|length == 0 %}
+    <label pos="{{ RIGHT_X + RIGHT_W / 2 }} {{ (LOG_TOP + LOG_BOTTOM) / 2 }}"
+           z-index="203" halign="center" valign="center2"
+           text="$666(no lines)" textsize="1.0" textfont="GameFont" />
+  {% endif %}
+
+  {# ---------- horizontal scroll bar (below log panel) ---------- #}
+  {% set HS_BW = 5 %}
+  {% set HS_BH = 5 %}
+  {% set HS_GAP = 0.5 %}
+  {% for cell in [('hs_home', '&lt;&lt;'),
+                  ('hs_left', '&lt;'),
+                  ('hs_right', '&gt;'),
+                  ('hs_end', '&gt;&gt;')] %}
+    {% set cx = RIGHT_X + loop.index0 * (HS_BW + HS_GAP) %}
+    <quad pos="{{ cx }} {{ HS_Y }}" z-index="210" size="{{ HS_BW }} {{ HS_BH }}"
+          bgcolor="333a" halign="left" valign="center"
+          id="hsbtn_{{ id }}__{{ cell[0] }}"
+          action="{{ id }}__{{ cell[0] }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    <label pos="{{ cx + HS_BW/2 }} {{ HS_Y }}" z-index="211"
+           halign="center" valign="center2"
+           text="$fff{{ cell[1]|safe }}" textsize="0.9" textfont="GameFontBlack" />
+  {% endfor %}
+  <label pos="{{ RIGHT_X + 4 * (HS_BW + HS_GAP) + 1 }} {{ HS_Y }}" z-index="211"
+         halign="left" valign="center2"
+         text="$888col {{ hscroll + 1 }}{% if max_line_len > 0 %} / {{ max_line_len }}{% endif %}"
+         textsize="0.8" textfont="GameFont" />
+
+  {# ---------- right: copy buffer (selectable entry) ---------- #}
+  {% set CB_X = RIGHT_X + 4 * (HS_BW + HS_GAP) + 30 %}
+  {{ ui.label('Copy:', x=CB_X, y=HS_Y, size='sm', color='888') }}
+  {{ ui.line_edit('copybuf', value=selected,
+                  x=CB_X + 8, y=HS_Y, width=RIGHT_W - (CB_X - RIGHT_X) - 8, size='sm') }}
+
+  {# ---------- bottom row: pagination + actions ---------- #}
+  {{ ui.pagination('pg', page=page, total_pages=total_pages,
+                   x=RIGHT_X, y=BOTTOM_Y, max_visible=11, btn_w=5.5, btn_h=5) }}
+
   {{ ui.push_button('refresh', 'Refresh', icon='reload',
-                    x=2, y=-125, variant='ghost', halign='left', size='sm') }}
-  {{ ui.push_button('back', '< Back to hub', icon='arrow_left',
-                    x=22, y=-125, variant='primary', halign='left', size='sm') }}
+                    x=2, y=BOTTOM_Y, variant='ghost',
+                    halign='left', size='md') }}
 
-  {{ ui.status_bar(x=0, y=0, w=200, h=130,
-                   left='file: ' + (log_path or '(none)'),
-                   center='',
-                   right=(lines|length|string) + ' lines') }}
+  {{ ui.push_button('delete',
+                    'Delete file' if confirm_delete != active or not active else 'Confirm delete?',
+                    icon='trash',
+                    x=W - 2, y=BOTTOM_Y,
+                    variant='danger', halign='right', size='md') }}
+
+  {# ---------- status line ---------- #}
+  <label pos="{{ RIGHT_X }} {{ -H + 3 }}" z-index="210"
+         halign="left" valign="center2"
+         text="${{ status_color }}{{ status }}" textsize="0.8" textfont="GameFont" />
+  <label pos="{{ W - 2 }} {{ BOTTOM_Y + 8 }}" z-index="210"
+         halign="right" valign="center2"
+         text="$888{{ line_count }} match. lines  /  page {{ page }}/{{ total_pages }}"
+         textsize="0.8" textfont="GameFont" />
 
   {{ ui.hover_script() }}
 </frame>
+

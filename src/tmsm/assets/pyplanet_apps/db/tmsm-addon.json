@@ -1,0 +1,4 @@
+﻿{
+  "description": "Database master tool — list registered tables, browse/search rows, edit/delete records, export to CSV, drop tables (two-click confirm). Requires tmsm_hub + tmsm_ui.",
+  "author": "tmsm"
+}

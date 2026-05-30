@@ -51,8 +51,6 @@
                     halign='left', size='sm') }}
   {{ ui.push_button('refresh', 'Reset', icon='reload',
                     x=50, y=-125, variant='ghost', halign='left', size='sm') }}
-  {{ ui.push_button('back', '< Back to hub', icon='arrow_left',
-                    x=70, y=-125, variant='primary', halign='left', size='sm') }}
 
   {{ ui.label(status, x=196, y=-125, halign='right',
               color=status_color, size='sm') }}

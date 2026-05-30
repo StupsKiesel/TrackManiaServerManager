@@ -1,0 +1,80 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context: addons=[{module,key,namespace,description,enabled,dirty}],
+            page, total_pages, query, dirty_count, total_count,
+            status_text, status_color, apps_py #}
+
+{% set W = 220 %}
+{% set H = 145 %}
+
+<frame pos="-110 72" z-index="200">
+
+  {{ ui.window('Apps Store', icon='th-large', x=0, y=0, w=W, h=H) }}
+
+  {{ ui.label('Toggle any installed pyplanet addon. Apply rewrites apps.py and the pool reloads.',
+              x=4, y=-12, color='aaa', size='sm') }}
+  {{ ui.label(apps_py, x=W - 4, y=-12, halign='right', color='666', size='sm') }}
+
+  {# column headers #}
+  {% set row_h = 5 %}
+  {% set top_y = -19 %}
+  <quad pos="4 {{ top_y }}" z-index="201" size="{{ W - 8 }} 4.5"
+        bgcolor="222a" halign="left" valign="top" />
+  {{ ui.label('On',          x=6,   y=top_y - 2.25, color='ddd', size='sm', bold=True) }}
+  {{ ui.label('Addon',       x=18,  y=top_y - 2.25, color='ddd', size='sm', bold=True) }}
+  {{ ui.label('Namespace',   x=62,  y=top_y - 2.25, color='ddd', size='sm', bold=True) }}
+  {{ ui.label('Description', x=88,  y=top_y - 2.25, color='ddd', size='sm', bold=True) }}
+  <quad pos="4 {{ top_y - 4.5 }}" z-index="202" size="{{ W - 8 }} 0.25"
+        bgcolor="15dfa" halign="left" valign="top" />
+
+  {% set body_y = top_y - 5 %}
+  {% for a in addons %}
+    {% set y = body_y - loop.index0 * row_h %}
+    {% if loop.index0 % 2 == 1 %}
+      <quad pos="4 {{ y }}" z-index="200" size="{{ W - 8 }} {{ row_h }}"
+            bgcolor="fff1" halign="left" valign="top" />
+    {% endif %}
+    {# full-row clickable surface (toggle) #}
+    <quad pos="4 {{ y }}" z-index="203" size="{{ W - 8 }} {{ row_h }}"
+          bgcolor="0000" halign="left" valign="top"
+          id="togbtn_{{ id }}__toggle__{{ a.module }}"
+          action="{{ id }}__toggle__{{ a.module }}" scriptevents="1" />
+    {% set mark = 'check' if a.enabled else 'cross' %}
+    {% set mark_color = '0f0' if a.enabled else '888' %}
+    {{ ui.icon(mark, x=8, y=y - row_h/2, color=mark_color, font=1.6) }}
+    {{ ui.label(a.key, x=18, y=y - row_h/2,
+                color=('fff' if a.enabled else 'aaa'),
+                size='sm', bold=a.enabled) }}
+    {{ ui.label(a.namespace, x=62, y=y - row_h/2,
+                color=('5cf' if a.namespace == 'tmsm' else 'fc4'),
+                size='sm') }}
+    {{ ui.label(a.description, x=88, y=y - row_h/2, color='aaa', size='sm') }}
+    {% if a.dirty %}
+      {{ ui.label('*', x=5, y=y - row_h/2, color='fc4', size='sm', bold=True) }}
+    {% endif %}
+  {% endfor %}
+
+  {% if not addons %}
+    {{ ui.label('No addons match.', x=W/2, y=-60, color='888',
+                size='sm', halign='center') }}
+  {% endif %}
+
+  {# bottom action row — buttons right, pagination left, status above #}
+  {% set act_y = -H + 5 %}
+  {{ ui.push_button('apply', 'Apply (' ~ dirty_count|string ~ ')',
+                    icon='save', x=W - 4, y=act_y,
+                    variant=('success' if dirty_count else 'ghost'),
+                    halign='right', size='md') }}
+  {{ ui.push_button('reset', 'Reset', icon='reload',
+                    x=W - 28, y=act_y, variant='ghost',
+                    halign='right', size='md') }}
+
+  {# pagination — bottom-left, same row as buttons #}
+  {{ ui.pagination('pg', page=page, total_pages=total_pages,
+                   x=4, y=act_y) }}
+
+  {# status text just above the action row #}
+  {{ ui.label(status_text, x=4, y=act_y + 6, color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>

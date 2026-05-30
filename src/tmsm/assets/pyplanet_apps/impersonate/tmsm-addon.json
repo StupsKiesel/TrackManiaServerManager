@@ -1,0 +1,4 @@
+{
+  "description": "Impersonate - master admins can preview the tmsm UI as Operator / Admin / Player. Override is per-session (cleared on disconnect / PyPlanet restart) and affects tmsm UI gates only - PyPlanet's own permission checks are untouched. Requires tmsm_ui + tmsm_hub.",
+  "author": "tmsm"
+}

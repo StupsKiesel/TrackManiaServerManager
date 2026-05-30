@@ -1,0 +1,93 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context: schedules=[{id,enabled,time,target,when_label,last_run,notifs_label}],
+            status, status_color,
+            watch_active, watch_dir, watch_dir_exists,
+            draft_watch_dir #}
+
+{# Dynamic sizing: schedules box grows with row count; window follows. #}
+{% set sched_count = schedules|length %}
+{% set sched_h = (13 + sched_count * 5.5) if sched_count else 14 %}
+{% set sched_y = -31 %}
+{% set status_y = sched_y - sched_h - 4 %}
+{% set win_h = (-status_y) + 6 %}
+
+<frame pos="-90 60" z-index="200">
+
+  {{ ui.window('Restart', icon='power-off', x=0, y=0, w=180, h=win_h,
+               crumbs=view_crumbs) }}
+
+  {# ============================ MANUAL ============================ #}
+  {% call ui.group_box(title='Manual', x=4, y=-12, w=84, h=15,
+                       color='fff', border='fff5') %}
+    {{ ui.push_button('restart_pp', 'PyPlanet',
+                      x=8, y=-20, halign='left',
+                      icon='reload', variant='warning', size='md') }}
+    {{ ui.push_button('restart_dedi', 'Dedicated',
+                      x=46, y=-20, halign='left',
+                      icon='power-off', variant='danger', size='md') }}
+  {% endcall %}
+
+  {# ============================ DEVELOPER ========================= #}
+  {% call ui.group_box(title='Developer', x=92, y=-12, w=84, h=15,
+                       color='fff', border='fff5') %}
+    {{ ui.check_box('toggle_watch',
+                    label='Track directory file changes',
+                    checked=watch_active, x=98, y=-18, size='sm') }}
+    {{ ui.line_edit('watch_dir', value=draft_watch_dir,
+                    x=98, y=-23, width=60, size='sm') }}
+    {{ ui.tool_button('save_watch_dir', 'check', x=172, y=-23,
+                      variant='primary', size='sm', halign='right',
+                      tooltip='Save watch dir') }}
+  {% endcall %}
+
+  {# ============================ SCHEDULES ========================= #}
+  {% call ui.group_box(title='Restart schedules', x=4, y=sched_y, w=172, h=sched_h,
+                       color='fff', border='fff5') %}
+    {{ ui.tool_button('open_form', 'plus', x=172, y=sched_y,
+                      variant='success', size='sm', halign='right',
+                      tooltip='Add a new schedule') }}
+
+    {# header row #}
+    {% set hy = sched_y - 9 %}
+    {{ ui.label('on',       x=10,  y=hy, size='sm', color='888') }}
+    {{ ui.label('time',     x=20,  y=hy, size='sm', color='888') }}
+    {{ ui.label('target',   x=36,  y=hy, size='sm', color='888') }}
+    {{ ui.label('when',     x=66,  y=hy, size='sm', color='888') }}
+    {{ ui.label('warn',     x=106, y=hy, size='sm', color='888') }}
+    {{ ui.label('last run', x=132, y=hy, size='sm', color='888') }}
+
+    {% if schedules %}
+      {% for s in schedules %}
+        {% set y = sched_y - 15 - loop.index0 * 5.5 %}
+        {{ ui.check_box('tog__' ~ s.id, checked=s.enabled,
+                        x=14, y=y, size='sm') }}
+        {{ ui.label(s.time, x=20, y=y, size='sm',
+                    color=('fff' if s.enabled else '666'),
+                    bold=s.enabled) }}
+        {{ ui.label(s.target, x=36, y=y, size='sm',
+                    color=('15f' if s.target == 'pyplanet'
+                           else ('f80' if s.target == 'dedicated'
+                                 else 'f44'))) }}
+        {{ ui.label(s.when_label, x=66, y=y, size='sm',
+                    color=('ccc' if s.enabled else '666')) }}
+        {{ ui.label(s.notifs_label or '-', x=106, y=y, size='sm', color='ccc') }}
+        {{ ui.label(s.last_run or '-', x=132, y=y, size='sm', color='888') }}
+        {{ ui.tool_button('del__' ~ s.id, 'trash', x=170, y=y,
+                          variant='danger', size='sm', halign='right',
+                          tooltip='Delete schedule') }}
+      {% endfor %}
+    {% else %}
+      {{ ui.label('No schedules yet. Use the + button to add one.',
+                  x=10, y=sched_y - 15, size='sm', color='888') }}
+    {% endif %}
+  {% endcall %}
+
+  {# ============================ STATUS ============================ #}
+  {{ ui.label(status, x=4, y=status_y, halign='left',
+              color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>
+
+

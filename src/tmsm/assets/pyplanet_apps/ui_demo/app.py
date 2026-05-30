@@ -129,6 +129,9 @@ class UiDemoApp(AppConfig):
     async def _hub_open(self, player) -> None:
         if self.view is None:
             return
+        # Mark visible so BaseView.refresh() (used by tab/scroll/etc handlers)
+        # actually re-renders after state changes; display() alone doesn't set it.
+        self.view._visible = True
         try:
             await self.view.display(player_logins=[player.login])
         except Exception:

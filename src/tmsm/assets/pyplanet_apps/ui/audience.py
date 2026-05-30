@@ -63,7 +63,11 @@ class Audience:
 
     @classmethod
     def minimum_level(cls, level: int) -> "Audience":
-        return cls(lambda p, _lvl=level: getattr(p, "level", 0) >= _lvl)
+        # Use the perms helper so impersonation overrides take effect for
+        # view targeting (a master impersonating a player won't get
+        # admin-only views displayed to them).
+        from .perms import effective_level
+        return cls(lambda p, _lvl=level: effective_level(p) >= _lvl)
 
     @classmethod
     def matching(cls, predicate: Callable[[object], bool]) -> "Audience":

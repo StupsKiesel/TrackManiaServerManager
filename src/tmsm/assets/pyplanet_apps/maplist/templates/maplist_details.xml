@@ -1,0 +1,96 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (see App_Maplist.detail_context):
+     map              - row dict from _map_to_row
+     in_queue         - bool
+     queue_pos        - int (1-based)
+     queue_requester  - nickname (may include $-codes)
+     is_current       - bool
+     status, status_color
+#}
+
+{% set m       = map %}
+{% set win_w   = 200 %}
+{% set win_h   = 120 %}
+{% set left_x  = 6 %}
+{% set right_x = 96 %}
+{% set fh      = 5.4 %}
+
+{% macro field(label, value, x, y, lw=22, color='fff') -%}
+  {{ ui.label(label, x=x,        y=y, size='sm', color='888') }}
+  {{ ui.label(value|string|truncate(34, true, ''),
+              x=x + lw, y=y, size='sm', color=color) }}
+{%- endmacro %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="210">
+
+  {{ ui.window('Map Details', icon='info', x=0, y=0,
+               w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {# ============================ HEADER ================================= #}
+  {{ ui.label((m.name or '(no map)')|truncate(48, true, ''),
+              x=left_x, y=-12, size='lg',
+              color=('0f8' if is_current else 'fff')) }}
+  {{ ui.label('by ' ~ (m.author or 'unknown'),
+              x=left_x, y=-18, size='sm', color='aaa') }}
+
+  {% if is_current %}
+    {{ ui.label('currently playing',
+                x=win_w - 6, y=-12, halign='right',
+                size='sm', color='0f8') }}
+  {% elif in_queue %}
+    {{ ui.label('in queue #' ~ queue_pos ~
+                ' - by ' ~ (queue_requester|truncate(20, true, '')),
+                x=win_w - 6, y=-12, halign='right',
+                size='sm', color='fa0') }}
+  {% endif %}
+
+  {# ============================ FIELDS ================================= #}
+  {% set fy = -28 %}
+
+  {{ field('UID',         m.uid or '-',                left_x, fy - fh * 0,
+            color='ccc') }}
+  {{ field('Environment', m.environment or '-',        left_x, fy - fh * 1) }}
+  {{ field('Map type',    m.map_type or '-',           left_x, fy - fh * 2) }}
+  {{ field('Map style',   m.map_style or '-',          left_x, fy - fh * 3) }}
+  {{ field('Laps',        m.num_laps|string,           left_x, fy - fh * 4) }}
+  {{ field('Checkpoints', m.num_cps|string,            left_x, fy - fh * 5) }}
+  {{ field('TMX id',      (m.mx_id if m.mx_id else '-')|string,
+                                                       left_x, fy - fh * 6) }}
+
+  {{ field('Author',  m.time_author_s, right_x, fy - fh * 0, color='b48') }}
+  {{ field('Gold',    m.time_gold_s,   right_x, fy - fh * 1, color='fc4') }}
+  {{ field('Silver',  m.time_silver_s, right_x, fy - fh * 2, color='ccc') }}
+  {{ field('Bronze',  m.time_bronze_s, right_x, fy - fh * 3, color='b73') }}
+
+  {# file path - small, full width #}
+  {{ ui.label('File:', x=left_x, y=fy - fh * 7,
+              size='sm', color='888') }}
+  {{ ui.label((m.file or '-')|truncate(70, true, ''),
+              x=left_x + 12, y=fy - fh * 7,
+              size='sm', color='ccc') }}
+
+  {# ============================ ACTION ROW ============================= #}
+  {% set ay = -win_h + 18 %}
+
+  {% if m.uid %}
+    {% if is_current %}
+      {{ ui.label('cannot queue the current map',
+                  x=left_x, y=ay, size='sm', color='888') }}
+    {% elif in_queue %}
+      {{ ui.push_button('drop__' ~ m.uid, 'Drop from queue',
+                        x=left_x, y=ay, halign='left',
+                        icon='trash', variant='danger', size='sm') }}
+    {% else %}
+      {{ ui.push_button('juke__' ~ m.uid, 'Add to jukebox',
+                        x=left_x, y=ay, halign='left',
+                        icon='plus', variant='success', size='sm') }}
+    {% endif %}
+  {% endif %}
+
+  {# ============================ STATUS ================================= #}
+  {{ ui.label(status, x=left_x, y=-win_h + 10,
+              halign='left', color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>

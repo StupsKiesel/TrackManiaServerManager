@@ -1,0 +1,102 @@
+#Include "AnimLib" as AL
+CTmMlPlayer GetOwner() {
+        //if (GUIPlayer != Null) return GUIPlayer;
+        if (InputPlayer != Null) return InputPlayer;
+        return Null;
+    }
+
+main(){
+  declare Boolean Prev_DistractionFreeMode = False;
+  declare netwrite Boolean Net_DistractionFreeMode for UI;
+  declare MainWidget <=> Page.GetFirstChild("MainWidget");
+  declare TitleText <=> (Page.GetFirstChild("TitleText") as CMlLabel);
+  declare Real Base_X_Position = MainWidget.RelativePosition_V3.X;
+  declare Real start_X_Position = MainWidget.RelativePosition_V3.X;
+  declare Boolean was_modified = False;
+  declare Boolean was_2_modified = False;
+  declare Integer Start_Time = Now;
+  declare Integer Right;
+  declare Real Value = Base_X_Position;
+  if(Base_X_Position > 0)
+  {
+    Right = 1;
+  }
+  else
+  {
+    Right = -1;
+  }
+
+  if (Net_DistractionFreeMode == True) {
+    Page.GetClassChildren("distraction-hide", Page.MainFrame, True);
+    foreach (Control in Page.GetClassChildren_Result) {
+      Control.Hide();
+    }
+  }
+  while(True) {
+    declare Owner <=> GetOwner();
+        if(Owner != Null)
+        {
+          if(Owner.DisplaySpeed > 20)
+          {
+            if(!was_modified)
+            {
+              Start_Time = Now;
+            }
+            was_modified = True;
+            
+          }
+          else
+          {
+            was_modified = False;
+          }
+
+          if(Owner.DisplaySpeed <= 20)
+          {
+            if(!was_2_modified)
+            {
+              Start_Time = Now;
+              start_X_Position = MainWidget.RelativePosition_V3.X;
+            }
+            was_2_modified = True;
+            
+          }
+          else
+          {
+            was_2_modified = False;
+          }
+
+          if(Owner.DisplaySpeed <= 20 || (was_2_modified && Now - Start_Time < 1000) || Owner.DisplaySpeed == 0)
+          {
+            MainWidget.Show();
+            Value =  AL::EaseInOutCubic (Now - Start_Time,start_X_Position , Base_X_Position - start_X_Position, 1000);
+          }
+          else
+          {
+            Value =  AL::EaseInOutCubic (Now - Start_Time,Base_X_Position, Right * 1000.0, 1000);
+            if(Now - Start_Time > 1000){
+              MainWidget.Hide();
+            }  
+          }
+
+              //log(Value); 
+          MainWidget.RelativePosition_V3.X = Value;
+    }
+
+    /*if (Prev_DistractionFreeMode != Net_DistractionFreeMode) {
+      Prev_DistractionFreeMode = Net_DistractionFreeMode;
+
+      if (Net_DistractionFreeMode == True) {
+        Page.GetClassChildren("distraction-hide", Page.MainFrame, True);
+        foreach (Control in Page.GetClassChildren_Result) {
+          Control.Hide();
+        }
+      } else {
+        Page.GetClassChildren("distraction-hide", Page.MainFrame, True);
+        foreach (Control in Page.GetClassChildren_Result) {
+          Control.Show();
+        }
+      }
+    }*/
+    yield;
+  }
+}

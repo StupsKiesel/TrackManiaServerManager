@@ -1,0 +1,4 @@
+﻿{
+  "description": "Player-facing map browser. Lists the server's current playlist (filterable by name/author), shows the live jukebox queue, opens per-map details, and lets players queue or drop maps via the PyPlanet jukebox app. Requires tmsm_hub + tmsm_ui; optional dependency on the bundled jukebox app for queue operations.",
+  "author": "tmsm"
+}

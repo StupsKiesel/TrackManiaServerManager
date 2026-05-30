@@ -1,0 +1,4 @@
+﻿{
+  "description": "Apps store — master admin datatable to enable/disable any installed pyplanet addon. Rewrites the pool's apps.py and fires a status toast on save.",
+  "author": "tmsm"
+}

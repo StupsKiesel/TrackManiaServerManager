@@ -1,64 +1,211 @@
 {% import 'tmsm_ui/widgets.xml' as ui with context %}
 
-<frame pos="-90 55" z-index="200">
+{% set W = 220 %}
+{% set H = 130 %}
 
-  {{ ui.window('System status', icon='info', x=0, y=0, w=180, h=110) }}
+<frame pos="-110 65" z-index="200">
 
-  {{ ui.heading(hostname, x=4, y=-12, level=2) }}
-  {{ ui.label(ts ~ '  ·  up ' ~ uptime_s, x=4, y=-18, color='888', size='sm') }}
+  {{ ui.window('System status', icon='info', x=0, y=0, w=W, h=H) }}
 
-  {# CPU / load #}
-  {{ ui.heading('CPU', x=4, y=-26, level=3, color='8af') }}
-  {{ ui.label('cores: ' ~ cpu_count, x=4, y=-32, size='sm') }}
-  {{ ui.label('load (1/5/15): ' ~ ('%.2f' % load1) ~ ' / ' ~ ('%.2f' % load5) ~ ' / ' ~ ('%.2f' % load15),
-              x=4, y=-37, size='sm') }}
-  <quad pos="4 -42" z-index="201" size="80 2" bgcolor="2228" />
-  <quad pos="4 -42" z-index="202" size="{{ (load1_pct * 0.8) }} 2"
-        bgcolor="{% if load1_pct >= 90 %}f44f{% elif load1_pct >= 60 %}fc4f{% else %}4f8f{% endif %}" />
-  {{ ui.label(load1_pct|string ~ '%', x=86, y=-42, size='sm', color='ccc') }}
+  {# header strip: hostname + timestamp #}
+  {{ ui.label('$fff' ~ hostname, x=4, y=-11, size='md') }}
+  {{ ui.label('up ' ~ uptime_s ~ '  ·  ' ~ ts,
+              x=W-4, y=-11, halign='right', size='sm', color='888') }}
 
-  {# Memory #}
-  {{ ui.heading('Memory', x=4, y=-50, level=3, color='8af') }}
-  {{ ui.label(mem_used ~ ' / ' ~ mem_total ~ '  (' ~ mem_avail ~ ' free)',
-              x=4, y=-56, size='sm') }}
-  <quad pos="4 -61" z-index="201" size="80 2" bgcolor="2228" />
-  <quad pos="4 -61" z-index="202" size="{{ (mem_pct * 0.8) }} 2"
-        bgcolor="{% if mem_pct >= 90 %}f44f{% elif mem_pct >= 75 %}fc4f{% else %}4f8f{% endif %}" />
-  {{ ui.label(mem_pct|string ~ '%', x=86, y=-61, size='sm', color='ccc') }}
+  {# tabs body fills the rest of the window #}
+  {% call(tab_key, t) ui.tabs('tabs', tabs, active=active_tab,
+                              x=2, y=-17, w=W-4, tab_h=6, body_h=H-32) %}
 
-  {# Disk #}
-  {{ ui.heading('Disk (~/.tmsm)', x=4, y=-69, level=3, color='8af') }}
-  {{ ui.label(disk_used ~ ' / ' ~ disk_total ~ '  (' ~ disk_free ~ ' free)',
-              x=4, y=-75, size='sm') }}
-  <quad pos="4 -80" z-index="201" size="80 2" bgcolor="2228" />
-  <quad pos="4 -80" z-index="202" size="{{ (disk_pct * 0.8) }} 2"
-        bgcolor="{% if disk_pct >= 90 %}f44f{% elif disk_pct >= 75 %}fc4f{% else %}4f8f{% endif %}" />
-  {{ ui.label(disk_pct|string ~ '%', x=86, y=-80, size='sm', color='ccc') }}
+    {% set BY = -28 %}  {# body top: leave room so group_box title clears tab strip #}
 
-  {# Services (right column) #}
-  {{ ui.heading('Services', x=96, y=-26, level=3, color='8af') }}
-  {{ ui.label('PyPlanet pool', x=96, y=-32, size='sm') }}
-  {{ ui.label('online', x=176, y=-32, halign='right', color='0f0', size='sm') }}
-  {{ ui.label('pool log size', x=96, y=-37, size='sm') }}
-  {{ ui.label(pyp_log_size, x=176, y=-37, halign='right', color='ccc', size='sm') }}
+    {# =================================================================
+       HOST
+       ================================================================= #}
+    {% if tab_key == 'host' %}
 
-  {{ ui.label('Dedicated (XML-RPC)', x=96, y=-44, size='sm') }}
-  {% if ded_up %}
-    {{ ui.label('online :' ~ ded_port, x=176, y=-44, halign='right', color='0f0', size='sm') }}
-  {% else %}
-    {{ ui.label('offline :' ~ ded_port, x=176, y=-44, halign='right', color='f44', size='sm') }}
-  {% endif %}
+      {% call ui.group_box('System', x=4, y=BY, w=(W-8)/2 - 2, h=42) %}
+        {{ ui.label('OS',        x=4, y=BY-8,  size='sm', color='888') }}
+        {{ ui.label(os_name,     x=24, y=BY-8, size='sm') }}
+        {{ ui.label('Kernel',    x=4, y=BY-13, size='sm', color='888') }}
+        {{ ui.label(kernel,      x=24, y=BY-13, size='sm') }}
+        {{ ui.label('Cores',     x=4, y=BY-18, size='sm', color='888') }}
+        {{ ui.label(cpu_count|string, x=24, y=BY-18, size='sm') }}
+        {{ ui.label('CPU',       x=4, y=BY-23, size='sm', color='888') }}
+        {{ ui.label(cpu_model,   x=24, y=BY-23, size='sm') }}
+        {{ ui.label('Uptime',    x=4, y=BY-28, size='sm', color='888') }}
+        {{ ui.label(uptime_s,    x=24, y=BY-28, size='sm') }}
+      {% endcall %}
 
-  {# controls #}
+      {% call ui.group_box('CPU load', x=W/2 + 2, y=BY, w=(W-8)/2 - 2, h=42) %}
+        {{ ui.label('1 min',  x=W/2+6,  y=BY-8,  size='sm', color='888') }}
+        {{ ui.label('%.2f' % load1,  x=W/2+22, y=BY-8,  size='sm') }}
+        {{ ui.label('5 min',  x=W/2+6,  y=BY-13, size='sm', color='888') }}
+        {{ ui.label('%.2f' % load5,  x=W/2+22, y=BY-13, size='sm') }}
+        {{ ui.label('15 min', x=W/2+6,  y=BY-18, size='sm', color='888') }}
+        {{ ui.label('%.2f' % load15, x=W/2+22, y=BY-18, size='sm') }}
+        {{ ui.progress_bar(value=(load1_pct/100.0),
+                           x=W/2+6, y=BY-26, w=W/2-16, h=3,
+                           color=('f44f' if load1_pct >= 90 else ('fc4f' if load1_pct >= 60 else '4f8f')),
+                           text=(load1_pct|string ~ '%')) }}
+        {{ ui.label('per-core load',
+                    x=W/2+6, y=BY-31, size='sm', color='888') }}
+      {% endcall %}
+
+      {% call ui.group_box('Memory', x=4, y=BY-46, w=(W-8)/2 - 2, h=30) %}
+        {{ ui.label(mem_used ~ ' / ' ~ mem_total,
+                    x=4, y=BY-54, size='sm') }}
+        {{ ui.label('(' ~ mem_avail ~ ' free)',
+                    x=W/2-6, y=BY-54, halign='right', size='sm', color='888') }}
+        {{ ui.progress_bar(value=(mem_pct/100.0),
+                           x=4, y=BY-60, w=(W-8)/2 - 6, h=3,
+                           color=('f44f' if mem_pct >= 90 else ('fc4f' if mem_pct >= 75 else '4f8f')),
+                           text=(mem_pct|string ~ '%')) }}
+        {{ ui.label('swap ' ~ swap_used ~ ' / ' ~ swap_total ~ '  (' ~ swap_pct|string ~ '%)',
+                    x=4, y=BY-67, size='sm', color='aaa') }}
+      {% endcall %}
+
+      {% call ui.group_box('Disk (~/.tmsm volume)', x=W/2 + 2, y=BY-46, w=(W-8)/2 - 2, h=30) %}
+        {{ ui.label(disk_used ~ ' / ' ~ disk_total,
+                    x=W/2+6, y=BY-54, size='sm') }}
+        {{ ui.label('(' ~ disk_free ~ ' free)',
+                    x=W-6, y=BY-54, halign='right', size='sm', color='888') }}
+        {{ ui.progress_bar(value=(disk_pct/100.0),
+                           x=W/2+6, y=BY-60, w=(W-8)/2 - 6, h=3,
+                           color=('f44f' if disk_pct >= 90 else ('fc4f' if disk_pct >= 75 else '4f8f')),
+                           text=(disk_pct|string ~ '%')) }}
+      {% endcall %}
+
+    {# =================================================================
+       STORAGE
+       ================================================================= #}
+    {% elif tab_key == 'storage' %}
+
+      {% call ui.group_box('Disk (~/.tmsm volume)', x=4, y=BY, w=W-8, h=24) %}
+        {{ ui.label(disk_used ~ ' / ' ~ disk_total ~ '  (' ~ disk_free ~ ' free)',
+                    x=4, y=BY-8, size='sm') }}
+        {{ ui.progress_bar(value=(disk_pct/100.0),
+                           x=4, y=BY-14, w=W-16, h=3,
+                           color=('f44f' if disk_pct >= 90 else ('fc4f' if disk_pct >= 75 else '4f8f')),
+                           text=(disk_pct|string ~ '%')) }}
+      {% endcall %}
+
+      {% call ui.group_box('Breakdown (~/.tmsm)', x=4, y=BY-28, w=W-8, h=46) %}
+        {{ ui.label('Total tmsm tree',  x=4, y=BY-36, size='sm', color='888') }}
+        {{ ui.label(tmsm_total,         x=W-6, y=BY-36, halign='right', size='sm') }}
+
+        {{ ui.label('Maps (' ~ maps_count ~ ')', x=4, y=BY-43, size='sm', color='888') }}
+        {{ ui.label(maps_size,                   x=W-6, y=BY-43, halign='right', size='sm') }}
+
+        {{ ui.label('Log files (' ~ logs_count ~ ')', x=4, y=BY-50, size='sm', color='888') }}
+        {{ ui.label(logs_size,                        x=W-6, y=BY-50, halign='right', size='sm') }}
+
+        {{ ui.label('Backups',  x=4, y=BY-57, size='sm', color='888') }}
+        {{ ui.label(backups_size, x=W-6, y=BY-57, halign='right', size='sm') }}
+
+        {{ ui.label('Database (' ~ db_kind ~ ')', x=4, y=BY-64, size='sm', color='888') }}
+        {{ ui.label(db_size,                      x=W-6, y=BY-64, halign='right', size='sm') }}
+      {% endcall %}
+
+      {{ ui.label('values are refreshed every ' ~ (30) ~ 's',
+                  x=4, y=BY-78, size='sm', color='666') }}
+
+    {# =================================================================
+       SERVER
+       ================================================================= #}
+    {% elif tab_key == 'server' %}
+
+      {% call ui.group_box('Server', x=4, y=BY, w=W-8, h=24) %}
+        {{ ui.label('Name',  x=4, y=BY-8, size='sm', color='888') }}
+        {{ ui.label(name,    x=24, y=BY-8, size='sm') }}
+        {{ ui.label('Title', x=4, y=BY-13, size='sm', color='888') }}
+        {{ ui.label(title,   x=24, y=BY-13, size='sm') }}
+        {{ ui.label('Mode',  x=4, y=BY-18, size='sm', color='888') }}
+        {{ ui.label(mode,    x=24, y=BY-18, size='sm') }}
+      {% endcall %}
+
+      {% call ui.group_box('Population', x=4, y=BY-28, w=(W-8)/2 - 2, h=20) %}
+        {{ ui.label('Players',    x=4, y=BY-36, size='sm', color='888') }}
+        {{ ui.label(players|string ~ ' / ' ~ max_players|string,
+                    x=W/2-6, y=BY-36, halign='right', size='sm') }}
+        {{ ui.label('Spectators', x=4, y=BY-41, size='sm', color='888') }}
+        {{ ui.label(specs|string ~ ' / ' ~ max_specs|string,
+                    x=W/2-6, y=BY-41, halign='right', size='sm') }}
+      {% endcall %}
+
+      {% call ui.group_box('Map', x=W/2 + 2, y=BY-28, w=(W-8)/2 - 2, h=20) %}
+        {{ ui.label('Current',   x=W/2+6, y=BY-36, size='sm', color='888') }}
+        {{ ui.label(current_map, x=W/2+22, y=BY-36, size='sm') }}
+        {{ ui.label('Playlist',  x=W/2+6, y=BY-41, size='sm', color='888') }}
+        {{ ui.label(playlist_count|string ~ ' maps',
+                    x=W-6, y=BY-41, halign='right', size='sm') }}
+      {% endcall %}
+
+      {% call ui.group_box('Session activity (since PyPlanet start)', x=4, y=BY-52, w=W-8, h=18) %}
+        {{ ui.label('Chat messages', x=4,        y=BY-60, size='sm', color='888') }}
+        {{ ui.label(session_chat|string, x=W/3 - 4, y=BY-60, halign='right', size='sm') }}
+        {{ ui.label('Connects',      x=W/3 + 6, y=BY-60, size='sm', color='888') }}
+        {{ ui.label(session_connects|string, x=2*W/3 - 4, y=BY-60, halign='right', size='sm') }}
+        {{ ui.label('Disconnects',   x=2*W/3 + 6, y=BY-60, size='sm', color='888') }}
+        {{ ui.label(session_disconnects|string, x=W-6, y=BY-60, halign='right', size='sm') }}
+      {% endcall %}
+
+    {# =================================================================
+       PYPLANET
+       ================================================================= #}
+    {% elif tab_key == 'pyplanet' %}
+
+      {% call ui.group_box('PyPlanet runtime', x=4, y=BY, w=W-8, h=36) %}
+        {{ ui.label('Version',      x=4, y=BY-8, size='sm', color='888') }}
+        {{ ui.label(pyp_version,    x=30, y=BY-8, size='sm') }}
+        {{ ui.label('Pool',         x=4, y=BY-13, size='sm', color='888') }}
+        {{ ui.label(pyp_pool,       x=30, y=BY-13, size='sm') }}
+        {{ ui.label('Apps loaded',  x=4, y=BY-18, size='sm', color='888') }}
+        {{ ui.label(pyp_apps_loaded|string, x=30, y=BY-18, size='sm') }}
+        {{ ui.label('Pool log',     x=4, y=BY-23, size='sm', color='888') }}
+        {{ ui.label(pyp_log_size,   x=30, y=BY-23, size='sm') }}
+        {{ ui.label('Database',     x=4, y=BY-28, size='sm', color='888') }}
+        {{ ui.label(db_kind ~ '  ·  ' ~ db_size, x=30, y=BY-28, size='sm') }}
+      {% endcall %}
+
+    {# =================================================================
+       PLAYERS
+       ================================================================= #}
+    {% elif tab_key == 'players' %}
+
+      {% call ui.group_box('Online now', x=4, y=BY, w=(W-8)/2 - 2, h=22) %}
+        {{ ui.label('Connected', x=4, y=BY-8,  size='sm', color='888') }}
+        {{ ui.label(online_total|string, x=W/2-6, y=BY-8, halign='right', size='sm') }}
+        {{ ui.label('Admins/operators online',
+                    x=4, y=BY-13, size='sm', color='888') }}
+        {{ ui.label(online_admins|string, x=W/2-6, y=BY-13, halign='right', size='sm') }}
+      {% endcall %}
+
+      {% call ui.group_box('Database', x=W/2 + 2, y=BY, w=(W-8)/2 - 2, h=22) %}
+        {{ ui.label('Total players',  x=W/2+6, y=BY-8,  size='sm', color='888') }}
+        {{ ui.label(db_total|string,  x=W-6, y=BY-8,  halign='right', size='sm') }}
+        {{ ui.label('Operators+',     x=W/2+6, y=BY-13, size='sm', color='888') }}
+        {{ ui.label(db_operators|string, x=W-6, y=BY-13, halign='right', size='sm') }}
+        {{ ui.label('Admins+',        x=W/2+6, y=BY-18, size='sm', color='888') }}
+        {{ ui.label(db_admins|string, x=W-6, y=BY-18, halign='right', size='sm') }}
+      {% endcall %}
+
+      {% call ui.group_box('Session activity', x=4, y=BY-26, w=W-8, h=22) %}
+        {{ ui.label('Chat messages', x=4,        y=BY-34, size='sm', color='888') }}
+        {{ ui.label(session_chat|string, x=W/3 - 4, y=BY-34, halign='right', size='sm') }}
+        {{ ui.label('Connects',      x=W/3 + 6, y=BY-34, size='sm', color='888') }}
+        {{ ui.label(session_connects|string, x=2*W/3 - 4, y=BY-34, halign='right', size='sm') }}
+        {{ ui.label('Disconnects',   x=2*W/3 + 6, y=BY-34, size='sm', color='888') }}
+        {{ ui.label(session_disconnects|string, x=W-6, y=BY-34, halign='right', size='sm') }}
+        {{ ui.label('Most recently seen', x=4, y=BY-40, size='sm', color='888') }}
+        {{ ui.label(recent_nick, x=W/3 + 6, y=BY-40, size='sm') }}
+      {% endcall %}
+
+    {% endif %}
+  {% endcall %}
+
+  {# refresh button bottom-left #}
   {{ ui.push_button('refresh', 'Refresh', icon='reload',
-                    x=4, y=-104, variant='ghost', halign='left', size='sm') }}
-  {{ ui.push_button('back', '< Back to hub', icon='arrow_left',
-                    x=24, y=-104, variant='primary', halign='left', size='sm') }}
-
-  {{ ui.status_bar(x=0, y=0, w=180, h=110,
-                   left='tmsm system status',
-                   center=ts,
-                   right=hostname) }}
+                    x=4, y=-H+2, variant='ghost', halign='left', size='sm') }}
 
   {{ ui.hover_script() }}
 </frame>

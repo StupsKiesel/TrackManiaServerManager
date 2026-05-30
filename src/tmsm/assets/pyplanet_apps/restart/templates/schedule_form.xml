@@ -1,0 +1,149 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# Secondary window for creating a restart schedule.
+   context: draft_time, draft_target, draft_freq, draft_days, draft_dom,
+            draft_notifs=[{min,text}], day_labels, freq_options,
+            target_options, status, status_color #}
+
+{# ----- layout grid -------------------------------------------------- #}
+{# Two columns: label column at LX, value column starts at VX. #}
+{% set LX = 6 %}
+{% set VX = 38 %}
+
+{# Vertical row stride and per-row positions for the parameter block. #}
+{% set R = 7 %}
+{% set y_time   = -14 %}
+{% set y_target = y_time   - R %}
+{% set y_freq   = y_target - R %}
+{% set y_when   = y_freq   - R %}
+
+{# ----- notifications group sizing ---------------------------------- #}
+{% set n_count = (draft_notifs|length) %}
+{% set NRH = 6 %}                                {# per-row height #}
+{% set notif_inner_h = (n_count * NRH) + 4 %}    {# rows + padding #}
+{% set notif_min_h = 14 %}                       {# placeholder line when empty #}
+{% set notif_h = (notif_inner_h if n_count else notif_min_h) + 6 %}
+{% set notif_y = y_when - R - 4 %}
+{% set notif_bottom = notif_y - notif_h %}
+
+{# ----- window sizing ----------------------------------------------- #}
+{% set actions_y = notif_bottom - 8 %}
+{% set status_y  = actions_y - 6 %}
+{% set win_h = (-status_y) + 6 %}
+{% set win_w = 160 %}
+
+{# ----- pill style helpers ----------------------------------------- #}
+{# Selected => solid primary-blue button. Unselected => ghost button. #}
+{% macro pill(action_name, label, x, y, w, selected, z=302) -%}
+  {% if selected %}
+    <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} 5"
+          bgcolor="0d4f"
+          halign="left" valign="center"
+          action="{{ id }}__{{ action_name }}" scriptevents="1"
+          class="ui-btn ui-btn-primary" />
+    <label pos="{{ x + w/2 }} {{ y }}" z-index="{{ z + 2 }}"
+           halign="center" valign="center2"
+           text="$fff{{ label }}"
+           textsize="0.9" textfont="GameFontBlack" />
+  {% else %}
+    <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} 5"
+          bgcolor="fff2"
+          halign="left" valign="center"
+          action="{{ id }}__{{ action_name }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    <label pos="{{ x + w/2 }} {{ y }}" z-index="{{ z + 2 }}"
+           halign="center" valign="center2"
+           text="$bbb{{ label }}"
+           textsize="0.9" textfont="GameFont" />
+  {% endif %}
+{%- endmacro %}
+
+<frame pos="{{ -win_w/2 }} {{ win_h/2 + 8 }}" z-index="300">
+
+  {{ ui.window('New schedule', icon='clock', x=0, y=0, w=win_w, h=win_h,
+               crumbs=view_crumbs) }}
+
+  {# ============================ TIME ============================ #}
+  {{ ui.label('Time', x=LX, y=y_time, size='sm', color='ccc', bold=True) }}
+  {{ ui.line_edit('time', value=draft_time, x=VX, y=y_time,
+                  width=20, size='sm') }}
+  {{ ui.label('HH:MM (24h)', x=VX + 22, y=y_time, size='sm', color='888') }}
+
+  {# ============================ TARGET ========================== #}
+  {{ ui.label('Target', x=LX, y=y_target, size='sm', color='ccc', bold=True) }}
+  {% for t in target_options %}
+    {{ pill('target__' ~ t, t, VX + loop.index0 * 22, y_target,
+            20, draft_target == t) }}
+  {% endfor %}
+
+  {# ============================ REPEAT ========================== #}
+  {{ ui.label('Repeat', x=LX, y=y_freq, size='sm', color='ccc', bold=True) }}
+  {% for f in freq_options %}
+    {{ pill('freq__' ~ f, f, VX + loop.index0 * 22, y_freq,
+            20, draft_freq == f) }}
+  {% endfor %}
+
+  {# ============================ WHEN ============================ #}
+  {% if draft_freq == 'monthly' %}
+    {{ ui.label('Day', x=LX, y=y_when, size='sm', color='ccc', bold=True) }}
+    {{ ui.line_edit('dom', value=draft_dom|string, x=VX, y=y_when,
+                    width=16, size='sm') }}
+    {{ ui.label('1-31 (skipped in shorter months)',
+                x=VX + 18, y=y_when, size='sm', color='888') }}
+  {% else %}
+    {{ ui.label('Days', x=LX, y=y_when, size='sm', color='ccc', bold=True) }}
+    {% for d in day_labels %}
+      {% set on = ((draft_days|int) // (2 ** loop.index0)) % 2 == 1 %}
+      {{ pill('day__' ~ loop.index0, d, VX + loop.index0 * 14, y_when,
+              12, on) }}
+    {% endfor %}
+  {% endif %}
+
+  {# ===================== NOTIFICATIONS (group) ================= #}
+  {% call ui.group_box(title='Notifications', x=4, y=notif_y,
+                       w=win_w - 8, h=notif_h,
+                       color='fff', border='fff5') %}
+    {{ ui.tool_button('add_notif', 'plus', x=win_w - 6, y=notif_y,
+                      variant='success', size='sm', halign='right',
+                      tooltip='Add a notification') }}
+
+    {% if n_count %}
+      {# header row #}
+      {% set ny0 = notif_y - 7 %}
+      {{ ui.label('lead (min)', x=8,  y=ny0, size='sm', color='888') }}
+      {{ ui.label('message (blank = default)', x=40, y=ny0, size='sm', color='888') }}
+
+      {% for n in draft_notifs %}
+        {% set ny = ny0 - 4 - loop.index0 * NRH %}
+        {{ ui.line_edit('notif_min__' ~ loop.index0,
+                        value=(n.min|string), x=8, y=ny,
+                        width=16, size='sm') }}
+        {{ ui.line_edit('notif_text__' ~ loop.index0,
+                        value=(n.text or ''),
+                        placeholder='Restart in ' ~ n.min ~ 'min!',
+                        x=26, y=ny, width=110, size='sm') }}
+        {{ ui.tool_button('notif_del__' ~ loop.index0, 'trash',
+                          x=win_w - 6, y=ny,
+                          variant='danger', size='sm', halign='right',
+                          tooltip='Delete') }}
+      {% endfor %}
+    {% else %}
+      {{ ui.label('No notifications. Use + to add one.',
+                  x=8, y=notif_y - 9, size='sm', color='888') }}
+    {% endif %}
+  {% endcall %}
+
+  {# ============================ ACTIONS ========================= #}
+  {{ ui.push_button('cancel_form', 'Cancel',
+                    x=win_w - 38, y=actions_y, halign='right',
+                    icon='cross', variant='ghost', size='md') }}
+  {{ ui.push_button('add_schedule', 'Add schedule',
+                    x=win_w - 4, y=actions_y, halign='right',
+                    icon='plus', variant='success', size='md') }}
+
+  {{ ui.label(status, x=4, y=status_y, halign='left',
+              color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>
+

@@ -129,8 +129,17 @@ class SystemApp(AppConfig):
         self.status_view: StatusView | None = None
         self.logs_view: LogsView | None = None
         self.apps_view: AppsView | None = None
-        # logs viewer per-player state: {login: {file: str, filter: str}}
-        self._logs_state: dict[str, dict[str, str]] = {}
+        # status: per-player active tab and metrics counters
+        self._status_state: dict[str, dict[str, Any]] = {}
+        # session-lifetime counters (since pyplanet start)
+        self._metrics: dict[str, int] = {
+            "chat": 0, "connects": 0, "disconnects": 0,
+        }
+        # cache for expensive storage walks: {key: (ts, value)}
+        self._stat_cache: dict[str, tuple[float, Any]] = {}
+        # logs viewer per-player state
+        # {login: {file, filter, page, selected, confirm_delete, status, status_color}}
+        self._logs_state: dict[str, dict[str, Any]] = {}
         # apps manager pending toggles: {login: {addon_label: bool}}
         self._apps_pending: dict[str, dict[str, bool]] = {}
         self._apps_status: dict[str, tuple[str, str]] = {}  # login -> (msg, color)
@@ -141,10 +150,19 @@ class SystemApp(AppConfig):
         self.apps_view = AppsView(self)
 
         self.status_view.connect("refresh", self._on_status_refresh)
-        self.status_view.connect("back", self._on_back)
+        self.status_view.handle_catch_all = self._status_catch_all
+
+        # session counters
+        try:
+            self.context.signals.listen("maniaplanet:player_chat", self._on_chat)
+            self.context.signals.listen("maniaplanet:player_connect", self._on_player_connect_metric)
+            self.context.signals.listen("maniaplanet:player_disconnect", self._on_player_disconnect_metric)
+        except Exception:
+            logger.exception("system: failed to bind metric listeners")
 
         self.logs_view.connect("refresh", self._on_logs_refresh)
-        self.logs_view.connect("back", self._on_back)
+        self.logs_view.connect("apply", self._on_logs_apply)
+        self.logs_view.connect("delete", self._on_logs_delete)
         self.logs_view.handle_catch_all = self._logs_catch_all
 
         self.apps_view.connect("save", self._on_apps_save)
@@ -193,11 +211,11 @@ class SystemApp(AppConfig):
         await self._open(self.status_view, player)
 
     async def _open_logs(self, player) -> None:
-        # initialise state if missing
         files = self.list_log_files()
-        st = self._logs_state.setdefault(player.login, {"file": "", "filter": ""})
+        st = self._logs_state.setdefault(player.login, self._fresh_logs_state())
         if not st.get("file") and files:
             st["file"] = files[0]["path"]
+        st["confirm_delete"] = ""
         await self._open(self.logs_view, player)
 
     async def _open_apps(self, player) -> None:
@@ -231,137 +249,634 @@ class SystemApp(AppConfig):
     # Status
     # ================================================================
 
-    def collect_status(self) -> dict[str, Any]:
+    STATUS_TABS = [
+        {"key": "host",     "label": "Host"},
+        {"key": "storage",  "label": "Storage"},
+        {"key": "server",   "label": "Server"},
+        {"key": "pyplanet", "label": "PyPlanet"},
+        {"key": "players",  "label": "Players"},
+    ]
+    STORAGE_CACHE_TTL = 30.0  # seconds
+
+    def _status_st(self, login: str) -> dict[str, Any]:
+        return self._status_state.setdefault(login, {"tab": "host"})
+
+    async def _on_chat(self, **kwargs):
+        self._metrics["chat"] += 1
+
+    async def _on_player_connect_metric(self, **kwargs):
+        self._metrics["connects"] += 1
+
+    async def _on_player_disconnect_metric(self, **kwargs):
+        self._metrics["disconnects"] += 1
+
+    async def _status_catch_all(self, player, action, values):
+        if action.startswith("tabs__tab__"):
+            tab = action.rsplit("__", 1)[-1]
+            if any(t["key"] == tab for t in self.STATUS_TABS):
+                self._status_st(player.login)["tab"] = tab
+                await self._open(self.status_view, player)
+
+    # ----- shared host snapshot --------------------------------------
+
+    def _host_block(self) -> dict[str, Any]:
         mi = _read_meminfo()
         total = mi.get("MemTotal", 0)
         avail = mi.get("MemAvailable", 0)
         used = max(0, total - avail)
         mem_pct = (used * 100 // total) if total else 0
+        sw_total = mi.get("SwapTotal", 0)
+        sw_free = mi.get("SwapFree", 0)
+        sw_used = max(0, sw_total - sw_free)
+        sw_pct = (sw_used * 100 // sw_total) if sw_total else 0
         try:
             du = shutil.disk_usage(str(TMSM_ROOT) if TMSM_ROOT.is_dir() else "/")
+            d_total, d_used, d_free = du.total, du.used, du.free
         except OSError:
-            du = (0, 0, 0)  # type: ignore[assignment]
+            d_total = d_used = d_free = 0
         try:
             ncpu = os.cpu_count() or 1
         except Exception:
             ncpu = 1
         load = _read_loadavg()
-        # pool log = we're running, by definition
-        pyp_log = PYPL_ROOT / "pools" / "pypl" / "logs" / "tmsm.log"
-        # detect dedicated server: check xmlrpc port from PyPlanet config
-        ded_port = self._dedicated_xmlrpc_port()
-        ded_up = _port_listening("127.0.0.1", ded_port) if ded_port else False
         try:
             hostname = socket.gethostname()
         except OSError:
             hostname = "?"
-        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        # /etc/os-release pretty name
+        os_name = "?"
+        try:
+            for line in Path("/etc/os-release").read_text().splitlines():
+                if line.startswith("PRETTY_NAME="):
+                    os_name = line.partition("=")[2].strip().strip('"')
+                    break
+        except OSError:
+            pass
+        kernel = ""
+        try:
+            kernel = os.uname().release
+        except Exception:
+            pass
+        cpu_model = "?"
+        try:
+            for line in Path("/proc/cpuinfo").read_text().splitlines():
+                if line.startswith("model name"):
+                    cpu_model = line.partition(":")[2].strip()
+                    break
+        except OSError:
+            pass
         return {
             "hostname": hostname,
-            "ts": ts,
+            "os_name": os_name,
+            "kernel": kernel,
             "uptime_s": _human_seconds(_read_uptime()),
             "cpu_count": ncpu,
+            "cpu_model": cpu_model[:60],
             "load1": load[0], "load5": load[1], "load15": load[2],
             "load1_pct": min(100, int(load[0] / max(ncpu, 1) * 100)),
             "mem_total": _human_bytes(total),
             "mem_used": _human_bytes(used),
             "mem_avail": _human_bytes(avail),
             "mem_pct": mem_pct,
-            "disk_total": _human_bytes(du[0]),
-            "disk_used": _human_bytes(du[1]),
-            "disk_free": _human_bytes(du[2]),
-            "disk_pct": (du[1] * 100 // du[0]) if du[0] else 0,
-            "pyp_up": True,
-            "pyp_log_size": _human_bytes(pyp_log.stat().st_size) if pyp_log.is_file() else "?",
-            "ded_port": ded_port or 0,
-            "ded_up": ded_up,
+            "swap_total": _human_bytes(sw_total),
+            "swap_used": _human_bytes(sw_used),
+            "swap_pct": sw_pct,
+            "disk_total": _human_bytes(d_total),
+            "disk_used": _human_bytes(d_used),
+            "disk_free": _human_bytes(d_free),
+            "disk_pct": (d_used * 100 // d_total) if d_total else 0,
         }
 
-    def _dedicated_xmlrpc_port(self) -> int:
+    # ----- storage scan (cached) -------------------------------------
+
+    def _walk_size(self, base: Path, patterns: tuple[str, ...]) -> tuple[int, int]:
+        """Return (file_count, total_bytes) for files under base matching any suffix in patterns."""
+        if not base.is_dir():
+            return (0, 0)
+        n = 0
+        sz = 0
         try:
-            ded = getattr(self.instance, "game", None)
-            # cleanest: pull from settings the way the instance was configured
-            from pyplanet.conf import settings
-            return int(settings.DEDICATED["default"]["PORT"])
+            for root, _, files in os.walk(base, followlinks=False):
+                for fn in files:
+                    if patterns and not fn.lower().endswith(patterns):
+                        continue
+                    fp = Path(root) / fn
+                    try:
+                        sz += fp.stat().st_size
+                        n += 1
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+        return n, sz
+
+    def _dir_size(self, base: Path) -> int:
+        return self._walk_size(base, ())[1]
+
+    def _storage_block(self) -> dict[str, Any]:
+        now = time.time()
+        cached = self._stat_cache.get("storage")
+        if cached and now - cached[0] < self.STORAGE_CACHE_TTL:
+            return cached[1]
+        servers = TMSM_ROOT / "servers"
+        backups = TMSM_ROOT / "backups"
+        # logs across servers + pyplanet
+        logs_n = logs_sz = 0
+        for base in (servers, PYPL_ROOT / "pools"):
+            n, s = self._walk_size(base, (".log",))
+            logs_n += n
+            logs_sz += s
+        # maps under each server's UserData/Maps
+        maps_n = maps_sz = 0
+        if servers.is_dir():
+            for srv in servers.iterdir():
+                if not srv.is_dir():
+                    continue
+                n, s = self._walk_size(srv / "UserData" / "Maps", (".map.gbx",))
+                maps_n += n
+                maps_sz += s
+        backups_sz = self._dir_size(backups)
+        tmsm_total = self._dir_size(TMSM_ROOT)
+        # DB size (sqlite file under pyplanet pool; mariadb datadir not reachable)
+        db_sz = 0
+        db_kind = "?"
+        try:
+            from pyplanet.conf import settings as _settings
+            db_cfg = _settings.DATABASES.get("default", {})
+            engine = db_cfg.get("ENGINE", "")
+            db_kind = engine.rsplit(".", 1)[-1] or "?"
+            if "sqlite" in engine.lower():
+                f = Path(db_cfg.get("OPTIONS", {}).get("file", db_cfg.get("NAME", "")))
+                if f.is_file():
+                    db_sz = f.stat().st_size
         except Exception:
-            return 0
+            logger.exception("system: db size lookup failed")
+        out = {
+            "tmsm_total":   _human_bytes(tmsm_total),
+            "logs_count":   logs_n,
+            "logs_size":    _human_bytes(logs_sz),
+            "maps_count":   maps_n,
+            "maps_size":    _human_bytes(maps_sz),
+            "backups_size": _human_bytes(backups_sz),
+            "db_kind":      db_kind,
+            "db_size":      _human_bytes(db_sz) if db_sz else "—",
+        }
+        self._stat_cache["storage"] = (now, out)
+        return out
+
+    # ----- server (gbx) ----------------------------------------------
+
+    async def _server_block(self) -> dict[str, Any]:
+        info: dict[str, Any] = {
+            "name": "?", "title": "?", "mode": "?",
+            "players": 0, "max_players": 0,
+            "specs": 0, "max_specs": 0,
+            "current_map": "?", "map_author": "?",
+            "playlist_count": 0,
+            "session_chat": self._metrics.get("chat", 0),
+            "session_connects": self._metrics.get("connects", 0),
+            "session_disconnects": self._metrics.get("disconnects", 0),
+        }
+        try:
+            opts = await self.instance.gbx("GetServerOptions")
+            if isinstance(opts, dict):
+                info["name"] = (opts.get("Name") or "?")[:60]
+                info["max_players"] = int(opts.get("CurrentMaxPlayers", 0) or 0)
+                info["max_specs"] = int(opts.get("CurrentMaxSpectators", 0) or 0)
+        except Exception:
+            logger.exception("system: GetServerOptions failed")
+        try:
+            online = list(self.instance.player_manager.online)
+            specs = sum(1 for p in online if getattr(p, "flow", None) and getattr(p.flow, "is_spectator", False))
+            info["players"] = len(online) - specs
+            info["specs"] = specs
+        except Exception:
+            pass
+        try:
+            cm = self.instance.map_manager.current_map
+            if cm is not None:
+                info["current_map"] = str(getattr(cm, "name", "?"))[:60]
+                info["map_author"] = str(getattr(cm, "author_login", "?"))
+        except Exception:
+            pass
+        try:
+            info["playlist_count"] = len(list(self.instance.map_manager.maps))
+        except Exception:
+            pass
+        try:
+            mode = await self.instance.mode_manager.get_current_full_script()
+            info["mode"] = str(mode)[:60]
+        except Exception:
+            pass
+        try:
+            info["title"] = str(getattr(self.instance.game, "dedicated_title", "?"))
+        except Exception:
+            pass
+        return info
+
+    # ----- pyplanet --------------------------------------------------
+
+    def _pyplanet_block(self) -> dict[str, Any]:
+        ver = "?"
+        try:
+            import pyplanet as _pp
+            ver = getattr(_pp, "__version__", "?")
+        except Exception:
+            pass
+        pool = getattr(self.instance, "process_name", "?")
+        try:
+            apps_loaded = len(getattr(self.instance.apps, "apps", {}))
+        except Exception:
+            apps_loaded = 0
+        pyp_log = PYPL_ROOT / "pools" / pool / "logs" / "tmsm.log"
+        log_size = _human_bytes(pyp_log.stat().st_size) if pyp_log.is_file() else "?"
+        return {
+            "pyp_version": ver,
+            "pyp_pool": pool,
+            "pyp_apps_loaded": apps_loaded,
+            "pyp_log_size": log_size,
+        }
+
+    # ----- players (db) ----------------------------------------------
+
+    async def _players_block(self) -> dict[str, Any]:
+        out = {
+            "db_total": 0, "db_admins": 0, "db_operators": 0,
+            "online_total": 0, "online_admins": 0,
+            "recent_nick": "—",
+        }
+        try:
+            online = list(self.instance.player_manager.online)
+            out["online_total"] = len(online)
+            out["online_admins"] = sum(1 for p in online if int(getattr(p, "level", 0)) >= 2)
+        except Exception:
+            pass
+        try:
+            from pyplanet.apps.core.maniaplanet.models import Player
+            from peewee import fn
+            total_q = Player.select(fn.COUNT(Player.id).alias("c"))
+            admin_q = Player.select(fn.COUNT(Player.id).alias("c")).where(Player.level >= 2)
+            oper_q = Player.select(fn.COUNT(Player.id).alias("c")).where(Player.level >= 1)
+            recent_q = Player.select().order_by(Player.last_seen.desc()).limit(1)
+            out["db_total"] = list(await self.instance.db.execute(total_q))[0].c
+            out["db_admins"] = list(await self.instance.db.execute(admin_q))[0].c
+            out["db_operators"] = list(await self.instance.db.execute(oper_q))[0].c
+            rec = list(await self.instance.db.execute(recent_q))
+            if rec:
+                out["recent_nick"] = (getattr(rec[0], "nickname", "") or "—")[:40]
+        except Exception:
+            logger.exception("system: player db query failed")
+        return out
+
+    # ----- top-level context provider --------------------------------
+
+    async def status_context(self, login: str) -> dict[str, Any]:
+        st = self._status_st(login)
+        tab = st.get("tab", "host")
+        ctx: dict[str, Any] = {
+            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "active_tab": tab,
+            "tabs": list(self.STATUS_TABS),
+        }
+        # always include host for the header
+        ctx.update(self._host_block())
+        if tab == "storage":
+            ctx.update(self._storage_block())
+        elif tab == "server":
+            ctx.update(await self._server_block())
+        elif tab == "pyplanet":
+            ctx.update(self._pyplanet_block())
+            ctx.update(self._storage_block())  # for pyplanet log size context
+        elif tab == "players":
+            ctx.update(await self._players_block())
+            ctx.update(self._server_block_safe_chat())
+        return ctx
+
+    def _server_block_safe_chat(self) -> dict[str, Any]:
+        # Used by the Players tab to show chat-message session counter without
+        # needing the full gbx round-trip.
+        return {
+            "session_chat": self._metrics.get("chat", 0),
+            "session_connects": self._metrics.get("connects", 0),
+            "session_disconnects": self._metrics.get("disconnects", 0),
+        }
 
     async def _on_status_refresh(self, player, **kwargs) -> None:
+        # bust the storage cache so refresh actually re-scans
+        self._stat_cache.pop("storage", None)
         await self._open(self.status_view, player)
 
     # ================================================================
     # Logs Viewer
     # ================================================================
 
-    def list_log_files(self) -> list[dict[str, str]]:
-        out: list[dict[str, str]] = []
+    LINES_PER_PAGE = 36
+    MAX_LINES_LOADED = 50_000
+    MAX_BYTES_READ = 8 * 1024 * 1024  # tail the last 8 MB of huge files
+    VISIBLE_CHARS = 180   # approx chars that fit in the right panel
+    HSCROLL_STEP = 40
+
+    def _fresh_logs_state(self) -> dict[str, Any]:
+        return {
+            "file": "",
+            "filter": "",
+            "page": 1,
+            "hscroll": 0,
+            "selected": "",
+            "confirm_delete": "",
+            "status": "",
+            "status_color": "aaa",
+        }
+
+    def list_log_files(self) -> list[dict[str, Any]]:
+        """Discover log files across all tmsm-managed locations.
+
+        Categories:
+          pypl  : PyPlanet pool logs                ~/.tmsm/pyplanet/pools/*/logs/*
+          tmsm  : tmsm wrapper logs around server   ~/.tmsm/servers/*/logs/*
+          cons  : dedicated Console.*.log           ~/.tmsm/servers/*/UserData/Logs/*
+          eng   : dedicated engine boot logs        ~/.tmsm/servers/*/Logs/*
+        """
+        roots: list[tuple[str, Path, str]] = [
+            ("pypl", PYPL_ROOT / "pools", "*/logs/*"),
+            ("tmsm", TMSM_ROOT / "servers", "*/logs/*"),
+            ("cons", TMSM_ROOT / "servers", "*/UserData/Logs/*"),
+            ("eng",  TMSM_ROOT / "servers", "*/Logs/*"),
+        ]
+        out: list[dict[str, Any]] = []
         seen: set[Path] = set()
-        candidates: list[Path] = []
-        # pool logs
-        for sub in (PYPL_ROOT / "pools").glob("*/logs/*.log"):
-            candidates.append(sub)
-        # server logs
-        for sub in (TMSM_ROOT / "servers").glob("*/logs/*.log"):
-            candidates.append(sub)
-        for p in candidates:
-            try:
-                p = p.resolve()
-            except OSError:
+        for cat, base, pattern in roots:
+            if not base.is_dir():
                 continue
-            if p in seen or not p.is_file():
-                continue
-            seen.add(p)
-            try:
-                size = p.stat().st_size
-            except OSError:
-                size = 0
-            rel = p.relative_to(TMSM_ROOT) if TMSM_ROOT in p.parents else p
-            out.append({
-                "path": str(p),
-                "label": str(rel),
-                "size": _human_bytes(size),
-            })
-        out.sort(key=lambda r: r["label"])
+            for p in base.glob(pattern):
+                try:
+                    p = p.resolve()
+                except OSError:
+                    continue
+                if not p.is_file() or p in seen:
+                    continue
+                if p.suffix.lower() not in (".log", ".txt"):
+                    continue
+                seen.add(p)
+                try:
+                    stat = p.stat()
+                except OSError:
+                    continue
+                rel = p.relative_to(TMSM_ROOT) if TMSM_ROOT in p.parents else p
+                # short label = filename only (column is narrow)
+                out.append({
+                    "path": str(p),
+                    "label": p.name,
+                    "full": str(rel),
+                    "category": cat,
+                    "size": _human_bytes(stat.st_size),
+                    "size_bytes": stat.st_size,
+                    "mtime": stat.st_mtime,
+                })
+        # newest first per category
+        out.sort(key=lambda r: (-r["mtime"],))
         return out
+
+    def _load_log_lines(self, path: Path, needle: str) -> list[str]:
+        if not path or not path.is_file():
+            return []
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as f:
+                if size > self.MAX_BYTES_READ:
+                    f.seek(size - self.MAX_BYTES_READ)
+                    f.readline()  # discard partial first line
+                blob = f.read()
+        except OSError:
+            return []
+        try:
+            text = blob.decode("utf-8", errors="replace")
+        except Exception:
+            text = blob.decode("latin-1", errors="replace")
+        lines = text.splitlines()
+        if needle:
+            lo = needle.lower()
+            lines = [ln for ln in lines if lo in ln.lower()]
+        if len(lines) > self.MAX_LINES_LOADED:
+            lines = lines[-self.MAX_LINES_LOADED:]
+        return lines
+
+    @staticmethod
+    def _escape_ml(s: str) -> str:
+        """Escape ManiaPlanet $-codes for safe display in a label."""
+        return (s.replace("$", "$$")
+                 .replace('"', "'")
+                 .replace("&", "&amp;")
+                 .replace("<", "&lt;")
+                 .replace(">", "&gt;"))
 
     def logs_context(self, login: str) -> dict[str, Any]:
         files = self.list_log_files()
-        st = self._logs_state.setdefault(login, {"file": "", "filter": ""})
+        st = self._logs_state.setdefault(login, self._fresh_logs_state())
         active = st.get("file") or (files[0]["path"] if files else "")
+        if active and not any(f["path"] == active for f in files):
+            # active file disappeared
+            active = files[0]["path"] if files else ""
+            st["file"] = active
+            st["page"] = 1
+            st["hscroll"] = 0
         flt = st.get("filter", "")
-        lines = _tail(Path(active), n=200, needle=flt) if active else []
+        all_lines = self._load_log_lines(Path(active), flt) if active else []
+        # newest line first → reverse for paging
+        rev = list(reversed(all_lines))
+        total = max(1, (len(rev) + self.LINES_PER_PAGE - 1) // self.LINES_PER_PAGE)
+        page = max(1, min(int(st.get("page", 1) or 1), total))
+        st["page"] = page
+        start = (page - 1) * self.LINES_PER_PAGE
+        page_lines = rev[start:start + self.LINES_PER_PAGE]
+        # horizontal scroll: slice each line
+        max_len = max((len(ln) for ln in page_lines), default=0)
+        hscroll = max(0, int(st.get("hscroll", 0) or 0))
+        # don't allow scrolling so far that all lines become empty
+        if hscroll > max(0, max_len - 20):
+            hscroll = max(0, max_len - 20)
+            st["hscroll"] = hscroll
+        sliced = [ln[hscroll:hscroll + self.VISIBLE_CHARS] for ln in page_lines]
         return {
             "files": files,
             "active": active,
             "filter": flt,
-            "lines": lines,
+            "lines": [self._escape_ml(ln) for ln in sliced],
+            "_raw_lines": page_lines,  # full lines for click→copy lookup
             "log_path": active,
+            "page": page,
+            "total_pages": total,
+            "line_count": len(rev),
+            "hscroll": hscroll,
+            "max_line_len": max_len,
+            "selected": self._escape_ml(st.get("selected", "")),
+            "status": st.get("status", ""),
+            "status_color": st.get("status_color", "aaa"),
+            "confirm_delete": st.get("confirm_delete", ""),
         }
 
+    def _set_logs_status(self, login: str, msg: str, color: str = "aaa") -> None:
+        st = self._logs_state.setdefault(login, self._fresh_logs_state())
+        st["status"] = msg
+        st["status_color"] = color
+
+    async def _absorb_filter(self, login: str, values: dict | None) -> None:
+        if not values or self.logs_view is None:
+            return
+        key = f"entry_{self.logs_view.id}__filter"
+        if key in values:
+            st = self._logs_state.setdefault(login, self._fresh_logs_state())
+            new = str(values[key] or "")
+            if new != st.get("filter", ""):
+                st["filter"] = new
+                st["page"] = 1
+
     async def _logs_catch_all(self, player, action, values):
-        # actions: <view_id>__pick__<index>  or <view_id>__apply
-        st = self._logs_state.setdefault(player.login, {"file": "", "filter": ""})
-        if "__pick__" in action:
+        st = self._logs_state.setdefault(player.login, self._fresh_logs_state())
+        login = player.login
+        # any interaction other than delete clears the confirm flag
+        clear_confirm = not action.startswith("delfile__") and action != "delete"
+        if clear_confirm:
+            st["confirm_delete"] = ""
+
+        if action.startswith("pick__"):
             try:
-                idx = int(action.rsplit("__", 1)[-1])
-            except ValueError:
+                idx = int(action.split("__", 1)[1])
+            except (ValueError, IndexError):
                 return
             files = self.list_log_files()
             if 0 <= idx < len(files):
-                st["file"] = files[idx]["path"]
+                if st.get("file") != files[idx]["path"]:
+                    st["file"] = files[idx]["path"]
+                    st["page"] = 1
+                    self._set_logs_status(login, "opened: " + files[idx]["label"], "8af")
             await self._open(self.logs_view, player)
             return
-        if action.endswith("__apply"):
-            # find filter entry
-            for k, v in (values or {}).items():
-                if k.startswith("entry_") and k.endswith("__filter"):
-                    st["filter"] = str(v or "")
-                    break
+
+        if action.startswith("delfile__"):
+            try:
+                idx = int(action.split("__", 1)[1])
+            except (ValueError, IndexError):
+                return
+            files = self.list_log_files()
+            if not (0 <= idx < len(files)):
+                return
+            path = files[idx]["path"]
+            if st.get("confirm_delete") != path:
+                st["confirm_delete"] = path
+                self._set_logs_status(login, f"click X again to delete {files[idx]['label']}", "fa4")
+            else:
+                ok, msg = self._delete_log_file(path)
+                st["confirm_delete"] = ""
+                if ok:
+                    if st.get("file") == path:
+                        st["file"] = ""
+                        st["page"] = 1
+                    self._set_logs_status(login, msg, "8f8")
+                else:
+                    self._set_logs_status(login, msg, "f66")
+            await self._open(self.logs_view, player)
+            return
+
+        if action.startswith("copyline__"):
+            try:
+                idx = int(action.split("__", 1)[1])
+            except (ValueError, IndexError):
+                return
+            ctx = self.logs_context(login)
+            raw = ctx.get("_raw_lines", [])
+            if 0 <= idx < len(raw):
+                st["selected"] = raw[idx]
+                self._set_logs_status(login, "line copied to buffer (Ctrl+A, Ctrl+C)", "8af")
+            await self._open(self.logs_view, player)
+            return
+
+        if action.startswith("pg__"):
+            sub = action[len("pg__"):]
+            ctx_for_total = self.logs_context(login)
+            total = ctx_for_total["total_pages"]
+            cur = st.get("page", 1)
+            if sub == "first":
+                st["page"] = 1
+            elif sub == "prev":
+                st["page"] = max(1, cur - 1)
+            elif sub == "next":
+                st["page"] = min(total, cur + 1)
+            elif sub == "last":
+                st["page"] = total
+            elif sub.startswith("page__"):
+                try:
+                    st["page"] = max(1, min(total, int(sub.split("__", 1)[1])))
+                except (ValueError, IndexError):
+                    pass
+            await self._absorb_filter(login, values)
+            await self._open(self.logs_view, player)
+            return
+
+        if action in ("hs_home", "hs_end", "hs_left", "hs_right"):
+            ctx_for_max = self.logs_context(login)
+            mx = ctx_for_max["max_line_len"]
+            cur = int(st.get("hscroll", 0) or 0)
+            if action == "hs_home":
+                st["hscroll"] = 0
+            elif action == "hs_left":
+                st["hscroll"] = max(0, cur - self.HSCROLL_STEP)
+            elif action == "hs_right":
+                st["hscroll"] = min(max(0, mx - 20), cur + self.HSCROLL_STEP)
+            elif action == "hs_end":
+                st["hscroll"] = max(0, mx - self.VISIBLE_CHARS // 2)
+            await self._absorb_filter(login, values)
             await self._open(self.logs_view, player)
             return
 
     async def _on_logs_refresh(self, player, **kwargs) -> None:
+        await self._absorb_filter(player.login, kwargs.get("values"))
+        self._set_logs_status(player.login, "refreshed", "8af")
         await self._open(self.logs_view, player)
+
+    async def _on_logs_apply(self, player, **kwargs) -> None:
+        await self._absorb_filter(player.login, kwargs.get("values"))
+        await self._open(self.logs_view, player)
+
+    async def _on_logs_delete(self, player, **kwargs) -> None:
+        """Bottom-of-window 'Delete file' button — deletes the currently open file."""
+        st = self._logs_state.setdefault(player.login, self._fresh_logs_state())
+        path = st.get("file", "")
+        if not path:
+            self._set_logs_status(player.login, "no file selected", "f66")
+            await self._open(self.logs_view, player)
+            return
+        if st.get("confirm_delete") != path:
+            st["confirm_delete"] = path
+            self._set_logs_status(player.login, "click Delete again to confirm", "fa4")
+        else:
+            ok, msg = self._delete_log_file(path)
+            st["confirm_delete"] = ""
+            if ok:
+                st["file"] = ""
+                st["page"] = 1
+                self._set_logs_status(player.login, msg, "8f8")
+            else:
+                self._set_logs_status(player.login, msg, "f66")
+        await self._open(self.logs_view, player)
+
+    def _delete_log_file(self, path: str) -> tuple[bool, str]:
+        p = Path(path)
+        # Safety: only allow deletion under TMSM_ROOT
+        try:
+            p = p.resolve()
+            p.relative_to(TMSM_ROOT.resolve())
+        except (OSError, ValueError):
+            return False, "refused: path outside tmsm root"
+        if not p.is_file():
+            return False, "not a file"
+        try:
+            p.unlink()
+            logger.info("system/logs: deleted %s", p)
+            return True, f"deleted {p.name}"
+        except OSError as e:
+            logger.exception("system/logs: delete failed")
+            return False, f"delete failed: {e}"
 
     # ================================================================
     # Apps manager

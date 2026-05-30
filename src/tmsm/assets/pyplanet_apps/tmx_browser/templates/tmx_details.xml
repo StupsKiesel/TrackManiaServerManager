@@ -1,0 +1,127 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context:
+     site_label   - host string
+     game         - "tmnext" / "tm" / "sm"
+     map          - normalized dict from tmx._norm (see tmx.py)
+     thumb_url    - full thumbnail URL
+     status, status_color
+#}
+
+{% set m       = map %}
+{% set win_w   = 240 %}
+{% set win_h   = 150 %}
+{% set thumb_w = 90 %}
+{% set thumb_h = 50 %}
+
+{# left column = thumbnail + Add button; right column = labelled fields #}
+{% set left_x   = 6 %}
+{% set right_x  = left_x + thumb_w + 8 %}
+{% set field_w  = win_w - right_x - 6 %}
+
+{# row helper - inline because we use it many times with simple text #}
+{% macro field(label, value, x, y, lw=24, color='fff') -%}
+  {{ ui.label(label, x=x,        y=y, size='sm', color='888') }}
+  {{ ui.label(value|string|truncate(40, true, ''),
+              x=x + lw, y=y, size='sm', color=color) }}
+{%- endmacro %}
+
+{% macro chip(text, x, y) -%}
+  <quad pos="{{ x }} {{ y }}" z-index="302" size="{{ (text|length) * 1.3 + 3 }} 4.2"
+        bgcolor="fff2" halign="left" valign="center" class="ui-btn-ghost" />
+  <label pos="{{ x + ((text|length) * 1.3 + 3) / 2 }} {{ y }}" z-index="304"
+         halign="center" valign="center2"
+         text="$bbb{{ text }}" textsize="0.8" textfont="GameFont" />
+{%- endmacro %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="210">
+
+  {{ ui.window('Map Details', icon='info', x=0, y=0,
+               w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {# ============================ HEADER ================================= #}
+  {{ ui.label(m.name|truncate(48, true, ''),
+              x=left_x, y=-12, size='lg', color='fff') }}
+  {{ ui.label('by ' ~ (m.author or 'unknown'),
+              x=left_x, y=-18, size='sm', color='aaa') }}
+
+  {# ============================ THUMBNAIL PLACEHOLDER =================== #}
+  {# TM2020 client refuses to render http-served images from this view, even
+     though the same URLs work in the demo view. Show a placeholder. #}
+  <quad pos="{{ left_x }} {{ -24 }}" z-index="200"
+        size="{{ thumb_w }} {{ thumb_h }}"
+        bgcolor="fff1" halign="left" valign="top" />
+  {{ ui.label('no preview', x=left_x + thumb_w / 2, y=-24 - thumb_h / 2,
+              halign='center', size='sm', color='666') }}
+
+  {# small action row under the thumbnail #}
+  {{ ui.push_button('add__' ~ m.track_id, 'Add to server',
+                    x=left_x, y=-24 - thumb_h - 6, halign='left',
+                    icon='plus', variant='success', size='sm') }}
+  {{ ui.tool_button('open_tmx', 'tmx.exchange',
+                    x=left_x, y=-24 - thumb_h - 14, halign='left',
+                    variant='ghost', size='sm',
+                    tooltip='Source: ' ~ site_label) }}
+
+  {# ============================ FIELDS GRID ============================= #}
+  {% set fy = -13 %}
+  {% set fh = 5.4 %}
+
+  {{ field('Game',     game,                  right_x, fy - fh * 0) }}
+  {{ field('Type',     m.map_type or '-',     right_x, fy - fh * 1) }}
+  {{ field('TitlePack',m.title_pack or '-',   right_x, fy - fh * 2) }}
+  {{ field('Vehicle',  m.vehicle or '-',      right_x, fy - fh * 3) }}
+  {{ field('Vista',    m.environment or '-',  right_x, fy - fh * 4) }}
+  {{ field('Mood',     m.mood or '-',         right_x, fy - fh * 5) }}
+  {{ field('Difficulty', m.difficulty or '-', right_x, fy - fh * 6,
+            color=('f44' if m.difficulty == 'Lunatic'
+                    else 'fa0' if m.difficulty == 'Expert'
+                    else 'fc4' if m.difficulty == 'Advanced'
+                    else '0f8' if m.difficulty in ('Beginner','Intermediate')
+                    else 'fff')) }}
+  {{ field('Length',   m.length or '-',       right_x, fy - fh * 7) }}
+  {{ field('Route',    m.route or '-',        right_x, fy - fh * 8) }}
+  {{ field('Awards',   m.awards|string,       right_x, fy - fh * 9,
+            color='fc4') }}
+  {{ field('Value',    m.track_value|string,  right_x, fy - fh * 10) }}
+  {{ field('Comments', m.comment_count|string,right_x, fy - fh * 11) }}
+  {{ field('Replays',  m.replay_count|string, right_x, fy - fh * 12) }}
+  {{ field('Uploaded', (m.uploaded or '-')[:10], right_x, fy - fh * 13) }}
+
+  {# ============================ TAGS ROW ================================ #}
+  {% set tags_y = -24 - thumb_h - 24 %}
+  {{ ui.label('Tags:', x=left_x, y=tags_y, size='sm', color='888') }}
+  {% set cx = namespace(v=left_x + 12) %}
+  {% if m.tags %}
+    {% for t in m.tags[:10] %}
+      {{ chip(t, cx.v, tags_y) }}
+      {% set cx.v = cx.v + (t|length) * 1.3 + 4 %}
+    {% endfor %}
+  {% else %}
+    {{ ui.label('-', x=left_x + 12, y=tags_y, size='sm', color='666') }}
+  {% endif %}
+
+  {# ============================ TMX DESCRIPTION ========================= #}
+  {% if desc_lines %}
+    {% set cy = tags_y - 7 %}
+    {{ ui.label('TMX description:', x=left_x, y=cy, size='sm', color='888') }}
+    {% for line in desc_lines %}
+      {% set ly = cy - 5 - loop.index0 * 4.5 %}
+      {% for seg in line %}
+        {% if seg.kind == 'link' and seg.url %}
+          {{ ui.link(seg.text, url=seg.url,
+                     x=left_x + seg.x, y=ly, size='sm') }}
+        {% else %}
+          {{ ui.label(seg.text, x=left_x + seg.x, y=ly,
+                      size='sm', color='ccc') }}
+        {% endif %}
+      {% endfor %}
+    {% endfor %}
+  {% endif %}
+
+  {# ============================ FOOTER STATUS =========================== #}
+  {{ ui.label(status, x=left_x, y=-win_h + 10,
+              halign='left', color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>

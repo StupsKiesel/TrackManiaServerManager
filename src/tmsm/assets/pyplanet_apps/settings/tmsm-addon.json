@@ -1,0 +1,4 @@
+﻿{
+  "description": "PyPlanet app settings master tool — list every loaded plugin's registered Setting and edit them from a tabbed window. Requires tmsm_hub + tmsm_ui.",
+  "author": "tmsm"
+}

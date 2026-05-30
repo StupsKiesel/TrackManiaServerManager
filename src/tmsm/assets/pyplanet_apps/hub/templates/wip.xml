@@ -1,0 +1,14 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# Shared 'work in progress' dialog. Every WipAppBase view injects
+   `hub_app_name` and `hub_app_icon` from its owner app's class
+   attributes so this single template serves all placeholder addons. #}
+<frame pos="-50 25" z-index="900">
+  {{ ui.info_dialog('wip',
+                    title=hub_app_name or 'Work in progress',
+                    message='Work in progress. Soon&#x2122;.',
+                    icon=hub_app_icon or 'info',
+                    open=True,
+                    w=100, h=32, z=900) }}
+  {{ ui.hover_script() }}
+</frame>

@@ -1,0 +1,4 @@
+﻿{
+  "description": "Karma — placeholder. Registers a hub tile that opens a 'work in progress' dialog. Requires tmsm_hub + tmsm_ui.",
+  "author": "tmsm"
+}

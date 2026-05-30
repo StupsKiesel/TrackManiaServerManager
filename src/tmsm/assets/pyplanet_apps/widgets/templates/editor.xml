@@ -1,0 +1,179 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# tmsm_widgets editor — admin position editor. Context: rows, selected_key,
+   selected_name, scope ('global'|'player'), step, step_options. #}
+
+{% set WIN_W = 170 %}
+{% set WIN_H = 110 %}
+{% set ROW_H = 11 %}
+{% set LIST_W = 70 %}
+{% set EDIT_X = LIST_W + 4 %}
+{% set EDIT_W = WIN_W - EDIT_X - 4 %}
+
+<frame pos="-85 55" z-index="500">
+
+  {{ ui.window('Widgets · position editor', icon='object-group', x=0, y=0, w=WIN_W, h=WIN_H) }}
+
+  {# vertical divider between columns #}
+  <quad pos="{{ LIST_W + 2 }} -10" size="0.2 {{ WIN_H - 12 }}"
+        valign="top" bgcolor="ffffff22" z-index="509" />
+
+  {# ── left column: widget list ──────────────────────────────────────── #}
+  <frame pos="2 -10" z-index="510">
+    {% for row in rows %}
+      {% set y = -(loop.index0 * (ROW_H + 1)) %}
+      {# row background #}
+      <quad pos="0 {{ y }}" size="{{ LIST_W }} {{ ROW_H }}" valign="top"
+            bgcolor="{{ '1a4fa6cc' if row.selected else '0a0a0a88' }}" />
+      {# left accent strip on selected row #}
+      {% if row.selected %}
+        <quad pos="0 {{ y }}" size="0.8 {{ ROW_H }}" valign="top" bgcolor="15dfa" />
+      {% endif %}
+      {# icon tile #}
+      <quad pos="1.5 {{ y - 1.5 }}" size="8 8" valign="top"
+            bgcolor="{{ '15dfa44' if row.selected else 'ffffff10' }}" />
+      {{ ui.icon(row.icon, x=5.5, y=y - 5.5, color='15f' if row.selected else 'ccc',
+                 font=3.4, z=512) }}
+      {# name (bold) #}
+      <label pos="11 {{ y - 1.2 }}" textsize="1.0" textfont="GameFontBlack" valign="top"
+             text="$fff{{ row.name }}" />
+      {# key (mono, dim) #}
+      <label pos="11 {{ y - 4.1 }}" textsize="0.7" valign="top"
+             text="$777{{ row.key }}" />
+      {# bottom line: scope-aware position + size #}
+      <label pos="11 {{ y - 7.6 }}" textsize="0.7" valign="top"
+             text="$aaaSize $fff{{ '%.0f' | format(row.w) }}×{{ '%.0f' | format(row.h) }}  $666·  $aaaPos $fff{{ '%.1f' | format(row.x) }} , {{ '%.1f' | format(row.y) }}" />
+      {# kind badge (top-right) #}
+      <quad pos="{{ LIST_W - 1.5 }} {{ y - 1.2 }}" size="10 3.2" valign="top" halign="right"
+            bgcolor="{{ '15dfa66' if row.selected else 'ffffff14' }}" />
+      <label pos="{{ LIST_W - 2.5 }} {{ y - 1.4 }}" textsize="0.65" halign="right" valign="top"
+             textfont="GameFontBlack"
+             text="${{ 'fff' if row.selected else 'bbb' }}{{ row.kind|upper }}" />
+      {# click target — kept LAST so it sits on top #}
+      <quad pos="0 {{ y }}" size="{{ LIST_W }} {{ ROW_H }}" valign="top" bgcolor="0000"
+            id="uibtn_ghost_{{ id }}__select__{{ row.key }}"
+            action="{{ id }}__select__{{ row.key }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost"
+            tooltip="{{ row.name }} ({{ row.kind }})" />
+    {% else %}
+      <quad pos="0 -10" size="{{ LIST_W }} 12" valign="top" bgcolor="0a0a0a88" />
+      <label pos="{{ LIST_W / 2 }} -16" halign="center" textsize="0.9"
+             text="$aaaNo widgets registered." />
+    {% endfor %}
+  </frame>
+
+  {# ── right column: edit panel ──────────────────────────────────────── #}
+  {% if selected_key %}
+  <frame pos="{{ EDIT_X }} -10" z-index="510">
+
+    {# header — widget name + key #}
+    <label pos="0 0" textsize="1.2" textfont="GameFontBlack"
+           text="$fff{{ selected_name }}" />
+    <label pos="0 -3.5" textsize="0.75" text="$888{{ selected_key }}" />
+    <quad pos="0 -7" size="{{ EDIT_W }} 0.2" bgcolor="ffffff22" />
+
+    {# ── options group (scope + step) ─────────────────────────────── #}
+    {% call ui.group_box('Options', x=0, y=-10, w=EDIT_W, h=18, color='aaa') %}
+      {{ ui.radio_group('scope',
+                         [('global', 'Global'), ('player', 'Personal')],
+                         selected=scope, x=4, y=-19, orient='h', gap=22, size='sm') }}
+      {% set step_label = (step|int)|string if step == step|int else ('%.1f' | format(step)) %}
+      {{ ui.stepper('step', value=step_label,
+                    x=EDIT_W / 2 + 2, y=-19, w=EDIT_W / 2 - 6, size='md') }}
+    {% endcall %}
+
+    {# ── nudge group (d-pad + center reset) ──────────────────────── #}
+    {% call ui.group_box('Nudge', x=0, y=-32, w=38, h=24, color='aaa') %}
+      {# d-pad uses halign='center' so x/y are the button centers, which
+         keeps spacing symmetric on both axes. Group box center: (19, -44). #}
+      {% set CX = 19 %}
+      {% set CY = -44 %}
+      {% set STEP = 6 %}
+      {{ ui.tool_button('nudge__up',              'arrow_up',    x=CX,        y=CY + STEP, size='md', variant='ghost',  halign='center') }}
+      {{ ui.tool_button('nudge__left',            'arrow_left',  x=CX - STEP, y=CY,        size='md', variant='ghost',  halign='center') }}
+      {{ ui.tool_button('reset__' ~ selected_key, 'undo',        x=CX,        y=CY,        size='md', variant='danger', halign='center', tooltip='Reset position') }}
+      {{ ui.tool_button('nudge__right',           'arrow_right', x=CX + STEP, y=CY,        size='md', variant='ghost',  halign='center') }}
+      {{ ui.tool_button('nudge__down',            'arrow_down',  x=CX,        y=CY - STEP, size='md', variant='ghost',  halign='center') }}
+    {% endcall %}
+
+    {# ── numeric entry — current row values ───────────────────────── #}
+    {% for row in rows if row.selected %}
+      {% set CG_X = 40 %}
+      {% set CG_Y = -32 %}
+      {% set CG_W = EDIT_W - CG_X %}
+      {% set CG_H = 24 %}
+      {# layout: [lbl 3] [entry 14] [gap 3] [lbl 3] [entry 14] = 37 wide.
+         center horizontally inside the group (x .. x+w), then derive
+         per-cell positions from the same anchor. #}
+      {% set CONTENT_W = 37 %}
+      {% set COL1_LBL = CG_X + (CG_W - CONTENT_W) / 2 %}
+      {% set COL1_ENT = COL1_LBL + 4 %}
+      {% set COL2_LBL = COL1_ENT + 14 + 3 %}
+      {% set COL2_ENT = COL2_LBL + 4 %}
+      {# vertical center inside box (skip ~3 for title) #}
+      {% set ROW1_Y = CG_Y - 7 %}
+      {% set ROW2_Y = CG_Y - 15 %}
+      {% call ui.group_box('Coordinates', x=CG_X, y=CG_Y, w=CG_W, h=CG_H, color='aaa') %}
+        <label pos="{{ COL1_LBL }} {{ ROW1_Y }}" textsize="0.85" text="$aaaX" />
+        <quad  pos="{{ COL1_ENT }} {{ ROW1_Y - 0.6 }}" size="14 4" bgcolor="0008" valign="center2" />
+        <entry pos="{{ COL1_ENT }} {{ ROW1_Y - 0.6 }}" size="14 4" name="widget_{{ row.key }}_x"
+               default="{{ '%.2f' | format(row.x) }}" textsize="1" valign="center2" />
+
+        <label pos="{{ COL2_LBL }} {{ ROW1_Y }}" textsize="0.85" text="$aaaY" />
+        <quad  pos="{{ COL2_ENT }} {{ ROW1_Y - 0.6 }}" size="14 4" bgcolor="0008" valign="center2" />
+        <entry pos="{{ COL2_ENT }} {{ ROW1_Y - 0.6 }}" size="14 4" name="widget_{{ row.key }}_y"
+               default="{{ '%.2f' | format(row.y) }}" textsize="1" valign="center2" />
+
+        <label pos="{{ COL1_LBL }} {{ ROW2_Y }}" textsize="0.85" text="$aaaW" />
+        <quad  pos="{{ COL1_ENT }} {{ ROW2_Y - 0.6 }}" size="14 4" bgcolor="0008" valign="center2" />
+        <entry pos="{{ COL1_ENT }} {{ ROW2_Y - 0.6 }}" size="14 4" name="widget_{{ row.key }}_w"
+               default="{{ '%.2f' | format(row.w) }}" textsize="1" valign="center2" />
+
+        <label pos="{{ COL2_LBL }} {{ ROW2_Y }}" textsize="0.85" text="$aaaH" />
+        <quad  pos="{{ COL2_ENT }} {{ ROW2_Y - 0.6 }}" size="14 4" bgcolor="0008" valign="center2" />
+        <entry pos="{{ COL2_ENT }} {{ ROW2_Y - 0.6 }}" size="14 4" name="widget_{{ row.key }}_h"
+               default="{{ '%.2f' | format(row.h) }}" textsize="1" valign="center2" />
+      {% endcall %}
+    {% endfor %}
+
+    {# ── help text ────────────────────────────────────────────────── #}
+    <label pos="0 -60" textsize="0.7" sizen="{{ EDIT_W }} 24"
+           autonewline="1"
+           text="$888Yellow overlays mark each widget's current position. Nudge with the d-pad (uses the selected step), or type exact values and press Apply. $aaaScope$888 picks where the change is saved: $aaaGlobal$888 writes the default position used by every player on this server, while $aaaPersonal$888 stores an override that only affects you and takes precedence over the global value. Resetting clears the active scope's saved value." />
+  </frame>
+  {% else %}
+  <frame pos="{{ EDIT_X }} -10" z-index="510">
+    <quad pos="0 -2" size="{{ EDIT_W }} {{ WIN_H - 14 }}" bgcolor="0a0a0a55" />
+    {{ ui.icon('object-group', x=EDIT_W / 2 - 3, y=-(WIN_H / 2) + 5, color='333', font=8.0) }}
+    <label pos="{{ EDIT_W / 2 }} -{{ WIN_H / 2 + 4 }}" halign="center"
+           textsize="1.0" text="$888Select a widget on the left." />
+  </frame>
+  {% endif %}
+
+  {# ── window-level buttons ─────────────────────────────────────────── #}
+  {# top-right X is provided by ui.window itself (fires `_close` -> BaseView._on_close) #}
+  {# bottom-right: apply (only when something is selected) #}
+  {% if selected_key %}
+    {{ ui.push_button('set__' ~ selected_key, 'Apply', x=WIN_W - 4, y=-(WIN_H - 6),
+                      halign='right', size='md', variant='primary', icon='check') }}
+  {% endif %}
+</frame>
+
+{# hover animations for every push_button / tool_button in this template #}
+{{ ui.hover_script() }}
+
+{# ── visual position indicators (non-interactive) ────────────────────── #}
+<frame pos="0 0" z-index="600">
+  {% for row in rows %}
+    {% set border = '15dfa' if row.selected else 'ffff00aa' %}
+    {% set fill   = '15dfa33' if row.selected else 'ffff0022' %}
+    <quad pos="{{ row.x }} {{ row.y }}" size="{{ row.w }} {{ row.h }}"
+          halign="left" valign="top" bgcolor="{{ fill }}" />
+    {# 4 thin borders so the widget content stays readable through the overlay #}
+    <quad pos="{{ row.x }} {{ row.y }}"          size="{{ row.w }} 0.25" halign="left" valign="top" bgcolor="{{ border }}" />
+    <quad pos="{{ row.x }} {{ row.y - row.h }}"  size="{{ row.w }} 0.25" halign="left" valign="top" bgcolor="{{ border }}" />
+    <quad pos="{{ row.x }} {{ row.y }}"          size="0.25 {{ row.h }}" halign="left" valign="top" bgcolor="{{ border }}" />
+    <quad pos="{{ row.x + row.w }} {{ row.y }}"  size="0.25 {{ row.h }}" halign="left" valign="top" bgcolor="{{ border }}" />
+  {% endfor %}
+</frame>
+

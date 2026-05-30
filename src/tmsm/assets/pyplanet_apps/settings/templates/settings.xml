@@ -1,0 +1,171 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context:
+   apps=[{label,name,count,selected}], selected_app, selected_app_name,
+   settings=[{key,name,category,description,type,kind,choices,
+              default,value_str,value_edit,dirty}],
+   app_page, app_total_pages, apps_count,
+   set_page, set_total_pages, set_count,
+   search, dirty_count, status, status_color, is_master
+#}
+
+{% set W = 260 %}
+{% set H = 170 %}
+{% set LEFT_W = 100 %}
+{% set RIGHT_X = LEFT_W + 6 %}
+{% set RIGHT_W = W - RIGHT_X - 4 %}
+
+<frame pos="-130 85" z-index="200">
+
+  {{ ui.window('App settings', x=0, y=0, w=W, h=H) }}
+
+  {# header #}
+  {{ ui.label('PyPlanet app settings', x=4, y=-11, size='sm', color='888') }}
+  {{ ui.label((selected_app_name or '—'), x=RIGHT_X, y=-11, size='sm') }}
+  {{ ui.label(status, x=W-4, y=-11, halign='right',
+              color=status_color, size='sm') }}
+
+  {# ============================================================
+     LEFT: app list (with search + pager)
+     ============================================================ #}
+  {% call ui.group_box('Apps (' ~ apps_count|string ~ ')',
+                       x=2, y=-17, w=LEFT_W, h=H-25) %}
+
+    {{ ui.line_edit('search', value=search, x=4, y=-25,
+                    width=LEFT_W-4, size='sm', placeholder='filter…') }}
+
+    {% set row_h = 5 %}
+    {% for a in apps %}
+      {% set yy = -32 - loop.index0 * row_h %}
+      {% set bg = ('0d44' if a.selected else '0000') %}
+      <quad pos="{{ 3 }} {{ yy + 1.5 }}" z-index="201"
+            size="{{ LEFT_W-2 }} 4.4" bgcolor="{{ bg }}"
+            halign="left" valign="top"
+            id="appsel_{{ id }}__select_app__{{ a.label }}"
+            action="{{ id }}__select_app__{{ a.label }}" ScriptEvents="1"
+            class="ui-btn ui-btn-ghost" />
+      {{ ui.label(a.name[:40], x=5, y=yy, size='sm',
+                  color=('fff' if a.selected else 'ccc')) }}
+      {{ ui.label(a.count|string, x=LEFT_W-2, y=yy, halign='right',
+                  size='sm', color='666') }}
+    {% endfor %}
+    {% if not apps %}
+      {{ ui.label('no apps with settings',
+                  x=LEFT_W/2, y=-40, halign='center',
+                  size='sm', color='888') }}
+    {% endif %}
+
+    {# pager #}
+    {% if app_total_pages > 1 %}
+      {% set py = -H+22 %}
+      {{ ui.push_button('app_prev', '<', x=4, y=py,
+                        variant='ghost', size='sm', halign='left') }}
+      {{ ui.label((app_page+1)|string ~ '/' ~ app_total_pages|string,
+                  x=LEFT_W/2, y=py, halign='center', size='sm', color='888') }}
+      {{ ui.push_button('app_next', '>', x=LEFT_W-2, y=py,
+                        variant='ghost', size='sm', halign='right') }}
+    {% endif %}
+
+  {% endcall %}
+
+  {# ============================================================
+     RIGHT: settings list of the selected app
+     ============================================================ #}
+  {% call ui.group_box((selected_app_name or 'Settings')
+                       ~ '  (' ~ set_count|string ~ ')',
+                       x=RIGHT_X, y=-17, w=RIGHT_W, h=H-25) %}
+
+    {% set row_h = 8 %}
+    {% set last_cat = '' %}
+    {% for s in settings %}
+      {% set yy = -25 - loop.index0 * row_h %}
+
+      {# dirty marker #}
+      {% if s.dirty %}
+        {{ ui.label('*', x=RIGHT_X+2, y=yy, size='sm',
+                    color='fc4', bold=True) }}
+      {% endif %}
+
+      {# name + tiny type tag #}
+      {{ ui.label(s.name[:38], x=RIGHT_X+5, y=yy, size='sm',
+                  color=('fff' if s.dirty else 'ccc')) }}
+      {{ ui.label('[' ~ s.type ~ ']', x=RIGHT_X+5, y=yy+2.6,
+                  size='sm', color='555') }}
+
+      {# editor — right-aligned #}
+      {% if s.kind == 'bool' %}
+        {% set on = (s.value_edit == '1') %}
+        {% set bcolor = ('0f0' if on else '888') %}
+        <quad pos="{{ RIGHT_X + RIGHT_W - 38 }} {{ yy + 1.5 }}"
+              z-index="202" size="18 3.5" bgcolor="fff1"
+              halign="left" valign="top"
+              id="tog_{{ id }}__toggle__{{ s.key }}"
+              action="{{ id }}__toggle__{{ s.key }}" ScriptEvents="1" />
+        {{ ui.label(('on' if on else 'off'),
+                    x=RIGHT_X + RIGHT_W - 22, y=yy, halign='right',
+                    size='sm', color=bcolor) }}
+      {% elif s.choices %}
+        {{ ui.push_button('cycle__' ~ s.key ~ '__prev', '<',
+                          x=RIGHT_X + RIGHT_W - 62, y=yy+1,
+                          variant='ghost', size='sm', halign='left') }}
+        {{ ui.label(s.value_edit[:18],
+                    x=RIGHT_X + RIGHT_W - 28, y=yy, halign='right',
+                    size='sm', color='fff') }}
+        {{ ui.push_button('cycle__' ~ s.key ~ '__next', '>',
+                          x=RIGHT_X + RIGHT_W - 22, y=yy+1,
+                          variant='ghost', size='sm', halign='left') }}
+      {% else %}
+        {{ ui.line_edit('field__' ~ s.key, value=s.value_edit,
+                        x=RIGHT_X + RIGHT_W - 60, y=yy+1.5,
+                        width=40, size='sm') }}
+      {% endif %}
+
+      {# small reset-to-default at the very right #}
+      {{ ui.push_button('reset_field__' ~ s.key, 'def',
+                        x=RIGHT_X + RIGHT_W - 2, y=yy+1,
+                        variant='ghost', size='sm', halign='right') }}
+
+      {# description on the second line (small grey) #}
+      {% if s.description %}
+        {{ ui.label(s.description[:90], x=RIGHT_X+8, y=yy+5,
+                    size='sm', color='666') }}
+      {% endif %}
+    {% endfor %}
+
+    {% if not settings %}
+      {{ ui.label('no settings registered',
+                  x=RIGHT_X + RIGHT_W/2, y=-40, halign='center',
+                  size='sm', color='888') }}
+    {% endif %}
+
+    {# pager #}
+    {% if set_total_pages > 1 %}
+      {% set py = -H+22 %}
+      {{ ui.push_button('set_prev', '< prev', x=RIGHT_X+4, y=py,
+                        variant='ghost', size='sm', halign='left') }}
+      {{ ui.label('page ' ~ (set_page+1)|string ~ ' / ' ~ set_total_pages|string,
+                  x=RIGHT_X + RIGHT_W/2, y=py, halign='center',
+                  size='sm', color='888') }}
+      {{ ui.push_button('set_next', 'next >', x=RIGHT_X + RIGHT_W - 4, y=py,
+                        variant='ghost', size='sm', halign='right') }}
+    {% endif %}
+
+  {% endcall %}
+
+  {# bottom action row — convention: bottom-right, size='md'.
+     Hub navigation is via the breadcrumb in the window header. #}
+  {% if is_master %}
+    {{ ui.push_button('refresh', 'Reset',
+                      x=W-28, y=-H+5, variant='ghost',
+                      halign='right', size='md') }}
+    {{ ui.push_button('save', 'Save (' ~ dirty_count|string ~ ' changes)',
+                      x=W-4, y=-H+5,
+                      variant=('success' if dirty_count else 'ghost'),
+                      halign='right', size='md') }}
+  {% else %}
+    {{ ui.label('read-only (master required to save)',
+                x=W/2, y=-H+5, halign='center', size='sm', color='888') }}
+  {% endif %}
+
+  {{ ui.hover_script() }}
+</frame>

@@ -1,52 +1,107 @@
 {% import 'tmsm_ui/widgets.xml' as ui with context %}
 
-{# active_tab + viewer_level + visible_tabs + entries_by_role
-   are injected per-player by HubView.get_per_player_data. #}
+{# active_tab + viewer_level + visible_tabs + entries_by_role + page +
+   total_pages + page_size + viewer_login are injected per-player by
+   HubView.get_per_player_data. #}
 
-<frame pos="-70 45" z-index="200">
+<frame pos="-90 65" z-index="200">
 
-  {{ ui.window('tmsm hub', icon='cog', x=0, y=0, w=140, h=90) }}
+  {{ ui.window((server_name or 'server') ~ ' - HUB', icon='cog', x=0, y=0, w=180, h=122) }}
 
   {% if visible_tabs and visible_tabs|length > 0 %}
     {% call(tab_key, t) ui.tabs('role', visible_tabs, active=active_tab,
-                                x=2, y=-10, w=136, tab_h=5, body_h=68, z=300) %}
-      {% set tiles = entries_by_role.get(tab_key, []) %}
-      {% if tiles|length == 0 %}
+                                x=2, y=-10, w=176, tab_h=5, body_h=106, z=300) %}
+      {% set all_tiles = entries_by_role.get(tab_key, []) %}
+      {% set start = (page - 1) * page_size %}
+      {% set end = start + page_size %}
+      {% set tiles = all_tiles[start:end] %}
+      {% if all_tiles|length == 0 %}
         {{ ui.label('No apps registered for ' + t.label + '.', x=4, y=-20, color='aaa') }}
       {% else %}
-        {% call(cx, cy, entry) ui.grid(tiles, x=4, y=-18, cols=4, cell_w=32, cell_h=20, gap=2) %}
-          {# tile: ghost button quad covering the whole cell, icon + name on top #}
-          <quad pos="{{ cx }} {{ cy }}" z-index="201" size="32 20" bgcolor="fff1"
+        {% call(cx, cy, entry) ui.grid(tiles, x=2, y=-18, cols=3, cell_w=58, cell_h=14, gap=1) %}
+          {# ── tile background + left color strip ───────────────────── #}
+          {% set color = entry.color or '15f' %}
+          {% set badge_text, badge_color = entry.effective_badge() %}
+          {% set notifs = entry.notif_for(viewer_login) %}
+          {% set dim = (entry.status|string == 'Status.DISABLED') %}
+          {# base panel #}
+          <quad pos="{{ cx }} {{ cy }}" z-index="201" size="58 14"
+                bgcolor="{{ '111c' if not dim else '1118' }}"
                 halign="left" valign="top" />
-          <quad pos="{{ cx }} {{ cy }}" z-index="202" size="32 20" bgcolor="0000"
+          {# vertical color strip on the left edge #}
+          <quad pos="{{ cx }} {{ cy }}" z-index="202" size="1.6 14"
+                bgcolor="{{ color }}f" halign="left" valign="top" />
+          {# clickable overlay #}
+          <quad pos="{{ cx }} {{ cy }}" z-index="210" size="58 14" bgcolor="0000"
                 halign="left" valign="top"
                 id="uibtn_ghost_{{ id }}__open__{{ entry.key }}"
                 action="{{ id }}__open__{{ entry.key }}" scriptevents="1"
                 class="ui-btn ui-btn-ghost"
-                tooltip="{{ entry.description }}" />
-          {{ ui.icon(entry.icon, x=cx + 16, y=cy - 8, color='15f', font=3.6, z=203) }}
-          <label pos="{{ cx + 16 }} {{ cy - 16.5 }}" z-index="203"
-                 halign="center" valign="center2"
-                 text="$fff{{ entry.name }}" textsize="1.0" textfont="GameFont" />
-          {% if entry.badge %}
-            <quad pos="{{ cx + 30 }} {{ cy - 1 }}" z-index="204" size="5 3"
-                  bgcolor="c33d" halign="right" valign="top" />
-            <label pos="{{ cx + 29.5 }} {{ cy - 2.5 }}" z-index="205"
+                tooltip="{{ entry.name }}{% if entry.description %} — {{ entry.description }}{% endif %}{% if entry.command %}  (/{{ entry.command }}){% endif %}{% if entry.version or entry.author %}{{ '  v' + entry.version if entry.version }}{{ '  by ' + entry.author if entry.author }}{% endif %}" />
+
+          {# ── icon (left side, vertically centered) ────────────────── #}
+          <quad pos="{{ cx + 8 }} {{ cy - 7 }}" z-index="203" size="9 9"
+                bgcolor="{{ color }}3" halign="center" valign="center2" />
+          {% if entry.icon_image %}
+            <quad pos="{{ cx + 8 }} {{ cy - 7 }}" z-index="204" size="8 8"
+                  image="{{ entry.icon_image }}" halign="center" valign="center2"
+                  keepratio="Fit"
+                  {% if dim %}opacity="0.55"{% endif %} />
+          {% else %}
+            {{ ui.icon(entry.icon, x=cx + 8, y=cy - 7, color=('fff' if not dim else 'aaa'), font=3.8, z=204) }}
+          {% endif %}
+
+          {# ── notification pill overlaying icon (top-right of icon) ─ #}
+          {% if notifs > 0 %}
+            {% set ntext = '9+' if notifs > 9 else notifs|string %}
+            <quad pos="{{ cx + 11.4 }} {{ cy - 2.4 }}" z-index="208" size="3.6 3.6"
+                  bgcolor="e22f" halign="left" valign="top" />
+            <label pos="{{ cx + 13.2 }} {{ cy - 4.2 }}" z-index="209"
+                   halign="center" valign="center2"
+                   text="$fff{{ ntext }}" textsize="0.7"
+                   textfont="GameFontBlack" />
+          {% endif %}
+
+          {# ── name (right of icon, upper line) ─────────────────────── #}
+          <label pos="{{ cx + 14.5 }} {{ cy - 4.8 }}" z-index="205"
+                 halign="left" valign="center2" maxline="1"
+                 size="42 3"
+                 text="${{ 'fff' if not dim else 'aaa' }}{{ entry.name }}"
+                 textsize="1.2" textfont="GameFontBlack" />
+
+          {# ── description (right of icon, lower line) ──────────────── #}
+          {% if entry.description %}
+          <label pos="{{ cx + 14.5 }} {{ cy - 9.8 }}" z-index="205"
+                 halign="left" valign="center2" maxline="1"
+                 size="42 2.5"
+                 text="$888{{ entry.description }}"
+                 textsize="0.7" textfont="GameFont" />
+          {% endif %}
+
+          {# ── status badge (top-right corner) ──────────────────────── #}
+          {% if badge_text %}
+            <quad pos="{{ cx + 57 }} {{ cy - 1.4 }}" z-index="206"
+                  size="{{ 3 + 1.6 * badge_text|length }} 2.6"
+                  bgcolor="{{ badge_color }}f" halign="right" valign="top" />
+            <label pos="{{ cx + 56.8 }} {{ cy - 2.7 }}" z-index="207"
                    halign="right" valign="center2"
-                   text="$fff{{ entry.badge }}" textsize="0.7" textfont="GameFont" />
+                   text="$fff{{ badge_text }}" textsize="0.65"
+                   textfont="GameFontBlack" />
           {% endif %}
         {% endcall %}
+
+        {# pagination row below the grid (always reserved space) #}
+        {% if total_pages > 1 %}
+          {{ ui.pagination('pg', page=page, total_pages=total_pages,
+                           x=42, y=-113, max_visible=7, btn_w=6, btn_h=5,
+                           gap=0.5, z=310) }}
+        {% endif %}
       {% endif %}
     {% endcall %}
   {% else %}
     {{ ui.label('No apps registered.', x=4, y=-14, color='aaa') }}
     {{ ui.label('Apps appear here when they register with the hub on startup.', x=4, y=-20, color='888', size='sm') }}
   {% endif %}
-
-  {{ ui.status_bar(x=0, y=0, w=140, h=90,
-                   left='$0f0connected as ' + (viewer_level_label or 'player'),
-                   center=(total_entries|string) + ' apps',
-                   right='tmsm hub v0.1') }}
 
   {{ ui.hover_script() }}
 </frame>

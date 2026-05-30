@@ -38,22 +38,16 @@
   {% endfor %}
 
   {# controls #}
+  {{ ui.push_button('refresh', 'Reset',
+                    x=180-28, y=-107, variant='ghost',
+                    halign='right', size='md') }}
   {{ ui.push_button('save', 'Save (' ~ dirty_count|string ~ ' changes)',
-                    icon='save', x=4, y=-104,
+                    x=180-4, y=-107,
                     variant=('success' if dirty_count else 'ghost'),
-                    halign='left', size='sm') }}
-  {{ ui.push_button('refresh', 'Reset', icon='reload',
-                    x=50, y=-104, variant='ghost', halign='left', size='sm') }}
-  {{ ui.push_button('back', '< Back to hub', icon='arrow_left',
-                    x=70, y=-104, variant='primary', halign='left', size='sm') }}
+                    halign='right', size='md') }}
 
-  {{ ui.label(status, x=176, y=-104, halign='right',
+  {{ ui.label(status, x=4, y=-107, halign='left',
               color=status_color, size='sm') }}
-
-  {{ ui.status_bar(x=0, y=0, w=180, h=110,
-                   left='dedicated XML-RPC',
-                   center='',
-                   right=fields|length|string + ' fields') }}
 
   {{ ui.hover_script() }}
 </frame>

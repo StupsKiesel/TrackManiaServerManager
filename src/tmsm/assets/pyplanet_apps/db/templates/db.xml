@@ -1,0 +1,360 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (always):
+   mode='tables'|'rows'|'edit', title, status, status_color, is_master
+   mode=tables: tables=[{key,app_label,model_name,table_name,count,drop_armed}],
+                tables_count, search_tables, tbl_page, tbl_total_pages
+   mode=rows:   table_key, table_name, table_app, columns=[{name,type,is_pk}],
+                rows=[{pk, cells=[{name,value}]}], rows_count,
+                search_rows, row_page, row_total_pages, pk_field
+   mode=edit:   table_key, table_name, pk_field, edit_pk, is_new,
+                edit_fields=[{name,type,kind,null,is_pk,value,value_edit,dirty}],
+                dirty_count
+#}
+
+{% set W = 280 %}
+{% set H = 175 %}
+{% set confirm_delete_open = confirm_delete_open|default(false) %}
+{% set confirm_delete_pk = confirm_delete_pk|default('') %}
+{% set table_name = table_name|default('') %}
+
+<frame pos="-140 87" z-index="200">
+
+  {{ ui.window(title, x=0, y=0, w=W, h=H) }}
+
+  {# header status (right side) #}
+  {{ ui.label(status, x=W-4, y=-11, halign='right',
+              color=status_color, size='sm') }}
+
+  {# ============================================================
+     MODE: TABLES
+     ============================================================ #}
+  {% if mode == 'tables' %}
+
+    {{ ui.line_edit('search_tables', value=search_tables,
+                    x=4, y=-15, width=80, size='sm',
+                    placeholder='filter tables…') }}
+    {{ ui.label(tables_count|string ~ ' tables', x=88, y=-15,
+                size='sm', color='888') }}
+
+    {% set row_h = 8 %}
+    {% set BY = -24 %}
+    {# column headers #}
+    {{ ui.label('table', x=6, y=BY, size='sm', color='888') }}
+    {{ ui.label('app', x=110, y=BY, size='sm', color='888') }}
+    {{ ui.label('rows', x=170, y=BY, halign='right', size='sm', color='888') }}
+    {{ ui.label('actions', x=W-6, y=BY, halign='right', size='sm', color='888') }}
+
+    {% for t in tables %}
+      {% set yy = BY - 5 - loop.index0 * row_h %}
+      <quad pos="3 {{ yy + 1 }}" z-index="201"
+            size="{{ W-6 }} {{ row_h }}"
+            bgcolor="{{ '0d44' if loop.index0 % 2 else '0000' }}"
+            halign="left" valign="top" />
+      {{ ui.label(t.table_name, x=6, y=yy-3, size='sm', color='fff') }}
+      {{ ui.label(t.app_label, x=110, y=yy-3, size='sm', color='ccc') }}
+      {{ ui.label(t.count|string, x=170, y=yy-3, halign='right',
+                  size='sm', color='ccc') }}
+
+      {# action buttons (right side) #}
+      {{ ui.push_button('open__' ~ t.key, 'open',
+                        x=W-50, y=yy-3, variant='primary',
+                        size='sm', halign='right') }}
+      {% if is_master %}
+        {{ ui.push_button('export__' ~ t.key, 'export',
+                          x=W-32, y=yy-3, variant='ghost',
+                          size='sm', halign='right') }}
+        {% if t.drop_armed %}
+          {{ ui.push_button('drop__' ~ t.key, 'CONFIRM',
+                            x=W-14, y=yy-3, variant='danger',
+                            size='sm', halign='right') }}
+        {% else %}
+          {{ ui.push_button('drop__' ~ t.key, 'drop',
+                            x=W-14, y=yy-3, variant='danger',
+                            size='sm', halign='right') }}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+
+    {% if not tables %}
+      {{ ui.label('no tables match',
+                  x=W/2, y=-50, halign='center',
+                  size='sm', color='888') }}
+    {% endif %}
+
+    {# pager #}
+    {% if tbl_total_pages > 1 %}
+      {{ ui.push_button('tbl_prev', '< prev', x=4, y=-H+5,
+                        variant='ghost', size='sm', halign='left') }}
+      {{ ui.label('page ' ~ (tbl_page+1)|string ~ ' / ' ~ tbl_total_pages|string,
+                  x=W/2, y=-H+5, halign='center', size='sm', color='888') }}
+      {{ ui.push_button('tbl_next', 'next >',
+                        x=W-50, y=-H+5,
+                        variant='ghost', size='sm', halign='right') }}
+    {% endif %}
+
+    {# refresh counts #}
+    {{ ui.push_button('refresh', 'Refresh counts',
+                      x=W-4, y=-H+5, variant='ghost',
+                      size='md', halign='right') }}
+
+  {# ============================================================
+     MODE: ROWS
+     ============================================================ #}
+  {% elif mode == 'rows' %}
+
+    {# header strip: table info + search (hub nav via window crumbs) #}
+    {{ ui.label(table_name, x=4, y=-15, size='sm', color='fff', bold=True) }}
+    {{ ui.label('(' ~ table_app ~ ')', x=4 + (table_name|length)*1.6 + 2,
+                y=-15, size='sm', color='888') }}
+
+    {{ ui.line_edit('search_rows', value=search_rows,
+                    x=W-100, y=-15, width=70, size='sm',
+                    placeholder='search text…') }}
+    {{ ui.label(rows_count|string ~ ' rows', x=W-26, y=-15,
+                size='sm', color='888') }}
+
+    {# column headers + rows via shared data_table widget #}
+    {% set BY = -22 %}
+    {% set header_h = 6 %}
+    {% set row_h = 7 %}
+    {% set DT_X = 4 %}
+    {% set DT_W = W - 8 %}
+
+    {{ ui.data_table('rows', columns, rows,
+                     x=DT_X, y=BY, w=DT_W,
+                     row_h=row_h, header_h=header_h,
+                     sort_key=sort_key, sort_dir=sort_dir,
+                     row_action=True, stripe=True) }}
+
+    {# selection highlight overlay #}
+    {% if sel_idx is defined and sel_idx >= 0 %}
+      {% set sel_y = BY - header_h - sel_idx * row_h %}
+      <quad pos="{{ DT_X }} {{ sel_y }}" z-index="205"
+            size="{{ DT_W }} {{ row_h }}" bgcolor="fc44"
+            halign="left" valign="top" />
+    {% endif %}
+
+    {# horizontal column scrollbar (only when overflow) #}
+    {% if cols_total and (col_can_prev or col_can_next) %}
+      {% set rows_h_total = (rows|length) * row_h %}
+      {% set SB_Y = BY - header_h - rows_h_total - 2 %}
+      {% set SB_H = 3 %}
+      {% set ARROW_W = 5 %}
+      {% set TRACK_X = DT_X + ARROW_W %}
+      {% set TRACK_W = DT_W - 2 * ARROW_W %}
+      {# track background #}
+      <quad pos="{{ TRACK_X }} {{ SB_Y }}" z-index="201"
+            size="{{ TRACK_W }} {{ SB_H }}" bgcolor="1115"
+            halign="left" valign="top" />
+      {# thumb: width = visible/total of track; offset = col_scroll/total #}
+      {% set ratio_vis = cols_visible / cols_total %}
+      {% set ratio_off = col_scroll / cols_total %}
+      {% set thumb_w = (TRACK_W * ratio_vis) %}
+      {% if thumb_w < 4 %}{% set thumb_w = 4 %}{% endif %}
+      {% set thumb_x = TRACK_X + (TRACK_W * ratio_off) %}
+      <quad pos="{{ thumb_x }} {{ SB_Y }}" z-index="202"
+            size="{{ thumb_w }} {{ SB_H }}" bgcolor="15dfa"
+            halign="left" valign="top" />
+      {# left arrow #}
+      {% if col_can_prev %}
+        <quad pos="{{ DT_X }} {{ SB_Y }}" z-index="203"
+              size="{{ ARROW_W }} {{ SB_H }}" bgcolor="2228"
+              halign="left" valign="top"
+              id="uibtn_ghost_{{ id }}__cols_prev"
+              action="{{ id }}__cols_prev" scriptevents="1"
+              class="ui-btn ui-btn-ghost" />
+        <label pos="{{ DT_X + ARROW_W/2 }} {{ SB_Y - SB_H/2 }}" z-index="204"
+               halign="center" valign="center2"
+               text="$fff&#x25C0;" textsize="0.7" textfont="GameFontBlack" />
+      {% else %}
+        <quad pos="{{ DT_X }} {{ SB_Y }}" z-index="203"
+              size="{{ ARROW_W }} {{ SB_H }}" bgcolor="1113"
+              halign="left" valign="top" />
+        <label pos="{{ DT_X + ARROW_W/2 }} {{ SB_Y - SB_H/2 }}" z-index="204"
+               halign="center" valign="center2"
+               text="$555&#x25C0;" textsize="0.7" textfont="GameFontBlack" />
+      {% endif %}
+      {# right arrow #}
+      {% set RX = DT_X + DT_W - ARROW_W %}
+      {% if col_can_next %}
+        <quad pos="{{ RX }} {{ SB_Y }}" z-index="203"
+              size="{{ ARROW_W }} {{ SB_H }}" bgcolor="2228"
+              halign="left" valign="top"
+              id="uibtn_ghost_{{ id }}__cols_next"
+              action="{{ id }}__cols_next" scriptevents="1"
+              class="ui-btn ui-btn-ghost" />
+        <label pos="{{ RX + ARROW_W/2 }} {{ SB_Y - SB_H/2 }}" z-index="204"
+               halign="center" valign="center2"
+               text="$fff&#x25B6;" textsize="0.7" textfont="GameFontBlack" />
+      {% else %}
+        <quad pos="{{ RX }} {{ SB_Y }}" z-index="203"
+              size="{{ ARROW_W }} {{ SB_H }}" bgcolor="1113"
+              halign="left" valign="top" />
+        <label pos="{{ RX + ARROW_W/2 }} {{ SB_Y - SB_H/2 }}" z-index="204"
+               halign="center" valign="center2"
+               text="$555&#x25B6;" textsize="0.7" textfont="GameFontBlack" />
+      {% endif %}
+      {# label: cols x-y / total #}
+      <label pos="{{ DT_X + DT_W/2 }} {{ SB_Y - SB_H - 1.5 }}" z-index="204"
+             halign="center" valign="top"
+             text="$888cols {{ col_scroll+1 }}-{{ col_scroll + cols_visible }} / {{ cols_total }}"
+             textsize="0.8" textfont="GameFont" />
+    {% endif %}
+
+    {% if not rows %}
+      {{ ui.label('no rows',
+                  x=W/2, y=-60, halign='center',
+                  size='sm', color='888') }}
+    {% endif %}
+
+    {# pager #}
+    {% if row_total_pages > 1 %}
+      {{ ui.push_button('row_prev', '< prev', x=4, y=-H+5,
+                        variant='ghost', size='sm', halign='left') }}
+      {{ ui.label('page ' ~ (row_page+1)|string ~ ' / ' ~ row_total_pages|string,
+                  x=44, y=-H+5, halign='left', size='sm', color='888') }}
+      {{ ui.push_button('row_next', 'next >', x=80, y=-H+5,
+                        variant='ghost', size='sm', halign='left') }}
+    {% endif %}
+
+    {# row actions (right side) #}
+    {% if is_master %}
+      {% if sel_pk %}
+        {{ ui.push_button('del_sel', 'Delete', x=W-78, y=-H+5,
+                          variant='danger', size='md', halign='right') }}
+        {{ ui.push_button('edit_sel', 'Edit', x=W-54, y=-H+5,
+                          variant='primary', size='md', halign='right') }}
+      {% else %}
+        {{ ui.label('select a row to edit/delete', x=W-78, y=-H+3,
+                    halign='right', size='sm', color='666') }}
+      {% endif %}
+      {{ ui.push_button('new_row', '+ new', x=W-30, y=-H+5,
+                        variant='primary', size='md', halign='right') }}
+    {% else %}
+      {% if sel_pk %}
+        {{ ui.push_button('edit_sel', 'View', x=W-30, y=-H+5,
+                          variant='primary', size='md', halign='right') }}
+      {% endif %}
+    {% endif %}
+    {{ ui.push_button('refresh', 'Reload',
+                      x=W-4, y=-H+5, variant='ghost',
+                      size='md', halign='right') }}
+
+  {# ============================================================
+     MODE: EDIT
+     ============================================================ #}
+  {% elif mode == 'edit' %}
+
+    {# header: table info + page indicator (navigation via window crumbs) #}
+    {{ ui.label(table_name, x=4, y=-15, size='sm', color='fff', bold=True) }}
+    {% if is_new %}
+      {{ ui.label('new row', x=4 + (table_name|length)*1.6 + 2,
+                  y=-15, size='sm', color='fc4') }}
+    {% else %}
+      {{ ui.label('#' ~ edit_pk, x=4 + (table_name|length)*1.6 + 2,
+                  y=-15, size='sm', color='888') }}
+    {% endif %}
+    {% if edit_total_pages > 1 %}
+      {{ ui.label('field page ' ~ (edit_page+1)|string ~ ' / ' ~
+                  edit_total_pages|string ~
+                  ' (' ~ edit_fields_total|string ~ ' fields)',
+                  x=W-4, y=-15, halign='right',
+                  size='sm', color='888') }}
+    {% endif %}
+
+    {# field rows (two-column layout: label/type left, control right) #}
+    {% set row_h = 9 %}
+    {% set BY = -24 %}
+    {% set FIELD_LABEL_X = 8 %}
+    {% set FIELD_CTRL_W = 140 %}
+    {% set FIELD_CTRL_X = W - FIELD_CTRL_W - 6 %}
+    {% for f in edit_fields %}
+      {% set yy = BY - loop.index0 * row_h %}
+      {% if f.dirty %}
+        {{ ui.label('*', x=4, y=yy, size='sm', color='fc4', bold=True) }}
+      {% endif %}
+      {{ ui.label(f.name ~ (' (pk)' if f.is_pk else ''),
+                  x=FIELD_LABEL_X, y=yy,
+                  size='sm', color=('fff' if f.dirty else 'ccc')) }}
+      {{ ui.label('[' ~ f.type ~ (', null' if f.null else '') ~ ']',
+                  x=FIELD_LABEL_X, y=yy+3.0, size='sm', color='555') }}
+
+      {% if f.kind == 'bool' %}
+        {% set on = (f.value_edit == '1') %}
+        <quad pos="{{ FIELD_CTRL_X }} {{ yy + 1.5 }}" z-index="202"
+              size="20 4" bgcolor="fff1"
+              halign="left" valign="top"
+              id="tog_{{ id }}__toggle__{{ f.name }}"
+              action="{{ id }}__toggle__{{ f.name }}" ScriptEvents="1" />
+        {{ ui.label(('on' if on else 'off'),
+                    x=FIELD_CTRL_X + 22, y=yy,
+                    size='sm', color=('0f0' if on else '888')) }}
+      {% else %}
+        {% if f.is_pk and not is_new %}
+          {{ ui.label(f.value, x=FIELD_CTRL_X + FIELD_CTRL_W, y=yy,
+                      halign='right', size='sm', color='888') }}
+        {% else %}
+          {{ ui.line_edit('field__' ~ f.name, value=f.value_edit,
+                          x=FIELD_CTRL_X, y=yy+1.5,
+                          width=FIELD_CTRL_W, size='sm') }}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+
+    {% if not edit_fields %}
+      {{ ui.label('no editable fields', x=W/2, y=-50,
+                  halign='center', size='sm', color='888') }}
+    {% endif %}
+
+    {# field pager (centered, above bottom action row) #}
+    {% if edit_total_pages > 1 %}
+      {{ ui.push_button('edit_prev', '< prev fields',
+                        x=W/2 - 30, y=-H+5, variant='ghost',
+                        size='md', halign='right') }}
+      {{ ui.push_button('edit_next', 'next fields >',
+                        x=W/2 + 30, y=-H+5, variant='ghost',
+                        size='md', halign='left') }}
+    {% endif %}
+
+    {# bottom actions #}
+    {% if is_master and not is_new %}
+      {{ ui.push_button('delete_row', 'Delete row',
+                        x=4, y=-H+5, variant='danger',
+                        size='md', halign='left') }}
+    {% endif %}
+    {% if is_master %}
+      {{ ui.push_button('refresh', 'Reset',
+                        x=W-28, y=-H+5, variant='ghost',
+                        size='md', halign='right') }}
+      {{ ui.push_button('save',
+                        ('Create' if is_new
+                         else 'Save (' ~ dirty_count|string ~ ' changes)'),
+                        x=W-4, y=-H+5,
+                        variant=('success'
+                                 if (dirty_count or is_new) else 'ghost'),
+                        size='md', halign='right') }}
+    {% else %}
+      {{ ui.label('read-only (master required)',
+                  x=W/2, y=-H+5, halign='center',
+                  size='sm', color='888') }}
+    {% endif %}
+
+  {% endif %}
+
+  {{ ui.hover_script() }}
+</frame>
+
+{# delete confirmation dialog (rendered OUTSIDE the offset frame so the
+   modal's screen-centered positioning is not shifted by the frame). #}
+<frame pos="0 0" z-index="800">
+  {{ ui.dialog('confirm_del',
+               title='Delete row?',
+               message=('Permanently delete row #' ~ confirm_delete_pk ~
+                        ' from ' ~ (table_name if table_name else 'table') ~
+                        '? This cannot be undone.'),
+               variant='danger', icon='trash',
+               ok_label='Delete', ok_icon='trash',
+               cancel_label='Cancel',
+               open=confirm_delete_open) }}
+</frame>

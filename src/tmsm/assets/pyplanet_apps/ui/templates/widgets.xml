@@ -30,8 +30,15 @@
   'eye': '&#xf06e;', 'eye_slash': '&#xf070;', 'sync': '&#xf2f1;',
   'folder': '&#xf07b;', 'folder_open': '&#xf07c;', 'file': '&#xf016;',
   'arrow_up': '&#xf062;', 'arrow_down': '&#xf063;', 'level_up': '&#xf148;',
+  'undo': '&#xf0e2;', 'redo': '&#xf01e;', 'times': '&#xf00d;',
+  'clock': '&#xf017;', 'object-group': '&#xf247;', 'trophy': '&#xf091;',
+  'cogs': '&#xf085;', 'sliders': '&#xf1de;', 'fire': '&#xf06d;',
+  'check-square': '&#xf14a;', 'users': '&#xf0c0;', 'power-off': '&#xf011;',
+  'file-text': '&#xf15c;', 'ban': '&#xf05e;', 'user-times': '&#xf235;',
+  'database': '&#xf1c0;', 'music': '&#xf001;', 'th-large': '&#xf009;',
   'error': '&#xf057;', 'question': '&#xf059;',
   'terminal': '&#xf120;',
+  'disc': '&#xf51f;', 'circle': '&#xf111;', 'circle-o': '&#xf10c;',
 } %}
 
 {% set _SIZES = {
@@ -63,12 +70,13 @@
    intercept mouse events â€” the underlying quad receives them and the hover
    script can match `ui-btn-<variant>` and animate the background.
    ============================================================================ #}
-{% macro push_button(name, label, x=0, y=0, icon=None, variant='primary', size='md', z=200, halign='right', tooltip=None) %}
+{% macro push_button(name, label, x=0, y=0, icon=None, variant='primary', size='md', z=200, halign='right', tooltip=None, width=None) %}
   {% set s = _SIZES[size] %}
   {% set bg = _BTN_BG[variant] %}
   {% set glyph = (_ICONS[icon] if icon and icon in _ICONS else '') %}
-  {% set lbl_x = x - s.btn_w/2 if halign == 'right' else (x + s.btn_w/2 if halign == 'left' else x) %}
-  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ s.btn_w }} {{ s.btn_h }}"
+  {% set bw = width if width else s.btn_w %}
+  {% set lbl_x = x - bw/2 if halign == 'right' else (x + bw/2 if halign == 'left' else x) %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ bw }} {{ s.btn_h }}"
         bgcolor="{{ bg }}" halign="{{ halign }}" valign="center"
         id="uibtn_{{ variant }}_{{ id }}__{{ name }}"
         action="{{ id }}__{{ name }}" scriptevents="1"
@@ -1730,10 +1738,23 @@
    call at positions inside the body area (y starts below the header).
    The close button fires the framework-reserved `_close` signal, which
    BaseView wires to `self.hide([player])` automatically.
+
+   `crumbs` (optional) is a list of ancestor pages rendered as clickable
+   breadcrumb chips before the title:
+       crumbs=[{'key':'hub','label':'Hub'}]
+   Each chip fires the framework-reserved signal `_crumb__<key>` — connect
+   it on the view side with `view.connect("_crumb__hub", handler)`. The
+   `title` is always rendered as the (non-clickable) leaf.
        {{ ui.window('Title', icon='cog', x=0, y=0, w=120, h=90) }}
        ...your widgets...
    ============================================================================ #}
-{% macro window(title='', icon=None, x=0, y=0, w=120, h=90, z=100, header_h=8) %}
+{% macro window(title='', icon=None, x=0, y=0, w=120, h=90, z=100, header_h=8, crumbs=None) %}
+  {# If the caller didn't pass `crumbs`, fall back to the view's
+     context-injected `view_crumbs` (set by BaseView.get_context_data via
+     `breadcrumbs`). Pass `crumbs=[]` to explicitly suppress them. #}
+  {% if crumbs is none %}
+    {% set crumbs = view_crumbs if view_crumbs is defined else [] %}
+  {% endif %}
   {# header strip #}
   <quad pos="{{ x }} {{ y }}" z-index="{{ z + 1 }}" size="{{ w }} {{ header_h }}"
         bgcolor="000a" halign="left" valign="top" />
@@ -1746,7 +1767,28 @@
          text="$15f{{ _ICONS[icon]|safe if icon in _ICONS else '?' }}"
          textsize="2.2" textfont="GameFont" />
   {% endif %}
-  <label pos="{{ x + (10 if icon else 3) }} {{ y - header_h/2 }}" z-index="{{ z + 2 }}"
+  {% set _hdr_xc = namespace(v=(x + (10 if icon else 3))) %}
+  {% set _sep_glyph = _ICONS['arrow_right'] %}
+  {% for c in (crumbs or []) %}
+    {% set _txt = c.label %}
+    {% set _txt_w = (_txt|length) * 1.5 + 2.0 %}
+    {# clickable hit-area #}
+    <quad pos="{{ _hdr_xc.v - 0.5 }} {{ y - header_h/2 }}" z-index="{{ z + 2 }}"
+          size="{{ _txt_w }} {{ header_h - 1.6 }}" bgcolor="fff1"
+          halign="left" valign="center"
+          id="uibtn_ghost_{{ id }}___crumb__{{ c.key }}"
+          action="{{ id }}___crumb__{{ c.key }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    <label pos="{{ _hdr_xc.v }} {{ y - header_h/2 }}" z-index="{{ z + 3 }}"
+           halign="left" valign="center2"
+           text="$cdf{{ _txt }}" textsize="1.1" textfont="GameFont" />
+    {% set _hdr_xc.v = _hdr_xc.v + _txt_w + 0.8 %}
+    <label pos="{{ _hdr_xc.v }} {{ y - header_h/2 }}" z-index="{{ z + 3 }}"
+           halign="left" valign="center2"
+           text="$666{{ _sep_glyph|safe }}" textsize="1.0" textfont="GameFont" />
+    {% set _hdr_xc.v = _hdr_xc.v + 3.2 %}
+  {% endfor %}
+  <label pos="{{ _hdr_xc.v }} {{ y - header_h/2 }}" z-index="{{ z + 2 }}"
          halign="left" valign="center2"
          text="$fff{{ title }}" textsize="1.3" textfont="GameFont" />
 

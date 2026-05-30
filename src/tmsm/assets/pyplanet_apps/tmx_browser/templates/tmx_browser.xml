@@ -1,0 +1,151 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context:
+     site_label       - host string for the active TMX site
+     sections         - [{key,label,selected}] for the tab row
+     section          - active section key
+     is_search        - True iff section == 'search'
+     query            - current search text
+     page             - 1-based page number for the active section
+     results          - list of normalized TMX map dicts for the active section
+     more             - True if a next page exists
+     busy             - request in flight
+     loaded           - True if the active section was ever fetched
+     juke_after, save_match
+     status, status_color
+#}
+
+{% set win_w  = 220 %}
+{% set rows   = results|length %}
+{% set row_h  = 6 %}
+
+{# section tabs y=-12, then optional search bar y=-19, then results group #}
+{% set table_y = -27 if not is_search else -33 %}
+{% set table_h = (rows if rows else 1) * row_h + 6 %}
+{% set footer_y = table_y - table_h - 4 %}
+{% set status_y = footer_y - 7 %}
+{% set win_h = (-status_y) + 6 %}
+
+{# ----- selected/unselected pill (same style as restart form) ---- #}
+{% macro tab(key, label, selected, x, y, w, z=302) -%}
+  {% if selected %}
+    <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} 5"
+          bgcolor="0d4f" halign="left" valign="center"
+          action="{{ id }}__section__{{ key }}" scriptevents="1"
+          class="ui-btn ui-btn-primary" />
+    <label pos="{{ x + w/2 }} {{ y }}" z-index="{{ z + 2 }}"
+           halign="center" valign="center2"
+           text="$fff{{ label }}"
+           textsize="0.9" textfont="GameFontBlack" />
+  {% else %}
+    <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} 5"
+          bgcolor="fff2" halign="left" valign="center"
+          action="{{ id }}__section__{{ key }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    <label pos="{{ x + w/2 }} {{ y }}" z-index="{{ z + 2 }}"
+           halign="center" valign="center2"
+           text="$bbb{{ label }}"
+           textsize="0.9" textfont="GameFont" />
+  {% endif %}
+{%- endmacro %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
+
+  {{ ui.window('Trackmania Exchange', icon='globe',
+               x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {# ============================ SECTION TABS ========================== #}
+  {{ ui.label('Source: ' ~ site_label, x=4, y=-12, size='sm', color='888') }}
+
+  {% set tab_w = 22 %}
+  {% set tabs_x = win_w - 4 - (sections|length) * (tab_w + 1) %}
+  {% for s in sections %}
+    {{ tab(s.key, s.label, s.selected,
+           tabs_x + loop.index0 * (tab_w + 1), -12, tab_w) }}
+  {% endfor %}
+
+  {# ============================ SEARCH BAR (search tab only) ========== #}
+  {% if is_search %}
+    {{ ui.search_input('query', value=query, placeholder='search by name...',
+                       x=4, y=-19, width=180, size='sm') }}
+    {{ ui.push_button('search', 'Search',
+                      x=win_w - 4, y=-19, halign='right',
+                      icon='search', variant='primary', size='sm') }}
+  {% endif %}
+
+  {# ============================ RESULTS TABLE ========================= #}
+  {% call ui.group_box(title='Maps', x=4, y=table_y,
+                       w=win_w - 8, h=table_h,
+                       color='fff', border='fff5') %}
+
+    {% set hy = table_y - 5 %}
+    {{ ui.label('Name',   x=8,   y=hy, size='sm', color='888') }}
+    {{ ui.label('Author', x=98,  y=hy, size='sm', color='888') }}
+    {{ ui.label('Len',    x=140, y=hy, size='sm', color='888') }}
+    {{ ui.label('Diff',   x=158, y=hy, size='sm', color='888') }}
+    {{ ui.label('Awd',    x=180, y=hy, size='sm', color='888') }}
+
+    {% if rows %}
+      {% for r in results %}
+        {% set ry = hy - 3 - loop.index0 * row_h %}
+        {% if loop.index0 is divisibleby 2 %}
+          <quad pos="6 {{ ry }}" z-index="151"
+                size="{{ win_w - 12 }} {{ row_h - 0.4 }}"
+                bgcolor="fff1" halign="left" valign="center" />
+        {% endif %}
+        {{ ui.label(r.name|truncate(34, true, ''),
+                    x=8, y=ry, size='sm', color='fff') }}
+        {{ ui.label(r.author|truncate(14, true, ''),
+                    x=98, y=ry, size='sm', color='ccc') }}
+        {{ ui.label(r.length|string|truncate(7, true, ''),
+                    x=140, y=ry, size='sm', color='ccc') }}
+        {{ ui.label(r.difficulty|truncate(8, true, ''),
+                    x=158, y=ry, size='sm', color='ccc') }}
+        {{ ui.label(r.awards|string,
+                    x=180, y=ry, size='sm', color='ccc') }}
+        {{ ui.push_button('add__' ~ r.track_id, 'Add',
+                          x=win_w - 6, y=ry, halign='right',
+                          icon='plus', variant='success', size='sm') }}
+        {{ ui.tool_button('details__' ~ r.track_id, 'info',
+                          x=win_w - 24, y=ry, halign='right',
+                          variant='primary', size='sm',
+                          tooltip='Show map details') }}
+      {% endfor %}
+    {% else %}
+      {% if busy %}
+        {{ ui.label('loading...', x=win_w/2, y=table_y - 8,
+                    halign='center', size='sm', color='888') }}
+      {% elif is_search and not loaded %}
+        {{ ui.label('type a name and click Search',
+                    x=win_w/2, y=table_y - 8,
+                    halign='center', size='sm', color='888') }}
+      {% else %}
+        {{ ui.label('no results',
+                    x=win_w/2, y=table_y - 8,
+                    halign='center', size='sm', color='888') }}
+      {% endif %}
+    {% endif %}
+  {% endcall %}
+
+  {# ============================ FOOTER ================================ #}
+  {{ ui.push_button('prev', 'Prev',
+                    x=4, y=footer_y, halign='left',
+                    icon='arrow_left', variant='ghost', size='sm') }}
+  {{ ui.label('page ' ~ page, x=24, y=footer_y, size='sm', color='ccc') }}
+  {{ ui.push_button('next', 'Next',
+                    x=44, y=footer_y, halign='left',
+                    icon='arrow_right', variant='ghost', size='sm') }}
+  {{ ui.tool_button('refresh', 'reload',
+                    x=70, y=footer_y, halign='left',
+                    variant='ghost', size='sm', tooltip='Reload section') }}
+
+  {{ ui.check_box('toggle_juke', label='Play next',
+                  checked=juke_after, x=86, y=footer_y, size='sm') }}
+  {{ ui.check_box('toggle_save', label='Save matchsettings',
+                  checked=save_match, x=130, y=footer_y, size='sm') }}
+
+  {{ ui.label(status, x=4, y=status_y, halign='left',
+              color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>

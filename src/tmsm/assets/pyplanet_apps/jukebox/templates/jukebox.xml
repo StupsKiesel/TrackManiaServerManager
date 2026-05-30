@@ -1,0 +1,129 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (see App_Jukebox.view_context):
+     entries       - [{index, uid, name, environment, requester,
+                       requester_login, is_mine}, ...]
+     current_map   - styled name
+     current_uid   - uid string
+     total         - len(entries)
+     is_admin      - bool, the viewing player is admin (level > 0)
+     allow_juking  - jukebox.allow_juking setting value
+     status, status_color
+#}
+
+{% set win_w  = 230 %}
+{% set rows   = entries|length %}
+{% set row_h  = 6 %}
+
+{% set table_y  = -27 %}
+{% set table_h  = (rows if rows else 1) * row_h + 6 %}
+{% set footer_y = table_y - table_h - 4 %}
+{% set status_y = footer_y - 7 %}
+{% set win_h    = (-status_y) + 6 %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
+
+  {{ ui.window('Jukebox', icon='save',
+               x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {# ============================ HEADER ================================= #}
+  {{ ui.label('Now playing: ' ~ (current_map or '(unknown)')|truncate(50, true, ''),
+              x=4, y=-12, size='sm', color='0f8') }}
+  {{ ui.label(total ~ ' map' ~ ('s' if total != 1 else '') ~ ' queued' ~
+              ('' if allow_juking else '   |   juking is disabled for players'),
+              x=win_w - 4, y=-18, halign='right',
+              size='sm', color=('aaa' if allow_juking else 'fa0')) }}
+
+  {% if has_maplist %}
+    {{ ui.push_button('open_maplist', 'Maplist',
+                      x=win_w - 4, y=-12, halign='right',
+                      icon='th-large', variant='ghost', size='sm', width=22,
+                      tooltip='Browse all maps on the server') }}
+  {% endif %}
+
+  {# ============================ QUEUE TABLE =========================== #}
+  {% call ui.group_box(title='Queue',
+                       x=4, y=table_y, w=win_w - 8, h=table_h,
+                       color='fff', border='fff5') %}
+
+    {% set hy = table_y - 5 %}
+    {{ ui.label('#',           x=8,   y=hy, size='sm', color='888') }}
+    {{ ui.label('Map',         x=16,  y=hy, size='sm', color='888') }}
+    {{ ui.label('Env',         x=118, y=hy, size='sm', color='888') }}
+    {{ ui.label('Requested by',x=138, y=hy, size='sm', color='888') }}
+
+    {% if rows %}
+      {% for r in entries %}
+        {% set ry = hy - 3 - loop.index0 * row_h %}
+        {% if loop.index0 is divisibleby 2 %}
+          <quad pos="6 {{ ry }}" z-index="151"
+                size="{{ win_w - 12 }} {{ row_h - 0.4 }}"
+                bgcolor="fff1" halign="left" valign="center" />
+        {% endif %}
+        {{ ui.label(r.index|string,
+                    x=8, y=ry, size='sm', color='ccc') }}
+        {{ ui.label(r.name|truncate(40, true, ''),
+                    x=16, y=ry, size='sm', color='fff') }}
+        {{ ui.label(r.environment|truncate(8, true, ''),
+                    x=118, y=ry, size='sm', color='ccc') }}
+        {{ ui.label(r.requester|truncate(18, true, ''),
+                    x=138, y=ry, size='sm', color='ccc') }}
+
+        {# Right-aligned action cluster. #}
+        {% set ax = win_w - 6 %}
+        {% if r.is_mine or is_admin %}
+          {{ ui.push_button('drop__' ~ r.index, 'Drop',
+                            x=ax, y=ry, halign='right',
+                            icon='trash', variant='danger', size='sm') }}
+          {% set ax = ax - 22 %}
+        {% endif %}
+
+        {% if is_admin %}
+          {{ ui.tool_button('bottom__' ~ r.index, 'angle_double_down',
+                            x=ax, y=ry, halign='right',
+                            variant='ghost', size='sm',
+                            tooltip='Move to bottom') }}
+          {% set ax = ax - 6 %}
+          {{ ui.tool_button('down__' ~ r.index, 'angle_down',
+                            x=ax, y=ry, halign='right',
+                            variant='ghost', size='sm',
+                            tooltip='Move down') }}
+          {% set ax = ax - 6 %}
+          {{ ui.tool_button('up__' ~ r.index, 'angle_up',
+                            x=ax, y=ry, halign='right',
+                            variant='ghost', size='sm',
+                            tooltip='Move up') }}
+          {% set ax = ax - 6 %}
+          {{ ui.tool_button('top__' ~ r.index, 'angle_double_up',
+                            x=ax, y=ry, halign='right',
+                            variant='ghost', size='sm',
+                            tooltip='Move to top') }}
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      {{ ui.label('the queue is empty - juke a map from the Maplist',
+                  x=win_w/2, y=table_y - 8,
+                  halign='center', size='sm', color='888') }}
+    {% endif %}
+  {% endcall %}
+
+  {# ============================ FOOTER ================================ #}
+  {{ ui.tool_button('refresh', 'reload',
+                    x=4, y=footer_y, halign='left',
+                    variant='ghost', size='sm', tooltip='Reload') }}
+
+  {{ ui.push_button('drop_mine', 'Drop mine',
+                    x=24, y=footer_y, halign='left',
+                    icon='trash', variant='warn', size='sm') }}
+
+  {% if is_admin %}
+    {{ ui.push_button('clear', 'Clear all',
+                      x=win_w - 4, y=footer_y, halign='right',
+                      icon='trash', variant='danger', size='sm') }}
+  {% endif %}
+
+  {{ ui.label(status, x=4, y=status_y, halign='left',
+              color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>

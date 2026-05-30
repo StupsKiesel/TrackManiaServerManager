@@ -5,6 +5,7 @@ from pyplanet.apps.tmsm.ui import Audience, BaseView
 class DemoView(BaseView):
     template_name = "ui_demo/demo.xml"
     audience = Audience.master_admins()
+    breadcrumbs = [{"key": "hub", "label": "Hub"}]
 
     def __init__(self, app):
         super().__init__(app)

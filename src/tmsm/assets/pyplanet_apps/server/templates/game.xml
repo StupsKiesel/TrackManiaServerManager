@@ -1,0 +1,224 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context:
+   tabs, active_tab, is_master, is_admin, mode_name, active_script,
+   categories=[{key,label,fields=[{key,label,kind,value,default,dirty}]}],
+   dirty_count, status, status_color,
+   switcher_open, picker_page, picker_total_pages, scripts_count,
+   scripts=[{path,name,group}],
+   match_page, match_total_pages, profiles_count,
+   profiles=[{rel,name,size}],
+   save_as, confirm_delete, loaded_profile, page_size
+#}
+
+{% set W = 240 %}
+{% set H = 160 %}
+
+<frame pos="-120 80" z-index="200">
+
+  {{ ui.window('Game settings', icon='flag', x=0, y=0, w=W, h=H) }}
+
+  {# header strip #}
+  {{ ui.label('$fffmode: ', x=4, y=-11, size='sm', color='888') }}
+  {{ ui.label(mode_name, x=22, y=-11, size='sm') }}
+  {% if loaded_profile %}
+    {{ ui.label('· profile: ' ~ loaded_profile, x=70, y=-11, size='sm', color='888') }}
+  {% endif %}
+  {{ ui.label(status, x=W-4, y=-11, halign='right', color=status_color, size='sm') }}
+
+  {# tabs #}
+  {% call(tab_key, t) ui.tabs('tabs', tabs, active=active_tab,
+                              x=2, y=-17, w=W-4, tab_h=6, body_h=H-32) %}
+
+    {% set BY = -28 %}
+
+    {# =================================================================
+       MODE
+       ================================================================= #}
+    {% if tab_key == 'mode' %}
+
+      {# top row: current script + switcher toggle (master) #}
+      {{ ui.label('script: ', x=4, y=BY-2, size='sm', color='888') }}
+      {{ ui.label((active_script or '(unknown)')[:80], x=20, y=BY-2, size='sm') }}
+
+      {% if is_master %}
+        {{ ui.push_button('switcher_toggle',
+                          ('Hide picker' if switcher_open else 'Switch script'),
+                          x=W-4, y=BY-2, variant='ghost', size='sm') }}
+      {% endif %}
+
+      {% if is_master and switcher_open %}
+        {# script picker takes the whole body when open #}
+        {% call ui.group_box('Available mode scripts (' ~ scripts_count|string ~ ')',
+                             x=4, y=BY-8, w=W-8, h=H-50) %}
+          {% set col_w = (W-12) / 2 %}
+          {% for s in scripts %}
+            {% set col = loop.index0 % 2 %}
+            {% set row = loop.index0 // 2 %}
+            {% set yy = BY - 16 - row * 5 %}
+            {% set xx = 6 + col * col_w %}
+            <quad pos="{{ xx }} {{ yy + 2 }}" z-index="201" size="{{ col_w - 2 }} 4.4"
+                  bgcolor="fff1" halign="left" valign="top"
+                  id="pick_{{ id }}__pick_script__{{ s.path }}"
+                  action="{{ id }}__pick_script__{{ s.path }}" ScriptEvents="1"
+                  class="ui-btn ui-btn-ghost" />
+            {{ ui.label(s.name, x=xx + 1, y=yy, size='sm') }}
+            {% if s.group %}
+              {{ ui.label(s.group, x=xx + col_w - 3, y=yy, halign='right',
+                          size='sm', color='666') }}
+            {% endif %}
+          {% endfor %}
+          {% if not scripts %}
+            {{ ui.label('no .Script.txt found under Scripts/Modes/',
+                        x=6, y=BY-18, size='sm', color='888') }}
+          {% endif %}
+        {% endcall %}
+
+        {# pagination #}
+        {% if picker_total_pages and picker_total_pages > 1 %}
+          {{ ui.push_button('picker_prev', '< prev', x=4, y=-H+5,
+                            variant='ghost', size='sm', halign='left') }}
+          {{ ui.label('page ' ~ (picker_page+1)|string ~ ' / ' ~ picker_total_pages|string,
+                      x=W/2, y=-H+5, halign='center', size='sm', color='888') }}
+          {{ ui.push_button('picker_next', 'next >', x=W-4, y=-H+5,
+                            variant='ghost', size='sm', halign='right') }}
+        {% endif %}
+
+      {% else %}
+        {# normal mode: render param categories as fixed-height cards in 2 cols.
+           Each category card is identical height (10 rows total: title +
+           6 fields + pager + spacing) so the layout doesn't shift. #}
+        {% set col_w = (W-12)/2 %}
+        {% set card_h = 44 %}
+        {% set rows_per_card = 6 %}
+        {% for cat in categories %}
+          {% set col = loop.index0 % 2 %}
+          {% set row = loop.index0 // 2 %}
+          {% set cx = 4 + col * (col_w + 4) %}
+          {% set cy = BY - 8 - row * (card_h + 2) %}
+          {% call ui.group_box(cat.label ~ '  (' ~ cat.total|string ~ ')',
+                               x=cx, y=cy, w=col_w, h=card_h) %}
+            {% for f in cat.fields %}
+              {% set fy = cy - 8 - loop.index0 * 5 %}
+              {% if f.dirty %}
+                {{ ui.label('*', x=cx+2, y=fy, size='sm', color='fc4', bold=True) }}
+              {% endif %}
+              {{ ui.label((f.label)[:38], x=cx+5, y=fy, size='sm',
+                          color=('fff' if f.dirty else 'ccc')) }}
+              {% if f.kind == 'bool' %}
+                {% set on = (f.value == '1') %}
+                {% set bcolor = ('0f0' if on else '888') %}
+                <quad pos="{{ cx + col_w - 20 }} {{ fy + 1.5 }}" z-index="202"
+                      size="18 3.5" bgcolor="fff1" halign="left" valign="top"
+                      id="tog_{{ id }}__toggle__{{ f.key }}"
+                      action="{{ id }}__toggle__{{ f.key }}" ScriptEvents="1" />
+                {{ ui.label(('on' if on else 'off'),
+                            x=cx + col_w - 4, y=fy, halign='right',
+                            size='sm', color=bcolor) }}
+              {% else %}
+                {{ ui.line_edit('field__' ~ f.key, value=f.value,
+                                x=cx + col_w - 32, y=fy, width=30, size='sm') }}
+              {% endif %}
+            {% endfor %}
+            {# per-card pager #}
+            {% if cat.has_pages %}
+              {% set py = cy - card_h + 3 %}
+              {{ ui.push_button('cat_' ~ cat.key ~ '_prev', '<',
+                                x=cx+2, y=py, variant='ghost',
+                                size='sm', halign='left') }}
+              {{ ui.label((cat.page+1)|string ~ '/' ~ cat.total_pages|string,
+                          x=cx + col_w/2, y=py, halign='center',
+                          size='sm', color='888') }}
+              {{ ui.push_button('cat_' ~ cat.key ~ '_next', '>',
+                                x=cx+col_w-2, y=py, variant='ghost',
+                                size='sm', halign='right') }}
+            {% endif %}
+          {% endcall %}
+        {% endfor %}
+        {% if not categories %}
+          {{ ui.label('no mode script parameters reported',
+                      x=W/2, y=BY-30, halign='center', size='sm', color='888') }}
+        {% endif %}
+
+        {# Save / Reset bottom-right corner #}
+        {% if is_admin %}
+          {{ ui.push_button('refresh', 'Reset',
+                            x=W-28, y=-H+5, variant='ghost',
+                            halign='right', size='md') }}
+          {{ ui.push_button('save', 'Save (' ~ dirty_count|string ~ ' changes)',
+                            x=W-4, y=-H+5,
+                            variant=('success' if dirty_count else 'ghost'),
+                            halign='right', size='md') }}
+        {% else %}
+          {{ ui.label('read-only (admin required to save)',
+                      x=4, y=-H+5, size='sm', color='888') }}
+        {% endif %}
+      {% endif %}
+
+    {# =================================================================
+       MATCH SETTINGS
+       ================================================================= #}
+    {% elif tab_key == 'match' %}
+
+      {{ ui.label('loaded: ', x=4, y=BY-2, size='sm', color='888') }}
+      {{ ui.label((loaded_profile or '(unknown — load one to track)')[:80],
+                  x=22, y=BY-2, size='sm') }}
+
+      {% call ui.group_box('Profiles (' ~ profiles_count|string ~ ')',
+                           x=4, y=BY-8, w=W-8, h=H-58) %}
+        {% set row_h = 6 %}
+        {% for p in profiles %}
+          {% set yy = BY - 16 - loop.index0 * row_h %}
+          {% set is_loaded = (p.rel == loaded_profile) %}
+          {% set is_confirm = (p.rel == confirm_delete) %}
+          {{ ui.label((' > ' if is_loaded else '   ') ~ p.name,
+                      x=8, y=yy, size='sm',
+                      color=('0f0' if is_loaded else 'fff')) }}
+          {{ ui.label((p.size//1024)|string ~ ' kB', x=120, y=yy,
+                      halign='right', size='sm', color='666') }}
+          {% if is_master %}
+            {{ ui.push_button('load_profile__' ~ p.rel, 'Load',
+                              x=128, y=yy+1.5,
+                              variant=('ghost' if is_loaded else 'primary'),
+                              size='sm', halign='left') }}
+            {{ ui.push_button('dup_profile__' ~ p.rel, 'Dup',
+                              x=152, y=yy+1.5, variant='ghost',
+                              size='sm', halign='left') }}
+            {{ ui.push_button('del_profile__' ~ p.rel,
+                              ('Confirm?' if is_confirm else 'Del'),
+                              x=176, y=yy+1.5,
+                              variant=('danger' if is_confirm else 'ghost'),
+                              size='sm', halign='left') }}
+          {% endif %}
+        {% endfor %}
+        {% if not profiles %}
+          {{ ui.label('no .txt files in Maps/MatchSettings/',
+                      x=8, y=BY-18, size='sm', color='888') }}
+        {% endif %}
+      {% endcall %}
+
+      {# pagination #}
+      {% if match_total_pages and match_total_pages > 1 %}
+        {{ ui.push_button('match_prev', '< prev', x=4, y=-H+13,
+                          variant='ghost', size='sm', halign='left') }}
+        {{ ui.label('page ' ~ (match_page+1)|string ~ ' / ' ~ match_total_pages|string,
+                    x=W/2, y=-H+13, halign='center', size='sm', color='888') }}
+        {{ ui.push_button('match_next', 'next >', x=W-4, y=-H+13,
+                          variant='ghost', size='sm', halign='right') }}
+      {% endif %}
+
+      {# save-as row, master only #}
+      {% if is_master %}
+        {{ ui.label('Save current as:', x=4, y=-H+5, size='sm', color='888') }}
+        {{ ui.line_edit('saveas', value=save_as,
+                        x=38, y=-H+5, width=60, size='sm', placeholder='filename.txt') }}
+        {{ ui.push_button('save_current', 'Save current',
+                          x=104, y=-H+5,
+                          variant='success', size='sm', halign='left') }}
+      {% endif %}
+
+    {% endif %}
+  {% endcall %}
+
+  {{ ui.hover_script() }}
+</frame>

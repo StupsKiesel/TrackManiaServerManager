@@ -16,7 +16,7 @@ from typing import Any
 
 from pyplanet.apps.config import AppConfig
 
-from .views import GbxConsoleView, PypConsoleView
+from .views import ConsoleView
 
 try:
     from pyplanet.apps.tmsm.hub import HubAppEntry, Role
@@ -96,36 +96,33 @@ class ConsolesApp(AppConfig):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.gbx_view: GbxConsoleView | None = None
-        self.pyp_view: PypConsoleView | None = None
+        self.view: ConsoleView | None = None
         # per-player command history (most-recent last) + last-status line
         self._cmd_log: dict[str, dict[str, list[str]]] = {}  # login -> {gbx: [...], pyp: [...]}
         self._status: dict[str, dict[str, tuple[str, str]]] = {}  # login -> {kind: (text, color)}
         self._input: dict[str, dict[str, str]] = {}  # login -> {kind: last_input}
+        self._active: dict[str, str] = {}  # login -> active kind ('gbx'|'pyp')
         self._gbx_log: Path | None = _find_dedicated_log()
         self._pyp_log: Path | None = _find_pyplanet_log()
 
     async def on_start(self) -> None:
         logger.info("consoles: gbx_log=%s pyp_log=%s", self._gbx_log, self._pyp_log)
 
-        self.gbx_view = GbxConsoleView(self)
-        self.pyp_view = PypConsoleView(self)
-
-        for view in (self.gbx_view, self.pyp_view):
-            view.connect("send", self._on_send)
-            view.connect("clear", self._on_clear)
-            view.connect("refresh", self._on_refresh)
-            view.connect("back", self._on_back)
+        self.view = ConsoleView(self)
+        self.view.connect("send", self._on_send)
+        self.view.connect("clear", self._on_clear)
+        self.view.connect("refresh", self._on_refresh)
+        self.view.connect("kind__tab__gbx", self._make_tab_handler("gbx"))
+        self.view.connect("kind__tab__pyp", self._make_tab_handler("pyp"))
 
         await self._register_with_hub()
 
     async def on_stop(self) -> None:
-        for view in (self.gbx_view, self.pyp_view):
-            if view is not None:
-                try:
-                    await view.destroy()
-                except Exception:
-                    logger.exception("consoles: destroy failed")
+        if self.view is not None:
+            try:
+                await self.view.destroy()
+            except Exception:
+                logger.exception("consoles: destroy failed")
 
     # ---- hub registration ---------------------------------------------
 
@@ -139,54 +136,56 @@ class ConsolesApp(AppConfig):
             return
         await sig.send_robust({
             "entry": HubAppEntry(
-                key="gbx_console",
-                name="GBX Console",
+                key="console",
+                name="Console",
                 icon="terminal",
                 role=Role.MASTER,
-                description="Send dedicated-server XML-RPC methods",
-                open=self._open_gbx,
+                description="XML-RPC + PyPlanet chat command consoles",
+                open=self._open,
                 order=10,
             ),
         }, raw=True)
-        await sig.send_robust({
-            "entry": HubAppEntry(
-                key="pyp_console",
-                name="PyPlanet Console",
-                icon="terminal",
-                role=Role.MASTER,
-                description="Run chat commands and tail the PyPlanet log",
-                open=self._open_pyp,
-                order=11,
-            ),
-        }, raw=True)
 
-    async def _open_gbx(self, player) -> None:
-        await self._open(self.gbx_view, "gbx", player)
-
-    async def _open_pyp(self, player) -> None:
-        await self._open(self.pyp_view, "pyp", player)
-
-    async def _open(self, view, kind: str, player) -> None:
-        if view is None:
+    async def _open(self, player) -> None:
+        if self.view is None:
             return
-        self._cmd_log.setdefault(player.login, {}).setdefault(kind, [])
+        self._cmd_log.setdefault(player.login, {}).setdefault("gbx", [])
+        self._cmd_log.setdefault(player.login, {}).setdefault("pyp", [])
         try:
-            await view.display(player_logins=[player.login])
+            await self.view.display(player_logins=[player.login])
         except Exception:
-            logger.exception("consoles: open(%s) display failed", kind)
+            logger.exception("consoles: open display failed")
+
+    def _make_tab_handler(self, kind: str):
+        async def _handler(player, **kwargs):
+            self._active[player.login] = kind
+            await self._refresh(player)
+        return _handler
 
     # ---- per-player context ------------------------------------------
 
-    def build_console_context(self, kind: str, login: str) -> dict[str, Any]:
+    def build_console_context(self, login: str) -> dict[str, Any]:
+        kind = self._active.get(login, "gbx")
         log_path = self._gbx_log if kind == "gbx" else self._pyp_log
         lines = _tail(log_path, n=200) if log_path else []
-        # interleave: append per-player command history at the end so it shows
-        # most-recently below the tailed file content.
         history = self._cmd_log.get(login, {}).get(kind, [])
         if history:
             lines = lines + [""] + history
         status_text, status_color = self._status.get(login, {}).get(kind, ("", "aaa"))
+        prompt = "$" if kind == "gbx" else ">"
+        hint = (
+            'MethodName arg1 arg2  \u2014  args parsed as int/bool/str (use "quotes" for spaces)'
+            if kind == "gbx"
+            else "/help, //admin, /mapinfo, ...  \u2014  runs as you, output appears in chat + log"
+        )
         return {
+            "active_kind": kind,
+            "tabs": [
+                {"key": "gbx", "label": "Dedicated"},
+                {"key": "pyp", "label": "PyPlanet"},
+            ],
+            "prompt": prompt,
+            "hint": hint,
             "lines": lines,
             "input_value": self._input.get(login, {}).get(kind, ""),
             "last_status": status_text,
@@ -204,27 +203,19 @@ class ConsolesApp(AppConfig):
         if len(buf) > 200:
             del buf[: len(buf) - 200]
 
-    def _kind_for(self, view) -> str:
-        return "gbx" if view is self.gbx_view else "pyp"
-
-    def _view_for(self, kind: str):
-        return self.gbx_view if kind == "gbx" else self.pyp_view
+    def _kind_for_player(self, login: str) -> str:
+        return self._active.get(login, "gbx")
 
     # ---- handlers ----------------------------------------------------
 
     async def _on_send(self, player, values=None, **kwargs) -> None:
-        # we don't know which view fired without the action prefix; both
-        # views share handlers, so we have to disambiguate from `values`
-        # keys. The entry's name is `entry_<view_id>__cmd`.
-        kind, text = self._extract_input(values)
-        if kind is None:
-            logger.warning("consoles: _on_send: no recognisable input in values")
-            return
+        kind = self._kind_for_player(player.login)
+        text = self._extract_input(values)
         text = (text or "").strip()
         self._input.setdefault(player.login, {})[kind] = text
         if not text:
             self._set_status(player.login, kind, "(empty)", "888")
-            await self._refresh_view(kind, player)
+            await self._refresh(player)
             return
         ts = time.strftime("%H:%M:%S")
         self._append_history(player.login, kind, f"$ [{ts}] {'$' if kind == 'gbx' else '>'} {text}")
@@ -240,58 +231,32 @@ class ConsolesApp(AppConfig):
         # clear input on success — keep last input on error
         if self._status.get(player.login, {}).get(kind, ("", ""))[1] != "f44":
             self._input.setdefault(player.login, {})[kind] = ""
-        await self._refresh_view(kind, player)
+        await self._refresh(player)
 
     async def _on_clear(self, player, **kwargs) -> None:
-        # Clear history for BOTH views; user can pick which is open anyway.
-        for kind in ("gbx", "pyp"):
-            self._cmd_log.setdefault(player.login, {})[kind] = []
-            self._set_status(player.login, kind, "cleared", "8f8")
-            await self._refresh_view(kind, player)
+        kind = self._kind_for_player(player.login)
+        self._cmd_log.setdefault(player.login, {})[kind] = []
+        self._set_status(player.login, kind, "cleared", "8f8")
+        await self._refresh(player)
 
     async def _on_refresh(self, player, **kwargs) -> None:
-        for kind in ("gbx", "pyp"):
-            await self._refresh_view(kind, player)
+        await self._refresh(player)
 
-    async def _on_back(self, player, **kwargs) -> None:
-        for view in (self.gbx_view, self.pyp_view):
-            if view is None:
-                continue
-            try:
-                from pyplanet.views.template import TemplateView
-                await TemplateView.hide(view, player_logins=[player.login])
-            except Exception:
-                logger.exception("consoles: hide failed")
-        # ask the hub to re-show
-        try:
-            sig = self.context.signals.get_signal("tmsm_hub:show")
-            await sig.send_robust({"player": player}, raw=True)
-        except KeyError:
-            pass
-
-    async def _refresh_view(self, kind: str, player) -> None:
-        view = self._view_for(kind)
-        if view is None:
+    async def _refresh(self, player) -> None:
+        if self.view is None:
             return
         try:
-            await view.display(player_logins=[player.login])
+            await self.view.display(player_logins=[player.login])
         except Exception:
-            logger.exception("consoles: refresh display failed (%s)", kind)
+            logger.exception("consoles: refresh display failed")
 
     # ---- input plumbing ----------------------------------------------
 
-    def _extract_input(self, values: dict[str, Any] | None) -> tuple[str | None, str]:
-        if not values:
-            return None, ""
-        # entry name = entry_<view_id>__cmd
-        for key, val in values.items():
-            if not key.startswith("entry_") or not key.endswith("__cmd"):
-                continue
-            if self.gbx_view is not None and self.gbx_view.id in key:
-                return "gbx", str(val)
-            if self.pyp_view is not None and self.pyp_view.id in key:
-                return "pyp", str(val)
-        return None, ""
+    def _extract_input(self, values: dict[str, Any] | None) -> str:
+        if not values or self.view is None:
+            return ""
+        key = f"entry_{self.view.id}__cmd"
+        return str(values.get(key, "") or "")
 
     # ---- runners -----------------------------------------------------
 

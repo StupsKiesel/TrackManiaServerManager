@@ -1,0 +1,111 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (see App_Maplist.view_context):
+     query
+     page, results, more, total
+     jukebox_count, has_jukebox, current_uid
+     status, status_color
+#}
+
+{% set win_w  = 220 %}
+{% set rows   = results|length %}
+{% set row_h  = 6 %}
+
+{% set table_y  = -33 %}
+{% set table_h  = (rows if rows else 1) * row_h + 6 %}
+{% set footer_y = table_y - table_h - 4 %}
+{% set status_y = footer_y - 7 %}
+{% set win_h    = (-status_y) + 6 %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
+
+  {{ ui.window('Maplist', icon='th-large',
+               x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {# ============================ HEADER ROW ============================ #}
+  {{ ui.label(total ~ ' map' ~ ('s' if total != 1 else ''),
+              x=4, y=-12, size='sm', color='888') }}
+
+  {% if has_jukebox %}
+    {{ ui.push_button('open_jukebox',
+                      'Jukebox (' ~ jukebox_count ~ ')',
+                      x=win_w - 4, y=-12, halign='right',
+                      icon='music', variant='ghost', size='sm', width=26,
+                      tooltip='Open the jukebox queue') }}
+  {% endif %}
+
+  {# ============================ SEARCH BAR ============================ #}
+  {{ ui.search_input('query', value=query,
+                     placeholder='filter by name or author...',
+                     x=4, y=-19, width=180, size='sm') }}
+  {{ ui.push_button('search', 'Filter',
+                    x=win_w - 4, y=-19, halign='right',
+                    icon='search', variant='primary', size='sm') }}
+
+  {# ============================ RESULTS TABLE ========================= #}
+  {% call ui.group_box(title='Maps', x=4, y=table_y,
+                       w=win_w - 8, h=table_h,
+                       color='fff', border='fff5') %}
+
+    {% set hy = table_y - 5 %}
+    {{ ui.label('Name',     x=8,   y=hy, size='sm', color='888') }}
+    {{ ui.label('Author',   x=108, y=hy, size='sm', color='888') }}
+    {{ ui.label('Env',      x=158, y=hy, size='sm', color='888') }}
+    {{ ui.label('Time',     x=178, y=hy, size='sm', color='888') }}
+
+    {% if rows %}
+      {% for r in results %}
+        {% set ry = hy - 3 - loop.index0 * row_h %}
+        {% if loop.index0 is divisibleby 2 %}
+          <quad pos="6 {{ ry }}" z-index="151"
+                size="{{ win_w - 12 }} {{ row_h - 0.4 }}"
+                bgcolor="fff1" halign="left" valign="center" />
+        {% endif %}
+
+        {{ ui.label(r.name|truncate(40, true, ''),
+                    x=8, y=ry, size='sm',
+                    color=('0f8' if r.is_current else 'fff')) }}
+        {{ ui.label(r.author|truncate(14, true, ''),
+                    x=108, y=ry, size='sm', color='ccc') }}
+        {{ ui.label(r.environment|truncate(6, true, ''),
+                    x=158, y=ry, size='sm', color='ccc') }}
+        {{ ui.label(r.time_author_s,
+                    x=178, y=ry, size='sm', color='ccc') }}
+        {% if r.in_queue %}
+          {{ ui.label('queued', x=win_w - 6, y=ry, halign='right',
+                      size='sm', color='fa0') }}
+        {% else %}
+          {{ ui.push_button('juke__' ~ r.uid, 'Jukebox',
+                            x=win_w - 6, y=ry, halign='right',
+                            icon='plus', variant='success', size='sm') }}
+        {% endif %}
+        {{ ui.tool_button('details__' ~ r.uid, 'info',
+                          x=win_w - 28, y=ry, halign='right',
+                          variant='primary', size='sm',
+                          tooltip='Show map details') }}
+      {% endfor %}
+    {% else %}
+      {{ ui.label('no maps match the filter',
+                  x=win_w/2, y=table_y - 8,
+                  halign='center', size='sm', color='888') }}
+    {% endif %}
+  {% endcall %}
+
+  {# ============================ FOOTER ================================ #}
+  {{ ui.push_button('prev', 'Prev',
+                    x=4, y=footer_y, halign='left',
+                    icon='arrow_left', variant='ghost', size='sm') }}
+  {{ ui.label('page ' ~ page, x=24, y=footer_y, size='sm', color='ccc') }}
+  {{ ui.push_button('next', 'Next',
+                    x=44, y=footer_y, halign='left',
+                    icon='arrow_right', variant='ghost', size='sm') }}
+  {{ ui.tool_button('refresh', 'reload',
+                    x=70, y=footer_y, halign='left',
+                    variant='ghost', size='sm', tooltip='Reload') }}
+
+  {{ ui.label(status, x=4, y=status_y, halign='left',
+              color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>
+

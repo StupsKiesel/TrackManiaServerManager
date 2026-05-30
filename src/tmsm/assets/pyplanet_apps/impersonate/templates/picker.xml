@@ -1,0 +1,57 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# Impersonate picker - master selects what level the tmsm UI should treat
+   them as. Context: active, effective, effective_label, real, real_label,
+   is_player, is_operator, is_admin, is_master. #}
+
+{% set WIN_W = 110 %}
+{% set WIN_H = 70 %}
+
+<frame pos="-55 35" z-index="500">
+
+  {{ ui.window('Impersonate', icon='user-secret', x=0, y=0, w=WIN_W, h=WIN_H) }}
+
+  {# Header text - current state. #}
+  <label pos="4 -11" textsize="1.1" textfont="GameFontBlack" valign="top"
+         text="$fffPreview the tmsm UI as..." />
+
+  {% if active %}
+    <label pos="4 -16" textsize="0.9" valign="top"
+           text="$0afCurrently impersonating: $fff{{ effective_label }}" />
+    <label pos="4 -19.5" textsize="0.8" valign="top"
+           text="$aaaReal level: {{ real_label }}" />
+  {% else %}
+    <label pos="4 -16" textsize="0.9" valign="top"
+           text="$aaaNo override active (showing your real {{ real_label }} UI)." />
+  {% endif %}
+
+  {# Four mode buttons in a row. Selected one gets the 'success' variant. #}
+  {% set BTN_W = 22 %}
+  {% set BTN_Y = -32 %}
+  {% set ROW_X = 4 %}
+
+  {{ ui.push_button('set_player', 'Player',
+                    x=ROW_X, y=BTN_Y, halign='left',
+                    variant='success' if is_player else 'ghost',
+                    icon='user', size='md', width=BTN_W) }}
+
+  {{ ui.push_button('set_operator', 'Operator',
+                    x=ROW_X + BTN_W + 2, y=BTN_Y, halign='left',
+                    variant='success' if is_operator else 'ghost',
+                    icon='wrench', size='md', width=BTN_W) }}
+
+  {{ ui.push_button('set_admin', 'Admin',
+                    x=ROW_X + (BTN_W + 2) * 2, y=BTN_Y, halign='left',
+                    variant='success' if is_admin else 'ghost',
+                    icon='shield', size='md', width=BTN_W) }}
+
+  {{ ui.push_button('clear', 'Stop (Master)',
+                    x=ROW_X + (BTN_W + 2) * 3, y=BTN_Y, halign='left',
+                    variant='success' if is_master else 'warning',
+                    icon='power-off', size='md', width=BTN_W) }}
+
+  {# Footer note. #}
+  <label pos="{{ WIN_W / 2 }} -{{ WIN_H - 6 }}" textsize="0.7" halign="center" valign="center2"
+         text="$888Override is cleared on disconnect and on PyPlanet restart." />
+
+</frame>

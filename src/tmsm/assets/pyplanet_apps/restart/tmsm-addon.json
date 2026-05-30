@@ -1,0 +1,4 @@
+﻿{
+  "description": "Restart - manual + scheduled restarts of PyPlanet and the dedicated server. Master-admin only. Requires tmsm_hub + tmsm_ui.",
+  "author": "tmsm"
+}

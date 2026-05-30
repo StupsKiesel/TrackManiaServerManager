@@ -1,0 +1,4 @@
+{
+  "description": "tmsm status: transient on-screen toast notifications. Any app can fire a message via the tmsm_status:notify signal; messages slide in from the right, stack top-right, and slide out left after a timeout (or wait for a button click).",
+  "author": "tmsm"
+}

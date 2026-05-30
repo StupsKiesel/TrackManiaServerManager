@@ -1,0 +1,29 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{% set clock_init %}
+  declare CMlLabel ClockLabel <=> (Page.GetFirstChild("clock_label") as CMlLabel);
+  declare Integer ClockDumped for Page = 0;
+{% endset %}
+
+{% set clock_tick %}
+  if (ClockLabel != Null) {
+    declare Text NowFull = CurrentLocalDateTime;
+    if (ClockDumped == 0) {
+      ClockDumped = 1;
+      TriggerPageAction("{{ widget_view_id }}__dbg__clock::CLDT=" ^ NowFull);
+    }
+    ClockLabel.SetText("$fff" ^ TL::SubText(NowFull, 11, 8));
+  }
+{% endset %}
+
+{% call widgets.frame(extra_init=clock_init, extra_tick=clock_tick) %}
+  <quad pos="0 0" z-index="40" size="{{ widget_w }} {{ widget_h }}"
+        bgcolor="111c" halign="left" valign="top" />
+  <quad pos="0 0" z-index="41" size="{{ widget_w }} 1.2"
+        bgcolor="15ff" halign="left" valign="top" />
+  <label pos="{{ widget_w / 2 }} {{ -widget_h / 2 }}" z-index="42"
+         id="clock_label"
+         halign="center" valign="center2"
+         text="$fff--:--:--"
+         textsize="1.8" textfont="GameFontBlack" />
+{% endcall %}

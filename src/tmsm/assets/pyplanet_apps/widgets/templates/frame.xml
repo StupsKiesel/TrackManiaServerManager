@@ -1,0 +1,126 @@
+{# tmsm_widgets/frame.xml — shared wrapper macro for every registered widget.
+
+   Usage in a widget template:
+
+       {% import 'tmsm_widgets/frame.xml' as widgets with context %}
+       {% call widgets.frame() %}
+           <label text="hello" />
+       {% endcall %}
+
+   Context variables consumed (all injected by WidgetView.get_per_player_data):
+
+       widget_key, widget_view_id, widget_kind, widget_x, widget_y, widget_w,
+       widget_h, widget_hide_clauses, widget_hide_raw, widget_anim_dir,
+       widget_anim_duration_ms, widget_anim_delay_ms, widget_edit_mode
+#}
+
+{% macro frame(extra_tick="", extra_init="") %}
+{# ── outer absolute-position frame ────────────────────────────────────── #}
+<frame id="widget_root_{{ widget_key }}" pos="{{ widget_x }} {{ widget_y }}" z-index="40">
+ <frame id="widget_anim_{{ widget_key }}" pos="0 0">
+
+  {# ── edit-mode helpers (debug outline + drag overlay) ──────────────── #}
+  {% if widget_edit_mode %}
+    {# dashed-style outline using four thin quads #}
+    <quad pos="0 0" z-index="49" size="{{ widget_w }} 0.2" bgcolor="ff0f" halign="left" valign="top" />
+    <quad pos="0 -{{ widget_h }}" z-index="49" size="{{ widget_w }} 0.2" bgcolor="ff0f" halign="left" valign="top" />
+    <quad pos="0 0" z-index="49" size="0.2 {{ widget_h }}" bgcolor="ff0f" halign="left" valign="top" />
+    <quad pos="{{ widget_w }} 0" z-index="49" size="0.2 {{ widget_h }}" bgcolor="ff0f" halign="right" valign="top" />
+    {# label with the widget key #}
+    <label pos="1 -1" z-index="50" text="$ff0{{ widget_key }}" textsize="0.8" textfont="GameFontBlack"
+           halign="left" valign="top" />
+  {% endif %}
+
+  {{ caller() }}
+
+ </frame>
+</frame>
+
+{# ── client-side hide / animation script (MUST be at manialink top level,
+      not nested inside <frame>, or the engine silently drops it).
+      Autoescape disabled — Jinja XML escape mangles `>`/`&` and breaks
+      ManiaScript compile silently. #}
+{% autoescape false %}
+  <script><!--
+    #Include "MathLib" as M
+    #Include "TextLib" as TL
+
+    Void Dbg(Text Msg) {
+      TriggerPageAction("{{ widget_view_id }}__dbg__{{ widget_key }}::" ^ Msg);
+    }
+
+    main() {
+      Dbg("BOOT");
+      declare CMlFrame Holder <=> (Page.GetFirstChild("widget_anim_{{ widget_key }}") as CMlFrame);
+      if (Holder == Null) { Dbg("HOLDER_NULL"); return; }
+      Dbg("MAIN_START");
+
+      declare Boolean EditorOn = {{ 'True' if widget_edit_mode else 'False' }};
+      declare Boolean IsConcealed = False;
+      declare Integer TickCount = 0;
+
+      // ----- per-widget one-shot init -----
+      {{ extra_init }}
+
+      // ----- immediate snap before the first frame is presented -----
+      // Inner frame is rendered at pos="0 0" (visible). If the player should
+      // currently NOT see the widget, snap it off-screen instantly so a
+      // re-render doesn't briefly show it.
+      {
+        declare Real KmH = 0.0;
+        declare Boolean MenuOpen = False;
+        declare Boolean Racing = True;
+        declare Boolean Watching = False;
+        declare Boolean TabHeld = False;
+        if (InputPlayer != Null) {
+          KmH = M::Abs(InputPlayer.DisplaySpeed * 1.0);
+        }
+        declare Boolean Concealing = False;
+        {% for expr in widget_hide_clauses -%}
+        if ({{ expr }}) Concealing = True;
+        {% endfor %}
+        if (EditorOn) Concealing = False;
+        IsConcealed = Concealing;
+        if (Concealing) {
+          Holder.RelativePosition_V3 = <500.0, 0.0, 0.0>;
+          Dbg("SNAP hidden");
+        } else {
+          Dbg("SNAP stays shown");
+        }
+      }
+
+      while (True) {
+        yield;
+        sleep(50);
+
+        // ----- per-widget per-tick code (e.g. clock label update) -----
+        {{ extra_tick }}
+
+        declare Real KmH = 0.0;
+        declare Boolean MenuOpen = False;
+        declare Boolean Racing = True;
+        declare Boolean Watching = False;
+        declare Boolean TabHeld = False;
+        if (InputPlayer != Null) {
+          KmH = M::Abs(InputPlayer.DisplaySpeed * 1.0);
+        }
+
+        declare Boolean Concealing = False;
+        {% for expr in widget_hide_clauses -%}
+        if ({{ expr }}) Concealing = True;
+        {% endfor %}
+
+        if (EditorOn) Concealing = False;
+
+        if (Concealing != IsConcealed) {
+          IsConcealed = Concealing;
+          declare Text Tween;
+          if (IsConcealed) Tween = "<frame pos=\"500 0\"/>";
+          else             Tween = "<frame pos=\"0 0\"/>";
+          AnimMgr.Add(Holder, Tween, {{ widget_anim_duration_ms }}, CAnimManager::EAnimManagerEasing::QuadInOut);
+        }
+      }
+    }
+  --></script>
+{% endautoescape %}
+{% endmacro %}

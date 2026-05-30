@@ -1,0 +1,4 @@
+﻿{
+  "description": "Server map queue (jukebox). Port of the PyPlanet contrib jukebox onto the tmsm.ui / tmsm.hub framework: same public API (`.jukebox` list, `add_to_jukebox`, `drop_from_jukebox`, `move_map`, `podium_start`) plus a tmsm UI window with per-row drop / move actions and admin controls. Folder system from contrib is intentionally not ported. Requires tmsm_hub + tmsm_ui.",
+  "author": "tmsm"
+}

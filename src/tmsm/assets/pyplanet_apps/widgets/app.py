@@ -225,6 +225,8 @@ class WidgetsApp(AppConfig):
             "w": entry.default_w,
             "h": entry.default_h,
         }
+        if not self.allow_personal(key):
+            return {**defaults, **self.storage.global_pos(key)}
         return self.storage.resolve(key, login, defaults)
 
     def resolve_behavior(self, key: str, login: str | None = None) -> dict[str, Any]:

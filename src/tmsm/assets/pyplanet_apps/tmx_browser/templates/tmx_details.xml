@@ -45,14 +45,28 @@
   {{ ui.label('by ' ~ (m.author or 'unknown'),
               x=left_x, y=-18, size='sm', color='aaa') }}
 
-  {# ============================ THUMBNAIL PLACEHOLDER =================== #}
-  {# TM2020 client refuses to render http-served images from this view, even
-     though the same URLs work in the demo view. Show a placeholder. #}
+  {# ============================ THUMBNAIL =============================== #}
+  {# Background card always shown so the user can see the slot exists. #}
   <quad pos="{{ left_x }} {{ -24 }}" z-index="200"
         size="{{ thumb_w }} {{ thumb_h }}"
-        bgcolor="fff1" halign="left" valign="top" />
-  {{ ui.label('no preview', x=left_x + thumb_w / 2, y=-24 - thumb_h / 2,
-              halign='center', size='sm', color='666') }}
+        bgcolor="0008" halign="left" valign="top" />
+
+  {% if thumb_url %}
+    {# Spinner sits behind the image; once the client finishes the async
+       fetch the opaque thumbnail covers it. If the URL never loads the
+       spinner stays visible, signalling "still loading or broken". #}
+    {{ ui.spinner(x=left_x + thumb_w / 2, y=-24 - thumb_h / 2,
+                  size=10, color='15f', z=201) }}
+    {{ ui.image(thumb_url,
+                x=left_x, y=-24,
+                w=thumb_w, h=thumb_h,
+                halign='left', valign='top',
+                keepratio='Fit', z=210) }}
+  {% else %}
+    {{ ui.label('no preview',
+                x=left_x + thumb_w / 2, y=-24 - thumb_h / 2,
+                halign='center', size='sm', color='666') }}
+  {% endif %}
 
   {# small action row under the thumbnail #}
   {{ ui.push_button('add__' ~ m.track_id, 'Add to server',

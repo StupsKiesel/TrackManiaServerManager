@@ -151,13 +151,25 @@ class MapPicker:
             logger.exception("gamemodes: write map file failed (#%s)", tid)
             return None
         try:
-            uploaded = await self.app.instance.map_manager.add_map(
+            await self.app.instance.map_manager.add_map(
                 filename, insert=False, save_matchsettings=False,
             )
         except Exception:
             logger.exception("gamemodes: add_map failed (#%s)", tid)
             return None
-        if juke_next:
+        # `add_map` returns the raw gbx result (truthy/bool), not a Map
+        # instance. Refresh the playlist cache, then locate the freshly
+        # added map by filename so we can hand a real Map to set_next_map.
+        uploaded = None
+        try:
+            await self.app.instance.map_manager.update_list(full_update=False)
+            for m in self.app.instance.map_manager.maps:
+                if getattr(m, "file", None) == filename:
+                    uploaded = m
+                    break
+        except Exception:
+            logger.exception("gamemodes: update_list failed (#%s)", tid)
+        if juke_next and uploaded is not None:
             try:
                 await self.app.instance.map_manager.set_next_map(uploaded)
             except Exception:

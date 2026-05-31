@@ -1,4 +1,4 @@
-{# tmsm_widgets/frame.xml — shared wrapper macro for every registered widget.
+﻿{# tmsm_widgets/frame.xml â€” shared wrapper macro for every registered widget.
 
    Usage in a widget template:
 
@@ -15,109 +15,128 @@
 #}
 
 {% macro frame(extra_tick="", extra_init="") %}
-{# ── outer absolute-position frame ────────────────────────────────────── #}
+{# â”€â”€ outer absolute-position frame â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #}
 <frame id="widget_root_{{ widget_key }}" pos="{{ widget_x }} {{ widget_y }}" z-index="40">
  <frame id="widget_anim_{{ widget_key }}" pos="0 0">
 
-  {# ── edit-mode helpers (debug outline + drag overlay) ──────────────── #}
-  {% if widget_edit_mode %}
-    {# dashed-style outline using four thin quads #}
-    <quad pos="0 0" z-index="49" size="{{ widget_w }} 0.2" bgcolor="ff0f" halign="left" valign="top" />
-    <quad pos="0 -{{ widget_h }}" z-index="49" size="{{ widget_w }} 0.2" bgcolor="ff0f" halign="left" valign="top" />
-    <quad pos="0 0" z-index="49" size="0.2 {{ widget_h }}" bgcolor="ff0f" halign="left" valign="top" />
-    <quad pos="{{ widget_w }} 0" z-index="49" size="0.2 {{ widget_h }}" bgcolor="ff0f" halign="right" valign="top" />
-    {# label with the widget key #}
-    <label pos="1 -1" z-index="50" text="$ff0{{ widget_key }}" textsize="0.8" textfont="GameFontBlack"
-           halign="left" valign="top" />
-  {% endif %}
-
   {{ caller() }}
+
+  {# ── debug overlay (master-admin toggle) ─────────────────────────── #}
+  {% if widget_debug_mode %}
+    {# bounding-box outline so we can see hidden / mis-sized widgets #}
+    <quad pos="0 0"               z-index="98" size="{{ widget_w }} 0.2" halign="left" valign="top" bgcolor="f0ff" />
+    <quad pos="0 -{{ widget_h }}" z-index="98" size="{{ widget_w }} 0.2" halign="left" valign="top" bgcolor="f0ff" />
+    <quad pos="0 0"               z-index="98" size="0.2 {{ widget_h }}" halign="left" valign="top" bgcolor="f0ff" />
+    <quad pos="{{ widget_w }} 0"  z-index="98" size="0.2 {{ widget_h }}" halign="right" valign="top" bgcolor="f0ff" />
+    {# top-left key chip #}
+    <quad pos="0 0.4" z-index="100" size="{{ widget_w }} 2.6" halign="left" valign="bottom" bgcolor="000000aa" />
+    <label pos="0.4 0.6" z-index="101" halign="left" valign="bottom" textsize="0.7" textfont="GameFontBlack"
+           text="$f0f{{ widget_key }}  $aaa{{ '%.0f' | format(widget_w) }}×{{ '%.0f' | format(widget_h) }} @ {{ '%.1f' | format(widget_x) }},{{ '%.1f' | format(widget_y) }}" />
+    {# bottom-left ManiaScript status label (live, written by the script below) #}
+    <label id="widget_dbg_{{ widget_key }}" pos="0 -{{ widget_h + 0.4 }}" z-index="100"
+           text="$f0fdbg" textsize="0.7" textfont="GameFontBlack" halign="left" valign="top" />
+  {% else %}
+    {# Always keep the label node so ManiaScript can SetText() it without
+       null-checking — just hidden off-screen when debug mode is off. #}
+    <label id="widget_dbg_{{ widget_key }}" pos="0 0" z-index="-1"
+           text="" textsize="0.01" halign="left" valign="top" hidden="1" />
+  {% endif %}
 
  </frame>
 </frame>
 
-{# ── client-side hide / animation script (MUST be at manialink top level,
+{# â”€â”€ client-side hide / animation script (MUST be at manialink top level,
       not nested inside <frame>, or the engine silently drops it).
-      Autoescape disabled — Jinja XML escape mangles `>`/`&` and breaks
+      Autoescape disabled â€” Jinja XML escape mangles `>`/`&` and breaks
       ManiaScript compile silently. #}
 {% autoescape false %}
   <script><!--
     #Include "MathLib" as M
     #Include "TextLib" as TL
 
-    Void Dbg(Text Msg) {
-      TriggerPageAction("{{ widget_view_id }}__dbg__{{ widget_key }}::" ^ Msg);
-    }
-
     main() {
-      Dbg("BOOT");
       declare CMlFrame Holder <=> (Page.GetFirstChild("widget_anim_{{ widget_key }}") as CMlFrame);
-      if (Holder == Null) { Dbg("HOLDER_NULL"); return; }
-      Dbg("MAIN_START");
+      declare CMlLabel DbgLbl <=> (Page.GetFirstChild("widget_dbg_{{ widget_key }}") as CMlLabel);
+      declare Boolean DebugOn = {{ 'True' if widget_debug_mode else 'False' }};
+      // Universal debug formatter: "<R|H> <tick>ms | <status>". Widgets may
+      // overwrite Persistent_DbgStatus from extra_tick to push a one-liner;
+      // SetDbg() runs every loop and decorates with render/tick info.
+      declare Text Persistent_DbgStatus = "{{ widget_debug_status|default('') }}";
+      declare Integer LastTickAt = Now;
+      if (Holder == Null) return;
 
       declare Boolean EditorOn = {{ 'True' if widget_edit_mode else 'False' }};
       declare Boolean IsConcealed = False;
-      declare Integer TickCount = 0;
+      declare Text TweenHidden  = "<frame pos=\"{{ widget_anim_off_x }} {{ widget_anim_off_y }}\"/>";
+      declare Text TweenVisible = "<frame pos=\"0 0\"/>";
+      declare Boolean AnimEnabled = {{ 'False' if widget_anim_dir == 'none' else 'True' }};
 
-      // ----- per-widget one-shot init -----
       {{ extra_init }}
 
-      // ----- immediate snap before the first frame is presented -----
-      // Inner frame is rendered at pos="0 0" (visible). If the player should
-      // currently NOT see the widget, snap it off-screen instantly so a
-      // re-render doesn't briefly show it.
+      // ----- initial snap so a re-render doesn't briefly show a hidden widget -----
       {
         declare Real KmH = 0.0;
         declare Boolean MenuOpen = False;
         declare Boolean Racing = True;
         declare Boolean Watching = False;
         declare Boolean TabHeld = False;
-        if (InputPlayer != Null) {
-          KmH = M::Abs(InputPlayer.DisplaySpeed * 1.0);
-        }
         declare Boolean Concealing = False;
+        if (GUIPlayer != Null) {
+          KmH = M::Abs(GUIPlayer.DisplaySpeed * 1.0);
+        }
         {% for expr in widget_hide_clauses -%}
         if ({{ expr }}) Concealing = True;
         {% endfor %}
         if (EditorOn) Concealing = False;
+        if (!AnimEnabled) Concealing = False;
         IsConcealed = Concealing;
-        if (Concealing) {
-          Holder.RelativePosition_V3 = <500.0, 0.0, 0.0>;
-          Dbg("SNAP hidden");
-        } else {
-          Dbg("SNAP stays shown");
-        }
+        if (Concealing) AnimMgr.Add(Holder, TweenHidden, 0, CAnimManager::EAnimManagerEasing::Linear);
       }
 
       while (True) {
         yield;
         sleep(50);
 
-        // ----- per-widget per-tick code (e.g. clock label update) -----
-        {{ extra_tick }}
-
         declare Real KmH = 0.0;
         declare Boolean MenuOpen = False;
         declare Boolean Racing = True;
         declare Boolean Watching = False;
         declare Boolean TabHeld = False;
-        if (InputPlayer != Null) {
-          KmH = M::Abs(InputPlayer.DisplaySpeed * 1.0);
+        declare Boolean Concealing = False;
+        declare Text Tween;
+
+        { {{ extra_tick }} }
+
+        if (GUIPlayer != Null) {
+          KmH = M::Abs(GUIPlayer.DisplaySpeed * 1.0);
         }
 
-        declare Boolean Concealing = False;
         {% for expr in widget_hide_clauses -%}
         if ({{ expr }}) Concealing = True;
         {% endfor %}
-
         if (EditorOn) Concealing = False;
+        if (!AnimEnabled) Concealing = False;
 
         if (Concealing != IsConcealed) {
           IsConcealed = Concealing;
-          declare Text Tween;
-          if (IsConcealed) Tween = "<frame pos=\"500 0\"/>";
-          else             Tween = "<frame pos=\"0 0\"/>";
+          if (IsConcealed) Tween = TweenHidden;
+          else             Tween = TweenVisible;
+          {% if widget_anim_delay_ms and widget_anim_delay_ms > 0 -%}
+          sleep({{ widget_anim_delay_ms }});
+          {%- endif %}
           AnimMgr.Add(Holder, Tween, {{ widget_anim_duration_ms }}, CAnimManager::EAnimManagerEasing::QuadInOut);
+        }
+
+        // Debug overlay: refresh the status label every tick when on.
+        if (DebugOn && DbgLbl != Null) {
+          declare Text RenderTag;
+          if (IsConcealed) RenderTag = "$f80H";
+          else             RenderTag = "$0f0R";
+          declare Integer TickAge = Now - LastTickAt;
+          LastTickAt = Now;
+          declare Text Suffix = "";
+          if (Persistent_DbgStatus != "") Suffix = " $aaa| $fff" ^ Persistent_DbgStatus;
+          DbgLbl.SetText(RenderTag ^ " $888" ^ TickAge ^ "ms" ^ Suffix);
         }
       }
     }

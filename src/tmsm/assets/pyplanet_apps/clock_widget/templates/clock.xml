@@ -2,17 +2,11 @@
 
 {% set clock_init %}
   declare CMlLabel ClockLabel <=> (Page.GetFirstChild("clock_label") as CMlLabel);
-  declare Integer ClockDumped for Page = 0;
 {% endset %}
 
 {% set clock_tick %}
   if (ClockLabel != Null) {
-    declare Text NowFull = CurrentLocalDateTime;
-    if (ClockDumped == 0) {
-      ClockDumped = 1;
-      TriggerPageAction("{{ widget_view_id }}__dbg__clock::CLDT=" ^ NowFull);
-    }
-    ClockLabel.SetText("$fff" ^ TL::SubText(NowFull, 11, 8));
+    ClockLabel.SetText("$fff" ^ TL::SubString(CurrentLocalDateText, 11, 8));
   }
 {% endset %}
 

@@ -95,6 +95,24 @@ def _compile_hide_clauses(named: list[str]) -> list[str]:
     return out
 
 
+# Off-screen tween offset for each animation direction. `none` means the
+# widget never animates and stays in place (hide rules are ignored client-side).
+# `fade` falls back to a horizontal slide for now since proper opacity tween
+# on a CMlFrame doesn't propagate to children.
+_ANIM_OFFSETS: dict[str, tuple[float, float]] = {
+    "none":  (0.0, 0.0),
+    "left":  (-500.0, 0.0),
+    "right": (500.0, 0.0),
+    "up":    (0.0, 500.0),
+    "down":  (0.0, -500.0),
+    "fade":  (500.0, 0.0),
+}
+
+
+def _anim_offset(direction: str) -> tuple[float, float]:
+    return _ANIM_OFFSETS.get((direction or "right").lower(), (500.0, 0.0))
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # View
 # ─────────────────────────────────────────────────────────────────────────
@@ -128,19 +146,36 @@ class WidgetView(BaseView):
         if extra:
             ctx.update(extra)
         try:
-            tpl = await self.get_template()
-            body = await tpl.render(**ctx)
-            import os
-            os.makedirs("/tmp/tmsm_widget_dump", exist_ok=True)
-            with open(f"/tmp/tmsm_widget_dump/{self.widget_app.WIDGET_KEY}_{login}.xml", "w") as f:
-                f.write(body)
+            getter = getattr(self.widget_app, "get_debug_status", None)
+            status = await getter(login) if getter else ""
         except Exception:
-            logger.exception("widget dump failed")
+            logger.exception(
+                "widget '%s': get_debug_status raised", self.widget_app.WIDGET_KEY,
+            )
+            status = ""
+        ctx["widget_debug_status"] = status or ""
         return ctx
 
+    async def dump_render(self, login: str, out_dir: str = "/tmp/tmsm_widget_dump") -> str:
+        """Render this widget for ``login`` and write the XML to ``out_dir``.
+
+        Returns the absolute path of the written file. Raises on failure
+        so callers can surface the error in a toast.
+        """
+        import os
+        ctx = await self.get_per_player_data(login)
+        tpl = await self.get_template()
+        body = await tpl.render(**ctx)
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"{self.widget_app.WIDGET_KEY}_{login}.xml")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        return path
+
     async def handle_catch_all(self, player, action, values, **kwargs):
-        # Forward drag-drop actions emitted by the widget's frame ManiaScript
-        # to the widgets app, which owns the storage.
+        # Forward drag-drop AND debug actions emitted by the widget's frame
+        # ManiaScript to the widgets app, which owns the storage and the
+        # script-debug log path.
         widgets_app = getattr(self.widget_app, "widgets_app", None)
         if widgets_app is not None:
             try:
@@ -186,13 +221,28 @@ class WidgetAppBase(AppConfig):
     # Default: hide while the player is driving fast so widgets don't clutter
     # the screen during a run. Override per-widget if a widget should remain
     # visible at speed (e.g. a speedometer).
-    WIDGET_HIDE_NAMED: list[str] = ["speed_above:50"]  # e.g. ["in_menu", "speed_above:50"]
+    WIDGET_HIDE_NAMED: list[str] = []  # e.g. ["in_menu", "speed_above:50"]
     WIDGET_HIDE_RAW: str = ""                # raw ManiaScript bool expression
+    # Convenience flag — when True, appends `speed_above:50` to the hide rule.
+    WIDGET_HIDE_WHILE_DRIVING: bool = True
 
     # ── animation ───────────────────────────────────────────────────────
-    WIDGET_ANIM_DIR: str = "fade"            # fade | up | down | left | right | none
+    # direction: none | left | right | up | down | fade
+    # `none` disables the hide animation entirely (widget is fully static).
+    # The four side directions slide the widget off-screen in that direction.
+    WIDGET_ANIM_DIR: str = "right"
     WIDGET_ANIM_DURATION_MS: int = 300
     WIDGET_ANIM_DELAY_MS: int = 0
+
+    # ── personalization ────────────────────────────────────────────────
+    # When False, players cannot set a personal override for this widget;
+    # only the admin-set global position applies.
+    WIDGET_ALLOW_PERSONAL: bool = True
+
+    # ── debug ──────────────────────────────────────────────────────────
+    # One-line status shown in the master-admin debug overlay. Static by
+    # default; override async `get_debug_status(login)` for live values.
+    WIDGET_DEBUG_STATUS: str = ""
 
     # ── meta ────────────────────────────────────────────────────────────
     WIDGET_AUTHOR: str = "tmsm"
@@ -209,6 +259,11 @@ class WidgetAppBase(AppConfig):
     # ---- registration --------------------------------------------------
 
     def build_entry(self) -> WidgetEntry:
+        named = list(self.WIDGET_HIDE_NAMED)
+        if self.WIDGET_HIDE_WHILE_DRIVING and not any(
+            n.strip().startswith("speed_above:") for n in named
+        ):
+            named.append("speed_above:50")
         return WidgetEntry(
             key=self.WIDGET_KEY,
             name=self.WIDGET_NAME,
@@ -221,7 +276,7 @@ class WidgetAppBase(AppConfig):
             kind=self.WIDGET_KIND,
             popup_duration_ms=self.WIDGET_POPUP_DURATION_MS,
             hide_rule=HideRule(
-                named=list(self.WIDGET_HIDE_NAMED),
+                named=named,
                 raw=self.WIDGET_HIDE_RAW,
             ),
             animation=Animation(
@@ -231,6 +286,7 @@ class WidgetAppBase(AppConfig):
             ),
             author=self.WIDGET_AUTHOR,
             version=self.WIDGET_VERSION,
+            allow_personal=self.WIDGET_ALLOW_PERSONAL,
             popup_trigger=self._trigger_popup if self.WIDGET_KIND == WidgetKind.POPUP else None,
         )
 
@@ -292,11 +348,34 @@ class WidgetAppBase(AppConfig):
     async def get_widget_data(self, login: str) -> dict[str, Any]:
         return {}
 
+    async def get_debug_status(self, login: str) -> str:
+        """One-line widget-defined status pushed into the debug overlay.
+
+        Override to surface state that helps diagnose the widget in the
+        master-admin debug overlay (e.g. ``"q=3 next=2.4s"`` for a queue,
+        ``"cp=4 Δ=-0.213"`` for a CP delta). Keep it short — the
+        ManiaScript loop decorates it with a universal ``R/H <tick>ms``
+        prefix automatically. Return ``""`` for no status.
+        """
+        return self.WIDGET_DEBUG_STATUS
+
     # ---- per-player frame context (used by the view) -------------------
 
     def frame_context(self, login: str) -> dict[str, Any]:
         entry = self.build_entry()
         pos = self.widgets_app.resolve_position(self.WIDGET_KEY, login) if self.widgets_app else {}
+        behavior = self.widgets_app.resolve_behavior(self.WIDGET_KEY, login=login) if self.widgets_app else {
+            "hide_while_driving": True,
+            "anim_dir": entry.animation.direction,
+            "anim_duration_ms": entry.animation.duration_ms,
+            "anim_delay_ms": entry.animation.delay_ms,
+        }
+        # Rebuild hide-clause list from the DB-resolved hide_while_driving flag
+        # so the editor can toggle it live (without restarting the app).
+        named = [n for n in entry.hide_rule.named if not n.strip().startswith("speed_above:")]
+        if behavior.get("hide_while_driving", True):
+            named.append("speed_above:50")
+        off_x, off_y = _anim_offset(behavior.get("anim_dir", entry.animation.direction))
         return {
             "widget_key": entry.key,
             "widget_x": pos.get("x", entry.default_x),
@@ -304,12 +383,15 @@ class WidgetAppBase(AppConfig):
             "widget_w": pos.get("w", entry.default_w),
             "widget_h": pos.get("h", entry.default_h),
             "widget_kind": entry.kind.value,
-            "widget_hide_clauses": _compile_hide_clauses(entry.hide_rule.named),
+            "widget_hide_clauses": _compile_hide_clauses(named),
             "widget_hide_raw": entry.hide_rule.raw,
-            "widget_anim_dir": entry.animation.direction,
-            "widget_anim_duration_ms": entry.animation.duration_ms,
-            "widget_anim_delay_ms": entry.animation.delay_ms,
+            "widget_anim_dir": behavior.get("anim_dir", entry.animation.direction),
+            "widget_anim_duration_ms": int(behavior.get("anim_duration_ms", entry.animation.duration_ms)),
+            "widget_anim_delay_ms": int(behavior.get("anim_delay_ms", entry.animation.delay_ms)),
+            "widget_anim_off_x": off_x,
+            "widget_anim_off_y": off_y,
             "widget_edit_mode": bool(self.widgets_app and self.widgets_app.is_editing(login)),
+            "widget_debug_mode": bool(self.widgets_app and self.widgets_app.is_debug(login, entry.key)),
             "widget_view_id": self.view.id if self.view else entry.key,
         }
 

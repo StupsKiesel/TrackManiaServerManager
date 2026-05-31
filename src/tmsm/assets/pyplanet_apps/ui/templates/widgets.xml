@@ -597,6 +597,27 @@
         class="ui-btn ui-btn-ghost"{% endif %} />
 {% endmacro %}
 
+{# === style_quad =============================================================
+   Renders a Nadeo built-in style/substyle quad. The client ships the entire
+   atlas inside the title pack, so this works without any external assets.
+   `style` is the atlas name (e.g. 'Icons128x128_1', 'Bgs1', 'MedalsBig'),
+   `substyle` is the specific slot ('Browse', 'Check', 'Close', ...).
+   If `action` is set, the quad becomes clickable and emits `<action>`.
+       {{ ui.style_quad('Icons128x128_1', 'Browse',
+                        x=4, y=-20, w=8, h=8) }}
+   ============================================================================ #}
+{% macro style_quad(style, substyle, x=0, y=0, w=20, h=20,
+                    halign='left', valign='top', action=None,
+                    opacity=1.0, z=200) %}
+  <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
+        halign="{{ halign }}" valign="{{ valign }}"
+        style="{{ style }}" substyle="{{ substyle }}"
+        opacity="{{ opacity }}"
+        {% if action %}id="uibtn_ghost_{{ id }}__{{ action }}"
+        action="{{ id }}__{{ action }}" scriptevents="1"
+        class="ui-btn ui-btn-ghost"{% endif %} />
+{% endmacro %}
+
 {# === text ===================================================================
    Multi-line paragraph. `w` bounds horizontal width; ML wraps via
    `autonewline="1"`. `maxline` caps line count (0 = unlimited).
@@ -1748,7 +1769,7 @@
        {{ ui.window('Title', icon='cog', x=0, y=0, w=120, h=90) }}
        ...your widgets...
    ============================================================================ #}
-{% macro window(title='', icon=None, x=0, y=0, w=120, h=90, z=100, header_h=8, crumbs=None) %}
+{% macro window(title='', icon=None, x=0, y=0, w=120, h=90, z=100, header_h=8, crumbs=None, logo=None, logo_w=10) %}
   {# If the caller didn't pass `crumbs`, fall back to the view's
      context-injected `view_crumbs` (set by BaseView.get_context_data via
      `breadcrumbs`). Pass `crumbs=[]` to explicitly suppress them. #}
@@ -1761,13 +1782,20 @@
   {# 1px-ish accent line under the header #}
   <quad pos="{{ x }} {{ y - header_h }}" z-index="{{ z + 2 }}" size="{{ w }} 0.3"
         bgcolor="15dfa" halign="left" valign="top" />
-  {% if icon %}
+  {% if logo %}
+    {# Brand image (PNG/JPG fetched by the client). Takes precedence over
+       the glyph `icon` when set; sits left-aligned in the header strip. #}
+    <quad pos="{{ x + 2 }} {{ y - header_h/2 }}" z-index="{{ z + 2 }}"
+          size="{{ logo_w }} {{ header_h - 1.4 }}"
+          halign="left" valign="center"
+          image="{{ logo }}" keepratio="Fit" />
+  {% elif icon %}
   <label pos="{{ x + 3 }} {{ y - header_h/2 }}" z-index="{{ z + 2 }}"
          halign="left" valign="center2"
          text="$15f{{ _ICONS[icon]|safe if icon in _ICONS else '?' }}"
          textsize="2.2" textfont="GameFont" />
   {% endif %}
-  {% set _hdr_xc = namespace(v=(x + (10 if icon else 3))) %}
+  {% set _hdr_xc = namespace(v=(x + (logo_w + 4 if logo else (10 if icon else 3)))) %}
   {% set _sep_glyph = _ICONS['arrow_right'] %}
   {% for c in (crumbs or []) %}
     {% set _txt = c.label %}

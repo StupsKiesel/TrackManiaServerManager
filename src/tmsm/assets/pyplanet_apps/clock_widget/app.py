@@ -22,9 +22,11 @@ class ClockWidget(WidgetAppBase):
     WIDGET_DEFAULT_H = 8.0
 
     WIDGET_REFRESH_SECONDS = 0.0
-    WIDGET_HIDE_NAMED = ["in_menu", "speed_above:50"]
-    WIDGET_ANIM_DIR = "fade"
+    WIDGET_HIDE_NAMED = ["in_menu"]
+    WIDGET_HIDE_WHILE_DRIVING = True
+    WIDGET_ANIM_DIR = "right"
     WIDGET_ANIM_DURATION_MS = 250
+    WIDGET_ANIM_DELAY_MS = 0
 
     async def get_widget_data(self, login):
         return {}

@@ -4,7 +4,7 @@
    selected_name, scope ('global'|'player'), step, step_options. #}
 
 {% set WIN_W = 170 %}
-{% set WIN_H = 110 %}
+{% set WIN_H = 128 %}
 {% set ROW_H = 11 %}
 {% set LIST_W = 70 %}
 {% set EDIT_X = LIST_W + 4 %}
@@ -72,74 +72,131 @@
     <label pos="0 -3.5" textsize="0.75" text="$888{{ selected_key }}" />
     <quad pos="0 -7" size="{{ EDIT_W }} 0.2" bgcolor="ffffff22" />
 
-    {# ── options group (scope + step) ─────────────────────────────── #}
-    {% call ui.group_box('Options', x=0, y=-10, w=EDIT_W, h=18, color='aaa') %}
+    {# ── options group (scope · personalization · slide · timings) ── #}
+    {% call ui.group_box('Options', x=0, y=-10, w=EDIT_W, h=46, color='aaa') %}
+      {# row 1: scope radios #}
       {{ ui.radio_group('scope',
                          [('global', 'Global'), ('player', 'Personal')],
-                         selected=scope, x=4, y=-19, orient='h', gap=22, size='sm') }}
-      {% set step_label = (step|int)|string if step == step|int else ('%.1f' | format(step)) %}
-      {{ ui.stepper('step', value=step_label,
-                    x=EDIT_W / 2 + 2, y=-19, w=EDIT_W / 2 - 6, size='md') }}
+                         selected=scope, x=4, y=-17, orient='h', gap=22, size='sm') }}
+      {% if not allow_personal %}
+        {# dim overlay over the Personal radio + label to signal disabled #}
+        <quad pos="18 -17" size="32 5" valign="center2" bgcolor="000000aa" />
+      {% endif %}
+
+      {# row 2: master-only toggles, sit just under the scope radios #}
+      {% if is_master %}
+        {{ ui.check_box('allowperson__' ~ selected_key,
+                        label='Allow personalization',
+                        checked=allow_personal,
+                        x=4, y=-25, size='sm') }}
+        {{ ui.check_box('drive__' ~ selected_key,
+                        label='Hide while driving',
+                        checked=behavior.get('hide_while_driving', True),
+                        x=46, y=-25, size='sm') }}
+      {% endif %}
+
+      {# row 3: slide direction tiles #}
+      <label pos="4 -35" textsize="0.85" valign="center2" text="$aaaSlide" />
+      {% set TILE_X = 16 %}
+      {% set TILE_Y = -35 %}
+      {% set TILE_W = 8 %}
+      {% set TILE_H = 5 %}
+      {% set TILE_GAP = 9 %}
+      {% for dval, dicon, dtext in [
+            ('none',  None,          '\u2014'),
+            ('left',  'arrow_left',  None),
+            ('right', 'arrow_right', None),
+            ('up',    'arrow_up',    None),
+            ('down',  'arrow_down',  None)] %}
+        {% set bx = TILE_X + loop.index0 * TILE_GAP %}
+        {% set is_sel = behavior.get('anim_dir', 'right') == dval %}
+        <quad pos="{{ bx }} {{ TILE_Y }}" size="{{ TILE_W }} {{ TILE_H }}"
+              bgcolor="{{ '15dfa66' if is_sel else 'ffffff14' }}" valign="center2"
+              id="uibtn_dir_{{ selected_key }}_{{ dval }}"
+              action="{{ id }}__setdir__{{ selected_key }}|{{ dval }}" scriptevents="1"
+              class="ui-btn ui-btn-ghost" />
+        {% if dicon %}
+          {{ ui.icon(dicon, x=bx + TILE_W/2, y=TILE_Y,
+                     color='fff' if is_sel else 'aaa', font=2.2, z=201) }}
+        {% else %}
+          <label pos="{{ bx + TILE_W/2 }} {{ TILE_Y }}" halign="center" valign="center2"
+                 textsize="1.0" textfont="GameFontBlack"
+                 text="${{ 'fff' if is_sel else 'aaa' }}{{ dtext }}" />
+        {% endif %}
+      {% endfor %}
+
+      {# row 4: duration + delay entries #}
+      {% set R4_Y = -45 %}
+      <label pos="4 {{ R4_Y }}" textsize="0.85" valign="center2" text="$aaaDur ms" />
+      <quad  pos="22 {{ R4_Y }}" size="14 4" bgcolor="0008" valign="center2" />
+      <entry pos="22 {{ R4_Y }}" size="14 4"
+             name="entry_widget_{{ selected_key }}_anim_duration_ms"
+             default="{{ behavior.get('anim_duration_ms', 300) }}"
+             textsize="1" valign="center2" />
+      <label pos="42 {{ R4_Y }}" textsize="0.85" valign="center2" text="$aaaDelay ms" />
+      <quad  pos="60 {{ R4_Y }}" size="14 4" bgcolor="0008" valign="center2" />
+      <entry pos="60 {{ R4_Y }}" size="14 4"
+             name="entry_widget_{{ selected_key }}_anim_delay_ms"
+             default="{{ behavior.get('anim_delay_ms', 0) }}"
+             textsize="1" valign="center2" />
     {% endcall %}
 
-    {# ── nudge group (d-pad + center reset) ──────────────────────── #}
-    {% call ui.group_box('Nudge', x=0, y=-32, w=38, h=24, color='aaa') %}
-      {# d-pad uses halign='center' so x/y are the button centers, which
-         keeps spacing symmetric on both axes. Group box center: (19, -44). #}
+    {# ── nudge group (d-pad + step selector) ────────────────────── #}
+    {% call ui.group_box('Nudge', x=0, y=-58, w=38, h=32, color='aaa') %}
+      {# d-pad: buttons centered around (CX, CY) #}
       {% set CX = 19 %}
-      {% set CY = -44 %}
+      {% set CY = -68 %}
       {% set STEP = 6 %}
       {{ ui.tool_button('nudge__up',              'arrow_up',    x=CX,        y=CY + STEP, size='md', variant='ghost',  halign='center') }}
       {{ ui.tool_button('nudge__left',            'arrow_left',  x=CX - STEP, y=CY,        size='md', variant='ghost',  halign='center') }}
       {{ ui.tool_button('reset__' ~ selected_key, 'undo',        x=CX,        y=CY,        size='md', variant='danger', halign='center', tooltip='Reset position') }}
       {{ ui.tool_button('nudge__right',           'arrow_right', x=CX + STEP, y=CY,        size='md', variant='ghost',  halign='center') }}
       {{ ui.tool_button('nudge__down',            'arrow_down',  x=CX,        y=CY - STEP, size='md', variant='ghost',  halign='center') }}
+      {# step selector below d-pad #}
+      {% set step_label = (step|int)|string if step == step|int else ('%.1f' | format(step)) %}
+      {{ ui.stepper('step', value=step_label, x=4, y=-84, w=30, size='sm') }}
     {% endcall %}
 
     {# ── numeric entry — current row values ───────────────────────── #}
     {% for row in rows if row.selected %}
       {% set CG_X = 40 %}
-      {% set CG_Y = -32 %}
+      {% set CG_Y = -58 %}
       {% set CG_W = EDIT_W - CG_X %}
-      {% set CG_H = 24 %}
-      {# layout: [lbl 3] [entry 14] [gap 3] [lbl 3] [entry 14] = 37 wide.
-         center horizontally inside the group (x .. x+w), then derive
-         per-cell positions from the same anchor. #}
+      {% set CG_H = 32 %}
       {% set CONTENT_W = 37 %}
       {% set COL1_LBL = CG_X + (CG_W - CONTENT_W) / 2 %}
       {% set COL1_ENT = COL1_LBL + 4 %}
       {% set COL2_LBL = COL1_ENT + 14 + 3 %}
       {% set COL2_ENT = COL2_LBL + 4 %}
-      {# vertical center inside box (skip ~3 for title) #}
-      {% set ROW1_Y = CG_Y - 7 %}
-      {% set ROW2_Y = CG_Y - 15 %}
+      {% set ROW1_Y = CG_Y - 11 %}
+      {% set ROW2_Y = CG_Y - 21 %}
       {% call ui.group_box('Coordinates', x=CG_X, y=CG_Y, w=CG_W, h=CG_H, color='aaa') %}
-        <label pos="{{ COL1_LBL }} {{ ROW1_Y }}" textsize="0.85" text="$aaaX" />
-        <quad  pos="{{ COL1_ENT }} {{ ROW1_Y - 0.6 }}" size="14 4" bgcolor="0008" valign="center2" />
-        <entry pos="{{ COL1_ENT }} {{ ROW1_Y - 0.6 }}" size="14 4" name="widget_{{ row.key }}_x"
+        <label pos="{{ COL1_LBL }} {{ ROW1_Y }}" textsize="0.85" valign="center2" text="$aaaX" />
+        <quad  pos="{{ COL1_ENT }} {{ ROW1_Y }}" size="14 4" bgcolor="0008" valign="center2" />
+        <entry pos="{{ COL1_ENT }} {{ ROW1_Y }}" size="14 4" name="widget_{{ row.key }}_x"
                default="{{ '%.2f' | format(row.x) }}" textsize="1" valign="center2" />
 
-        <label pos="{{ COL2_LBL }} {{ ROW1_Y }}" textsize="0.85" text="$aaaY" />
-        <quad  pos="{{ COL2_ENT }} {{ ROW1_Y - 0.6 }}" size="14 4" bgcolor="0008" valign="center2" />
-        <entry pos="{{ COL2_ENT }} {{ ROW1_Y - 0.6 }}" size="14 4" name="widget_{{ row.key }}_y"
+        <label pos="{{ COL2_LBL }} {{ ROW1_Y }}" textsize="0.85" valign="center2" text="$aaaY" />
+        <quad  pos="{{ COL2_ENT }} {{ ROW1_Y }}" size="14 4" bgcolor="0008" valign="center2" />
+        <entry pos="{{ COL2_ENT }} {{ ROW1_Y }}" size="14 4" name="widget_{{ row.key }}_y"
                default="{{ '%.2f' | format(row.y) }}" textsize="1" valign="center2" />
 
-        <label pos="{{ COL1_LBL }} {{ ROW2_Y }}" textsize="0.85" text="$aaaW" />
-        <quad  pos="{{ COL1_ENT }} {{ ROW2_Y - 0.6 }}" size="14 4" bgcolor="0008" valign="center2" />
-        <entry pos="{{ COL1_ENT }} {{ ROW2_Y - 0.6 }}" size="14 4" name="widget_{{ row.key }}_w"
+        <label pos="{{ COL1_LBL }} {{ ROW2_Y }}" textsize="0.85" valign="center2" text="$aaaW" />
+        <quad  pos="{{ COL1_ENT }} {{ ROW2_Y }}" size="14 4" bgcolor="0008" valign="center2" />
+        <entry pos="{{ COL1_ENT }} {{ ROW2_Y }}" size="14 4" name="widget_{{ row.key }}_w"
                default="{{ '%.2f' | format(row.w) }}" textsize="1" valign="center2" />
 
-        <label pos="{{ COL2_LBL }} {{ ROW2_Y }}" textsize="0.85" text="$aaaH" />
-        <quad  pos="{{ COL2_ENT }} {{ ROW2_Y - 0.6 }}" size="14 4" bgcolor="0008" valign="center2" />
-        <entry pos="{{ COL2_ENT }} {{ ROW2_Y - 0.6 }}" size="14 4" name="widget_{{ row.key }}_h"
+        <label pos="{{ COL2_LBL }} {{ ROW2_Y }}" textsize="0.85" valign="center2" text="$aaaH" />
+        <quad  pos="{{ COL2_ENT }} {{ ROW2_Y }}" size="14 4" bgcolor="0008" valign="center2" />
+        <entry pos="{{ COL2_ENT }} {{ ROW2_Y }}" size="14 4" name="widget_{{ row.key }}_h"
                default="{{ '%.2f' | format(row.h) }}" textsize="1" valign="center2" />
       {% endcall %}
     {% endfor %}
 
     {# ── help text ────────────────────────────────────────────────── #}
-    <label pos="0 -60" textsize="0.7" sizen="{{ EDIT_W }} 24"
+    <label pos="0 -94" textsize="0.7" sizen="{{ EDIT_W }} 24"
            autonewline="1"
-           text="$888Yellow overlays mark each widget's current position. Nudge with the d-pad (uses the selected step), or type exact values and press Apply. $aaaScope$888 picks where the change is saved: $aaaGlobal$888 writes the default position used by every player on this server, while $aaaPersonal$888 stores an override that only affects you and takes precedence over the global value. Resetting clears the active scope's saved value." />
+           text="$888The teal overlay marks the selected widget's current position. Nudge with the d-pad (uses the selected step), or type exact values and press Apply. $aaaScope$888 picks where the position is saved: $aaaGlobal$888 writes the default used by every player, while $aaaPersonal$888 stores an override only you see. Slide direction, hide-while-driving, duration and delay are always server-wide." />
   </frame>
   {% else %}
   <frame pos="{{ EDIT_X }} -10" z-index="510">
@@ -152,24 +209,36 @@
 
   {# ── window-level buttons ─────────────────────────────────────────── #}
   {# top-right X is provided by ui.window itself (fires `_close` -> BaseView._on_close) #}
-  {# bottom-right: apply (only when something is selected) #}
+  {# bottom-right cluster: Debug · Dump · Apply (master-only debug/dump in orange) #}
   {% if selected_key %}
     {{ ui.push_button('set__' ~ selected_key, 'Apply', x=WIN_W - 4, y=-(WIN_H - 6),
                       halign='right', size='md', variant='primary', icon='check') }}
+  {% endif %}
+  {% if is_master %}
+    {% if selected_key %}
+      {{ ui.push_button('dump__' ~ selected_key, 'Dump',
+                        x=WIN_W - 32, y=-(WIN_H - 6), halign='right', size='md',
+                        variant='warning', icon='file-code',
+                        tooltip='Dump rendered XML of the selected widget to /tmp/tmsm_widget_dump/.') }}
+    {% endif %}
+    {{ ui.push_button('debug__toggle',
+                      ('Debug: ON' if debug else 'Debug'),
+                      x=WIN_W - 60, y=-(WIN_H - 6), halign='right', size='md',
+                      variant='warning', icon='bug',
+                      tooltip='Toggle per-widget debug overlay (master-admin only).') }}
   {% endif %}
 </frame>
 
 {# hover animations for every push_button / tool_button in this template #}
 {{ ui.hover_script() }}
 
-{# ── visual position indicators (non-interactive) ────────────────────── #}
+{# ── visual position indicator for the selected widget only ──────────── #}
 <frame pos="0 0" z-index="600">
-  {% for row in rows %}
-    {% set border = '15dfa' if row.selected else 'ffff00aa' %}
-    {% set fill   = '15dfa33' if row.selected else 'ffff0022' %}
+  {% for row in rows if row.selected %}
+    {% set border = '15dfa' %}
+    {% set fill   = '15dfa33' %}
     <quad pos="{{ row.x }} {{ row.y }}" size="{{ row.w }} {{ row.h }}"
           halign="left" valign="top" bgcolor="{{ fill }}" />
-    {# 4 thin borders so the widget content stays readable through the overlay #}
     <quad pos="{{ row.x }} {{ row.y }}"          size="{{ row.w }} 0.25" halign="left" valign="top" bgcolor="{{ border }}" />
     <quad pos="{{ row.x }} {{ row.y - row.h }}"  size="{{ row.w }} 0.25" halign="left" valign="top" bgcolor="{{ border }}" />
     <quad pos="{{ row.x }} {{ row.y }}"          size="0.25 {{ row.h }}" halign="left" valign="top" bgcolor="{{ border }}" />

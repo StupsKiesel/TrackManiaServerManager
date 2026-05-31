@@ -62,5 +62,10 @@ class WidgetEntry:
     enabled: bool = True
     author: str = ""
     version: str = ""
+    # When False the editor hides the Personal scope option and the app
+    # rejects per-player position overrides for this widget. Useful for
+    # widgets where the position is structural (e.g. toast anchor) or
+    # purely admin-controlled (e.g. hub launcher button).
+    allow_personal: bool = True
     # optional callback invoked when an admin clicks "Show now" for a popup
     popup_trigger: Optional[Callable[[str], Awaitable[None]]] = None

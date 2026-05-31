@@ -1,0 +1,67 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (TmsmMediaBrowserApp.detail_context):
+     label    - human label
+     url      - image URL (set for URL-style entries)
+     style    - Nadeo atlas name (set for style-style entries)
+     substyle - Nadeo substyle name (set for style-style entries)
+     note     - free-form note from catalog
+#}
+
+{% set win_w = 150 %}
+{% set win_h = 130 %}
+
+{% set img_w = 96 %}
+{% set img_h = 70 %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
+
+  {{ ui.window('Media preview', icon='image',
+               x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {{ ui.label(label or '(no item selected)',
+              x=win_w/2, y=-12, halign='center',
+              size='md', color='fff', bold=True) }}
+
+  {# Preview canvas (light backdrop to make transparent images visible). #}
+  <quad pos="{{ (win_w - img_w) / 2 }} -20" z-index="210"
+        size="{{ img_w }} {{ img_h }}"
+        bgcolor="1119" halign="left" valign="top" />
+  {% if style %}
+    {{ ui.style_quad(style, substyle,
+                     x=(win_w - img_w) / 2 + 2, y=-22,
+                     w=img_w - 4, h=img_h - 4,
+                     halign='left', valign='top', z=211) }}
+  {% elif url %}
+    {{ ui.image(url,
+                x=(win_w - img_w) / 2 + 2, y=-22,
+                w=img_w - 4, h=img_h - 4,
+                halign='left', valign='top',
+                keepratio='Fit', z=211) }}
+  {% endif %}
+
+  {% if style %}
+    {{ ui.label('style / substyle (copy from field below):',
+                x=4, y=-(20 + img_h + 4),
+                size='sm', color='aaa') }}
+    {{ ui.line_edit('preview_url',
+                    value=style ~ ' / ' ~ substyle,
+                    x=4, y=-(20 + img_h + 9),
+                    width=win_w - 8, size='sm') }}
+  {% else %}
+    {{ ui.label('URL (copy from field below):',
+                x=4, y=-(20 + img_h + 4),
+                size='sm', color='aaa') }}
+    {{ ui.line_edit('preview_url', value=url,
+                    x=4, y=-(20 + img_h + 9),
+                    width=win_w - 8, size='sm') }}
+  {% endif %}
+
+  {% if note %}
+    {{ ui.label('$ddd' ~ note,
+                x=4, y=-(20 + img_h + 18),
+                size='sm', color='ddd') }}
+  {% endif %}
+
+  {{ ui.hover_script() }}
+</frame>

@@ -41,6 +41,7 @@ from .tmx import (
     _ROUTES,
     _VEHICLES,
 )
+from .tmx import thumbnail_url as tmx_thumbnail_url
 from . import policy as _policy
 from .views import (
     TmxBrowserView,
@@ -273,6 +274,7 @@ class TmxBrowserApp(AppConfig):
             key="tmx_browser",
             name="Trackmania Exchange",
             icon="globe",
+            icon_image="https://images.mania.exchange/logos/tmx/square_sm.png",
             color="15f",
             role=Role.OPERATOR,
             order=55,
@@ -482,10 +484,18 @@ class TmxBrowserApp(AppConfig):
         st = self._state.setdefault(login, self._default_state())
         m = st.get("detail") or {}
         desc_lines = flow_description(m.get("comments") or "")
+        thumb_url = ""
+        tid = m.get("track_id")
+        if tid and m.get("has_thumbnail", True):
+            try:
+                thumb_url = tmx_thumbnail_url(self._game(), int(tid))
+            except Exception:
+                thumb_url = ""
         return {
             "site_label":   self._site_label(),
             "game":         self._game(),
             "map":          m,
+            "thumb_url":    thumb_url,
             "desc_lines":   desc_lines,
             "status":       st["status"],
             "status_color": st["status_color"],

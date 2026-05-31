@@ -1,0 +1,98 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (TmsmMediaBrowserApp.grid_context):
+     categories  - [{key, label}]
+     active_cat  - key of selected tab
+     items       - current page's items: [{key, label, url|style+substyle, note}]
+     page        - 1-based current page
+     total_pages - total page count
+     custom_url  - previously-entered URL
+#}
+
+{% set win_w = 190 %}
+{% set win_h = 140 %}
+
+{% set cols    = 5 %}
+{% set rows    = 4 %}
+{% set thumb_w = 32 %}
+{% set thumb_h = 18 %}
+{% set cell_w  = thumb_w + 4 %}
+{% set cell_h  = thumb_h + 5 %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
+
+  {{ ui.window('Media browser', icon='image',
+               x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {% if categories %}
+    {% call(_tab_key, _tab) ui.tabs('cat', categories, active=active_cat,
+                    x=4, y=-12, w=win_w - 8, tab_h=5, body_h=0, size='sm') %}
+    {% endcall %}
+  {% endif %}
+
+  {# ============================== THUMBNAIL GRID (5x4) ================ #}
+  {% set grid_x = 4 %}
+  {% set grid_y = -20 %}
+
+  {% if not items %}
+    {{ ui.label('(category empty)',
+                x=grid_x, y=grid_y - 4, size='sm', color='666') }}
+  {% endif %}
+
+  {% for it in items %}
+    {% set col = loop.index0 % cols %}
+    {% set row = loop.index0 // cols %}
+    {% set cx = grid_x + col * cell_w %}
+    {% set cy = grid_y - row * cell_h %}
+
+    <quad pos="{{ cx }} {{ cy }}" z-index="210" size="{{ thumb_w }} {{ thumb_h }}"
+          bgcolor="fff1" halign="left" valign="top" />
+
+    {% if it.style is defined and it.style %}
+      {{ ui.style_quad(it.style, it.substyle,
+                       x=cx + 1, y=cy - 1,
+                       w=thumb_w - 2, h=thumb_h - 2,
+                       halign='left', valign='top', z=211) }}
+    {% else %}
+      {{ ui.image(it.url,
+                  x=cx + 1, y=cy - 1,
+                  w=thumb_w - 2, h=thumb_h - 2,
+                  halign='left', valign='top',
+                  keepratio='Fit', z=211) }}
+    {% endif %}
+
+    <quad pos="{{ cx }} {{ cy }}" z-index="214"
+          size="{{ thumb_w }} {{ thumb_h }}"
+          bgcolor="0000" halign="left" valign="top"
+          id="uibtn_ghost_{{ id }}__preview__{{ it.key }}"
+          action="{{ id }}__preview__{{ it.key }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+
+    {{ ui.label(it.label|truncate(16, true, ''),
+                x=cx + thumb_w/2, y=cy - thumb_h - 0.5,
+                halign='center', size='sm', color='ddd') }}
+  {% endfor %}
+
+  {# ============================== PAGINATION ROW ====================== #}
+  {% set pg_y = grid_y - rows * cell_h - 3 %}
+  {% if total_pages > 1 %}
+    {{ ui.pagination('pg', page=page, total_pages=total_pages,
+                     x=4, y=pg_y, max_visible=7,
+                     btn_w=5, btn_h=4) }}
+  {% endif %}
+  {{ ui.label('Page ' ~ page ~ ' / ' ~ total_pages,
+              x=win_w - 4, y=pg_y, halign='right',
+              size='sm', color='888') }}
+
+  {# ============================== CUSTOM URL TESTER ==================== #}
+  {% set cy = -win_h + 12 %}
+  {{ ui.label('Custom URL (Enter to preview):',
+              x=4, y=cy, size='sm', color='aaa') }}
+  {{ ui.line_edit('custom_url', value=custom_url,
+                  x=4, y=cy - 4, width=win_w - 40, size='sm') }}
+  {{ ui.push_button('custom_preview', 'Preview',
+                    x=win_w - 4, y=cy - 4, halign='right',
+                    icon='eye', variant='primary', size='sm', width=30) }}
+
+  {{ ui.hover_script() }}
+</frame>

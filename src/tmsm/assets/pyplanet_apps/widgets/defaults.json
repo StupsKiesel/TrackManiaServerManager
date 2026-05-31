@@ -1,5 +1,5 @@
 {
-  "_comment": "Initial global widget positions seeded into tmsm_widget_position_global on first boot (when the table is empty). After seeding, the DB is the only source of truth. Edit this file to ship a different out-of-the-box layout. Each entry needs all four floats (x, y, w, h). Keys that don't match a registered widget are ignored.",
+  "_comment": "Initial global widget positions seeded into tmsm_widget_config_global on first boot (when the table is empty). After seeding, the DB is the only source of truth. Edit this file to ship a different out-of-the-box layout. Each entry needs all four floats (x, y, w, h). Keys that don't match a registered widget are ignored.",
   "positions": {
     "hub_launcher": {"x": -158.0, "y": -58.0, "w": 6.0, "h": 6.0}
   }

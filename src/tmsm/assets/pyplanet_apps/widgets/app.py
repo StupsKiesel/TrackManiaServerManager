@@ -38,6 +38,8 @@ from .views import WidgetEditorView
 
 logger = logging.getLogger(__name__)
 
+_ANIM_DIR_OPTIONS = ("none", "left", "right", "up", "down")
+
 
 class WidgetsApp(AppConfig):
     name = "pyplanet.apps.tmsm.widgets"
@@ -68,6 +70,9 @@ class WidgetsApp(AppConfig):
         self._selected: dict[str, str] = {}
         # step size for nudge buttons (manialink units)
         self._step: dict[str, float] = {}
+        # per-login debug overlay (master-only); when on, every widget
+        # renders its debug chip + status label.
+        self._debug: set[str] = set()
 
     # ---- lifecycle -----------------------------------------------------
 
@@ -105,6 +110,7 @@ class WidgetsApp(AppConfig):
         self.context.signals.listen("tmsm_widgets:popup", self._on_popup_signal)
         self.context.signals.listen("tmsm_widgets:refresh", self._on_refresh)
         self.context.signals.listen("maniaplanet:player_disconnect", self._on_player_disconnect)
+        self.context.signals.listen("maniaplanet:player_connect", self._on_player_connect)
 
         # Ask any widget-providing app that started before us (e.g. tmsm_hub)
         # to register itself now that our `register` signal has a listener.
@@ -189,6 +195,24 @@ class WidgetsApp(AppConfig):
         self._selected.pop(login, None)
         self._step.pop(login, None)
 
+    async def _on_player_connect(self, player, **kwargs) -> None:
+        # Persistent widgets are only sent at WidgetAppBase.on_start() to
+        # players already online. A player who connects (or reconnects)
+        # later otherwise never gets the manialink pushed to them.
+        login = getattr(player, "login", None)
+        if not login:
+            return
+        for entry in self.entries.values():
+            if entry.kind != WidgetKind.PERSISTENT:
+                continue
+            app = self._find_widget_app(entry.key)
+            if app is None or app.view is None:
+                continue
+            try:
+                await app.view.display(player_logins=[login])
+            except Exception:
+                logger.exception("widgets: reconnect push '%s' failed", entry.key)
+
     # ---- public API for widget views -----------------------------------
 
     def resolve_position(self, key: str, login: str) -> dict[str, float]:
@@ -203,8 +227,38 @@ class WidgetsApp(AppConfig):
         }
         return self.storage.resolve(key, login, defaults)
 
+    def resolve_behavior(self, key: str, login: str | None = None) -> dict[str, Any]:
+        entry = self.entries.get(key)
+        if entry is None:
+            return {}
+        defaults = {
+            "hide_while_driving": True,
+            "anim_dir": entry.animation.direction,
+            "anim_duration_ms": entry.animation.duration_ms,
+            "anim_delay_ms": entry.animation.delay_ms,
+            "allow_personal": bool(entry.allow_personal),
+        }
+        return self.storage.resolve_behavior(key, defaults, login=login)
+
+    def allow_personal(self, key: str) -> bool:
+        """Effective personalization flag (class default + DB override)."""
+        beh = self.resolve_behavior(key)
+        return bool(beh.get("allow_personal", True))
+
     def is_editing(self, login: str) -> bool:
         return login in self._editing
+
+    def is_debug(self, login: str, key: str | None = None) -> bool:
+        """Whether the master-admin debug overlay is on for ``login``.
+
+        When ``key`` is given, the overlay is only active for the widget
+        currently selected in that login's editor.
+        """
+        if login not in self._debug:
+            return False
+        if key is None:
+            return True
+        return self._selected.get(login) == key
 
     # ---- commands ------------------------------------------------------
 
@@ -217,10 +271,10 @@ class WidgetsApp(AppConfig):
 
     async def _open_editor(self, login: str) -> None:
         self._editing.add(login)
-        # Non-admins can only edit their own position. Force player scope
-        # for them and default admins to the wider global scope.
-        is_admin = await self._login_is_admin(login)
-        if not is_admin:
+        # Only master admins can edit global config. Everyone else is
+        # locked to personal scope and only sees widgets that allow it.
+        is_master = await self._login_is_master(login)
+        if not is_master:
             self._scope[login] = "player"
         else:
             self._scope.setdefault(login, "global")
@@ -309,22 +363,31 @@ class WidgetsApp(AppConfig):
         if key in self.entries:
             self._selected[login] = key
             await self._refresh_editor_for([login])
+            # debug overlay follows the selection -> repaint widget frames
+            if login in self._debug:
+                await self._refresh_all_widget_frames(login)
 
     async def _act_scope(self, login: str, scope: str, _values: dict) -> None:
         # radio_group emits "scope__set__<value>" -> arg arrives as "set__<value>"
         if scope.startswith("set__"):
             scope = scope[len("set__"):]
-        if scope == "global" and not await self._login_is_admin(login):
-            await self._toast(login, "global scope is admin-only", "warning")
+        if scope == "global" and not await self._login_is_master(login):
+            await self._toast(login, "global config is master-admin only", "warning")
             return
+        if scope == "player":
+            sel = self._selected.get(login)
+            entry = self.entries.get(sel) if sel else None
+            if entry is not None and not self.allow_personal(sel):
+                await self._toast(login, f"{entry.name}: personalization is disabled", "warning")
+                return
         if scope in ("global", "player"):
             self._scope[login] = scope
             await self._refresh_editor_for([login])
 
-    async def _login_is_admin(self, login: str) -> bool:
+    async def _login_is_master(self, login: str) -> bool:
         try:
             from pyplanet.apps.tmsm.ui import perms as _perms
-            return _perms.is_operator(login)
+            return _perms.is_master(login)
         except Exception:
             return False
 
@@ -370,13 +433,123 @@ class WidgetsApp(AppConfig):
                 new_pos[field] = float(raw)
             except (TypeError, ValueError):
                 continue
-        if not new_pos:
+        beh_patch: dict[str, Any] = {}
+        for field, caster in (("anim_duration_ms", int), ("anim_delay_ms", int)):
+            raw = values.get(f"entry_widget_{key}_{field}")
+            if raw is None or raw == "":
+                continue
+            try:
+                beh_patch[field] = caster(float(raw))
+            except (TypeError, ValueError):
+                continue
+        if not new_pos and not beh_patch:
             await self._toast(login, f"No values to apply for '{key}'", "warning")
             return
-        await self._write_pos(login, key, new_pos)
+        if new_pos:
+            await self._write_pos(login, key, new_pos)
+        if beh_patch:
+            scope = self._scope.get(login, "global")
+            if scope == "player":
+                if not self.allow_personal(key):
+                    await self._toast(login, "personalization is disabled", "warning")
+                else:
+                    await self.storage.set_player_behavior(key, login, beh_patch)
+                    await self._refresh_editor_for([login])
+                    await self._refresh_widget_for_all(key)
+            elif not await self._login_is_master(login):
+                await self._toast(login, "global config is master-admin only", "warning")
+            else:
+                await self.storage.set_behavior(key, beh_patch)
+                await self._refresh_editor_for([login])
+                await self._refresh_widget_for_all(key)
         entry = self.entries.get(key)
         label = entry.name if entry else key
-        await self._toast(login, f"{label}: position saved", "success", source="widgets")
+        await self._toast(login, f"{label}: settings saved", "success", source="widgets")
+
+    async def _act_setdir(self, login: str, arg: str, _values: dict) -> None:
+        # radio_group emits "setdir__set__<value>" -> arg arrives as "set__<value>"
+        if arg.startswith("set__"):
+            arg = arg[len("set__"):]
+        try:
+            key, direction = arg.split("|", 1)
+        except ValueError:
+            return
+        if key not in self.entries or direction not in _ANIM_DIR_OPTIONS:
+            return
+        scope = self._scope.get(login, "global")
+        is_master = await self._login_is_master(login)
+        if scope == "player":
+            if not self.allow_personal(key):
+                await self._toast(login, "personalization is disabled", "warning")
+                return
+            await self.storage.set_player_behavior(key, login, {"anim_dir": direction})
+        else:
+            if not is_master:
+                await self._toast(login, "global config is master-admin only", "warning")
+                return
+            await self.storage.set_behavior(key, {"anim_dir": direction})
+        await self._refresh_editor_for([login])
+        await self._refresh_widget_for_all(key)
+
+    async def _act_drive(self, login: str, key: str, _values: dict) -> None:
+        if key not in self.entries:
+            return
+        if not await self._login_is_master(login):
+            await self._toast(login, "global config is master-admin only", "warning")
+            return
+        cur = self.resolve_behavior(key)
+        await self.storage.set_behavior(key, {
+            "hide_while_driving": not bool(cur.get("hide_while_driving", True)),
+        })
+        await self._refresh_editor_for([login])
+        await self._refresh_widget_for_all(key)
+
+    async def _act_allowperson(self, login: str, key: str, _values: dict) -> None:
+        if key not in self.entries:
+            return
+        if not await self._login_is_master(login):
+            await self._toast(login, "global config is master-admin only", "warning")
+            return
+        new_val = not self.allow_personal(key)
+        await self.storage.set_behavior(key, {"allow_personal": new_val})
+        await self._refresh_editor_for([login])
+        await self._refresh_widget_for_all(key)
+
+    async def _act_debug(self, login: str, _arg: str, _values: dict) -> None:
+        """Toggle the per-login debug overlay (master-admin only)."""
+        if not await self._login_is_master(login):
+            await self._toast(login, "debug mode is master-admin only", "warning")
+            return
+        if login in self._debug:
+            self._debug.discard(login)
+        else:
+            self._debug.add(login)
+        await self._refresh_editor_for([login])
+        await self._refresh_all_widget_frames(login)
+
+    async def _act_dump(self, login: str, key: str, _values: dict) -> None:
+        """Render the selected widget for the caller and write XML to disk
+        (master-admin only). Dumps the currently-selected widget when
+        ``key`` is empty or unknown."""
+        if not await self._login_is_master(login):
+            await self._toast(login, "dump is master-admin only", "warning")
+            return
+        if not key or key not in self.entries:
+            key = self._selected.get(login) or ""
+        if not key or key not in self.entries:
+            await self._toast(login, "no widget selected to dump", "warning")
+            return
+        app = self._find_widget_app(key)
+        if app is None or app.view is None:
+            await self._toast(login, f"{key}: widget not active", "warning")
+            return
+        try:
+            path = await app.view.dump_render(login)
+        except Exception:
+            logger.exception("widgets: dump of '%s' for %s failed", key, login)
+            await self._toast(login, f"{key}: dump failed (see logs)", "error")
+            return
+        await self._toast(login, f"{key}: dumped to {path}", "success")
 
     async def _toast(self, login: str, msg: str, severity: str = "info",
                      source: str = "widgets") -> None:
@@ -475,6 +648,15 @@ class WidgetsApp(AppConfig):
 
     async def _write_pos(self, login: str, key: str, pos: dict[str, float]) -> None:
         scope = self._scope.get(login, "global")
+        entry = self.entries.get(key)
+        if scope == "global" and not await self._login_is_master(login):
+            await self._toast(login, "global config is master-admin only", "warning")
+            return
+        if scope == "player" and entry is not None and not self.allow_personal(key):
+            await self._toast(
+                login, f"{entry.name}: personalization is disabled", "warning",
+            )
+            return
         if scope == "player":
             await self.storage.set_player(key, login, pos)
         else:
@@ -504,10 +686,32 @@ class WidgetsApp(AppConfig):
     # ---- editor context (consumed by editor.xml) -----------------------
 
     def editor_context(self, login: str) -> dict[str, Any]:
-        keys = sorted(self.entries.keys())
-        selected_key = self._selected.get(login) or (keys[0] if keys else "")
+        # Only master admins see every widget and may edit global config.
+        # Everyone else only sees widgets that allow personalization.
+        try:
+            from pyplanet.apps.tmsm.ui import perms as _perms
+            is_master = bool(_perms.is_master(login))
+        except Exception:
+            is_master = False
+        all_keys = sorted(self.entries.keys())
+        if is_master:
+            keys = all_keys
+        else:
+            keys = [k for k in all_keys if self.allow_personal(k)]
+        selected_key = self._selected.get(login)
+        if selected_key not in keys:
+            selected_key = keys[0] if keys else ""
+            self._selected[login] = selected_key
         selected = self.entries.get(selected_key)
         scope = self._scope.get(login, "global")
+        sel_allow = self.allow_personal(selected_key) if selected_key else True
+        # Non-master always forced to player scope.
+        if not is_master:
+            scope = "player"
+            self._scope[login] = scope
+        elif selected is not None and not sel_allow and scope == "player":
+            scope = "global"
+            self._scope[login] = scope
         step = self._step.get(login, 1.0)
         rows = []
         for k in keys:
@@ -529,6 +733,10 @@ class WidgetsApp(AppConfig):
             "selected_key": selected_key,
             "selected_name": selected.name if selected else "",
             "scope": scope,
+            "allow_personal": sel_allow,
+            "is_master": is_master,
+            "debug": login in self._debug,
             "step": step,
             "step_options": [0.5, 1.0, 2.0, 5.0],
+            "behavior": self.resolve_behavior(selected_key, login=login) if selected_key else {},
         }

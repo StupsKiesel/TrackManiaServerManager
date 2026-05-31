@@ -33,7 +33,8 @@
 
 <frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
 
-  {{ ui.window('Trackmania Exchange', icon='globe',
+  {{ ui.window('Trackmania Exchange',
+               logo='https://images.mania.exchange/logos/tmx/x_sm.png',
                x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
 
   {# ---------- HEADER: search box + filter button --------------------- #}

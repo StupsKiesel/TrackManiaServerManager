@@ -57,6 +57,7 @@ class HubApp(AppConfig):
     # ── tmsm_widgets contract (the launcher is registered as a widget) ──
     WIDGET_KEY = "hub_launcher"
     WIDGET_NAME = "Hub Launcher"
+    WIDGET_ALLOW_PERSONAL = False
     WIDGET_DESCRIPTION = "Button that opens the tmsm hub window."
     WIDGET_ICON = "th-large"
     WIDGET_DEFAULT_X = -158.0
@@ -196,6 +197,8 @@ class HubApp(AppConfig):
             "widget_anim_dir":        self.WIDGET_ANIM_DIR,
             "widget_anim_duration_ms": self.WIDGET_ANIM_DURATION_MS,
             "widget_anim_delay_ms":   0,
+            "widget_anim_off_x":      (-500.0 if self.WIDGET_ANIM_DIR == "left" else (500.0 if self.WIDGET_ANIM_DIR in ("right", "fade") else 0.0)),
+            "widget_anim_off_y":      (500.0 if self.WIDGET_ANIM_DIR == "up" else (-500.0 if self.WIDGET_ANIM_DIR == "down" else 0.0)),
             "widget_edit_mode":       editing,
             "widget_view_id":         self.launcher.id if self.launcher else self.WIDGET_KEY,
         }
@@ -227,6 +230,7 @@ class HubApp(AppConfig):
             ),
             author="tmsm",
             version="0.1",
+            allow_personal=self.WIDGET_ALLOW_PERSONAL,
         )
         try:
             sig = self.context.signals.get_signal("tmsm_widgets:register")

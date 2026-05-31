@@ -93,6 +93,7 @@ class StatusApp(AppConfig):
                 default_w=DEFAULT_W, default_h=DEFAULT_H,
                 kind=WidgetKind.PERSISTENT,
                 author="tmsm", version="0.1",
+                allow_personal=False,
             )
             await sig.send_robust({"entry": entry}, raw=True)
         except KeyError:

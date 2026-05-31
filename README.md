@@ -38,6 +38,10 @@ Do not treat them as stable for production yet.
 
 This README intentionally does not embed images directly. Use the links below to open screenshots.
 
+## Demo Video (Link-Only)
+
+- [Widgets Feature Demo (MP4)](docs/media/tmsm_widgets.mp4)
+
 ### Hub
 
 - [Player Hub](docs/images/hub_player.png)

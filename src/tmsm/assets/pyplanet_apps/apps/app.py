@@ -7,6 +7,7 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,18 @@ logger = logging.getLogger(__name__)
 TMSM_ROOT = Path.home() / ".tmsm"
 PYPL_ROOT = TMSM_ROOT / "pyplanet"
 APPS_ROOT = PYPL_ROOT / "src" / "pyplanet" / "apps"
-APPS_PY = PYPL_ROOT / "pools" / "pypl" / "settings" / "apps.py"
+
+
+def _apps_py_path() -> Path:
+    """Resolve the active pool's ``settings/apps.py``.
+
+    PyPlanet always runs with the pool directory as cwd, so cwd/settings/apps.py
+    is the active file regardless of the pool's name.
+    """
+    return Path(os.getcwd()) / "settings" / "apps.py"
+
+
+APPS_PY = _apps_py_path()
 
 _ENTRY_RE = re.compile(
     r"""^[ \t]*(\#[ \t]*)?["']([A-Za-z0-9_.]+)["'][ \t]*,?[ \t]*$"""

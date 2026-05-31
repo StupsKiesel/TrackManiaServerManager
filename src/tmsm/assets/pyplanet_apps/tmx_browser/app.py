@@ -211,7 +211,7 @@ class TmxBrowserApp(AppConfig):
             self.view.connect("info_selected", self._on_info_selected)
             self.view.connect("add_selected", self._on_add_selected)
             self.view.connect("toggle_juke", self._on_toggle_juke)
-            self.view.connect("toggle_save", self._on_toggle_save)
+            self.view.connect("write_maplist", self._on_write_maplist)
             self.view.handle_catch_all = self._catch_all  # type: ignore[assignment]
 
             self.detail_view = TmxDetailView(self)
@@ -328,7 +328,6 @@ class TmxBrowserApp(AppConfig):
             "loaded":       False,
             "selected_id":  None,
             "juke_after":   True,
-            "save_match":   True,
             "status":       "",
             "status_color": "aaa",
             "detail":       None,
@@ -467,7 +466,6 @@ class TmxBrowserApp(AppConfig):
             "selected_id":   sel,
             "filter_count":  self._filter_summary(st["filters"]),
             "juke_after":    bool(st["juke_after"]),
-            "save_match":    bool(st["save_match"]),
             "status":        st["status"],
             "status_color":  st["status_color"],
             "columns":       columns,
@@ -739,12 +737,6 @@ class TmxBrowserApp(AppConfig):
     async def _on_toggle_juke(self, player) -> None:
         st = self._state.setdefault(player.login, self._default_state())
         st["juke_after"] = not st["juke_after"]
-        if self.view is not None:
-            await self.view.refresh()
-
-    async def _on_toggle_save(self, player) -> None:
-        st = self._state.setdefault(player.login, self._default_state())
-        st["save_match"] = not st["save_match"]
         if self.view is not None:
             await self.view.refresh()
 
@@ -1318,43 +1310,99 @@ class TmxBrowserApp(AppConfig):
             return
 
         try:
-            uploaded = await self.instance.map_manager.add_map(
-                filename, insert=False, save_matchsettings=False,
+            await self.instance.map_manager.add_map(
+                filename, insert=True, save_matchsettings=False,
             )
         except Exception as e:
-            logger.exception("tmx_browser: upload_map failed")
-            await self._notify(login, f"Upload failed: {e}", "error", 6000)
+            if "already added" not in str(e).lower():
+                logger.exception("tmx_browser: upload_map failed")
+                await self._notify(login, f"Upload failed: {e}", "error", 6000)
+                return
+            # Map already on server — that's fine, continue to lookup below.
+
+        # add_map always returns a bool. update_list(full_update=False) crashes on
+        # this PyPlanet build because full_update=True converts _maps to a list and
+        # then the non-full path calls _maps.add() (set method). Instead, ask the
+        # dedicated for map info via GBX, then get-or-create the Map DB row directly.
+        uploaded = None
+        try:
+            from pyplanet.apps.core.maniaplanet.models import Map as _Map
+            info = await self.instance.gbx("GetMapInfo", filename)
+            if info:
+                mx_id = None
+                fn = info.get("FileName", "")
+                import re as _re
+                m = _re.search(r"(?:PyPlanet-MX\/)[A-Z]{2,6}-(\d+)\.", fn)
+                if m:
+                    mx_id = m.group(1)
+                author_nickname = ""
+                try:
+                    author_nickname = await self.instance.map_manager.get_map_author_nickname(info)
+                except Exception:
+                    pass
+                uploaded = await _Map.get_or_create_from_info(
+                    uid=info["UId"],
+                    name=info["Name"],
+                    author_login=info["Author"],
+                    author_nickname=author_nickname,
+                    file=info["FileName"],
+                    environment=info.get("Environnement", ""),
+                    map_type=info.get("MapType", ""),
+                    map_style=info.get("MapStyle", ""),
+                    num_laps=info.get("NbLaps", 0),
+                    num_checkpoints=info.get("NbCheckpoints", 0),
+                    time_author=info.get("AuthorTime", 0),
+                    time_bronze=info.get("BronzeTime", 0),
+                    time_silver=info.get("SilverTime", 0),
+                    time_gold=info.get("GoldTime", 0),
+                    price=info.get("CopperPrice", 0),
+                    mx_id=mx_id,
+                )
+        except Exception:
+            logger.exception("tmx_browser: GetMapInfo/get_or_create failed")
+
+        if uploaded is None:
+            await self._notify(login, "Added but could not locate map object",
+                               "warning", 5000)
             return
 
         if st["juke_after"]:
             try:
-                await self.instance.map_manager.set_next_map(uploaded)
+                jukebox_app = self.instance.apps.apps.get("jukebox")
+                if jukebox_app is not None:
+                    await jukebox_app.add_to_jukebox(player, uploaded)
+                else:
+                    logger.warning("tmx_browser: jukebox app not loaded, skipping queue")
             except Exception:
-                logger.exception("tmx_browser: set_next_map failed")
-
-        if st["save_match"]:
-            try:
-                from pyplanet.conf import settings as _pp_settings
-                setting = getattr(_pp_settings, "MAP_MATCHSETTINGS", None)
-                if isinstance(setting, dict):
-                    setting = (setting.get(self.instance.process_name)
-                               or setting.get("default"))
-                if not isinstance(setting, str) or not setting:
-                    raise RuntimeError(
-                        "MAP_MATCHSETTINGS not configured in settings/base.py"
-                    )
-                file_name = setting.format(
-                    server_login=self.instance.game.server_player_login
-                )
-                file_path = f"MatchSettings/{file_name}"
-                await self.instance.map_manager.save_matchsettings(file_path)
-                await self.instance.map_manager.update_list(full_update=True)
-                logger.info("tmx_browser: saved matchsettings to %s", file_path)
-            except Exception as e:
-                logger.exception("tmx_browser: save_matchsettings failed")
-                await self._notify(login,
-                                   f"Added but matchsettings save failed: {e}",
-                                   "warning", 6000)
-                return
+                logger.exception("tmx_browser: add_to_jukebox failed")
 
         await self._notify(login, f"Added: {name}", "success", 4000)
+
+    # ---- write map list -----------------------------------------------
+
+    async def _on_write_maplist(self, player) -> None:
+        """Save the current matchsettings file — equivalent to //wml."""
+        login = player.login
+        try:
+            from pyplanet.conf import settings as _pp_settings
+            setting = getattr(_pp_settings, "MAP_MATCHSETTINGS", None)
+            if isinstance(setting, dict):
+                setting = (
+                    setting.get(self.instance.process_name)
+                    or setting.get("default")
+                )
+            if not isinstance(setting, str) or not setting:
+                raise RuntimeError(
+                    "MAP_MATCHSETTINGS not configured in settings/base.py"
+                )
+            file_name = setting.format(
+                server_login=self.instance.game.server_player_login
+            )
+            file_path = f"MatchSettings/{file_name}"
+            await self.instance.map_manager.save_matchsettings(file_path)
+            await self.instance.map_manager.update_list(full_update=True)
+            logger.info("tmx_browser: wrote matchsettings to %s", file_path)
+            await self._notify(login, f"Map list saved to {file_name}", "success", 4000)
+        except Exception as e:
+            logger.exception("tmx_browser: write_maplist failed")
+            await self._notify(login, f"Write map list failed: {e}", "error", 6000)

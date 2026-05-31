@@ -169,10 +169,8 @@
                     x=44, y=footer_y, halign='left',
                     icon='arrow_right', variant='ghost', size='sm') }}
 
-  {{ ui.check_box('toggle_juke', label='Play next',
+  {{ ui.check_box('toggle_juke', label='Add to queue',
                   checked=juke_after, x=70, y=footer_y, size='sm') }}
-  {{ ui.check_box('toggle_save', label='Save matchsettings',
-                  checked=save_match, x=110, y=footer_y, size='sm') }}
 
   {# Action buttons in the bottom-right corner #}
   {{ ui.push_button('add_selected', 'Add',
@@ -181,6 +179,10 @@
   {{ ui.push_button('info_selected', 'Info',
                     x=win_w - 24, y=footer_y, halign='right',
                     icon='info', variant='primary', size='sm') }}
+  {{ ui.push_button('write_maplist', 'Write ML',
+                    x=win_w - 46, y=footer_y, halign='right',
+                    icon='save', variant='ghost', size='sm',
+                    tooltip='Save matchsettings (//wml)') }}
 
   {{ ui.hover_script() }}
 </frame>

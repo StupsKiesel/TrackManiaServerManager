@@ -79,24 +79,24 @@
         {% endif %}
 
         {% if is_admin %}
-          {{ ui.tool_button('bottom__' ~ r.index, 'angle_double_down',
+          {{ ui.tool_button('bottom__' ~ r.index, 'arrow_down',
                             x=ax, y=ry, halign='right',
-                            variant='ghost', size='sm',
+                            variant='danger', size='sm',
                             tooltip='Move to bottom') }}
           {% set ax = ax - 6 %}
-          {{ ui.tool_button('down__' ~ r.index, 'angle_down',
+          {{ ui.tool_button('down__' ~ r.index, 'arrow_down',
                             x=ax, y=ry, halign='right',
                             variant='ghost', size='sm',
                             tooltip='Move down') }}
           {% set ax = ax - 6 %}
-          {{ ui.tool_button('up__' ~ r.index, 'angle_up',
+          {{ ui.tool_button('up__' ~ r.index, 'arrow_up',
                             x=ax, y=ry, halign='right',
                             variant='ghost', size='sm',
                             tooltip='Move up') }}
           {% set ax = ax - 6 %}
-          {{ ui.tool_button('top__' ~ r.index, 'angle_double_up',
+          {{ ui.tool_button('top__' ~ r.index, 'arrow_up',
                             x=ax, y=ry, halign='right',
-                            variant='ghost', size='sm',
+                            variant='danger', size='sm',
                             tooltip='Move to top') }}
         {% endif %}
       {% endfor %}

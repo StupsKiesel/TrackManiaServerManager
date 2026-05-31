@@ -188,6 +188,8 @@ class App_Db(AppConfig):
         self._drop_armed: dict[str, set[str]] = {}
         # cached row counts {table_key: int}
         self._count_cache: dict[str, int] = {}
+        # keys of tables that have been physically dropped this session
+        self._dropped_keys: set[str] = set()
 
     # ---- lifecycle ---------------------------------------------------
 
@@ -306,10 +308,14 @@ class App_Db(AppConfig):
     def _models(self) -> dict[str, tuple[Any, str, Any]]:
         """Return {key: (app, name, model)} where key='<app_label>.<Name>'."""
         try:
-            return dict(self.instance.db.registry.models)
+            all_models = dict(self.instance.db.registry.models)
         except Exception:
             logger.exception("db: registry.models read failed")
             return {}
+        # Exclude tables that were physically dropped this session.
+        if self._dropped_keys:
+            all_models = {k: v for k, v in all_models.items() if k not in self._dropped_keys}
+        return all_models
 
     def _model_by_key(self, key: str):
         return self._models().get(key)
@@ -335,6 +341,10 @@ class App_Db(AppConfig):
             return self._count_cache[key]
         try:
             c = await model.objects.count(model.select())
+        except peewee.ProgrammingError as e:
+            # Table not yet created (e.g. migration pending) — not an error.
+            logger.debug("db: count %s skipped (table missing): %s", key, e)
+            c = -1
         except Exception:
             logger.exception("db: count %s failed", key)
             c = -1
@@ -1019,11 +1029,14 @@ class App_Db(AppConfig):
         armed.discard(key)
         try:
             with self.instance.db.allow_sync():
-                model.drop_table(True, True)
+                # fail_silently=True, cascade=False — MySQL/MariaDB does not
+                # support DROP TABLE ... CASCADE so passing True there raises.
+                model.drop_table(fail_silently=True, cascade=False)
         except Exception as e:
             await self._toast(player, f"drop failed: {e}", "error")
             return
         self._count_cache.pop(key, None)
+        self._dropped_keys.add(key)
         await self._toast(
             player, f"dropped {self._table_name(model)}", "success"
         )

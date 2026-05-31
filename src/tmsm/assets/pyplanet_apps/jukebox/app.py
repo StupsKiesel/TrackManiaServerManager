@@ -493,7 +493,6 @@ class App_Jukebox(AppConfig):
                     "pick another one.",
                     player,
                 )
-        await self._refresh_view()
 
     async def drop_from_jukebox(self, player, instance) -> None:
         """Drop a map identified by ``instance`` (a dict with ``map_name``

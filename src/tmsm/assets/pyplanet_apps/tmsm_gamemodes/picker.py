@@ -157,18 +157,44 @@ class MapPicker:
         except Exception:
             logger.exception("gamemodes: add_map failed (#%s)", tid)
             return None
-        # `add_map` returns the raw gbx result (truthy/bool), not a Map
-        # instance. Refresh the playlist cache, then locate the freshly
-        # added map by filename so we can hand a real Map to set_next_map.
+        # `add_map` returns bool; update_list crashes on this PyPlanet build.
+        # Ask the dedicated for map info then get-or-create the DB row directly.
         uploaded = None
         try:
-            await self.app.instance.map_manager.update_list(full_update=False)
-            for m in self.app.instance.map_manager.maps:
-                if getattr(m, "file", None) == filename:
-                    uploaded = m
-                    break
+            from pyplanet.apps.core.maniaplanet.models import Map as _Map
+            import re as _re
+            info = await self.app.instance.gbx("GetMapInfo", filename)
+            if info:
+                mx_id = None
+                fn = info.get("FileName", "")
+                mx_m = _re.search(r"(?:PyPlanet-MX\/)[A-Z]{2,6}-(\d+)\.", fn)
+                if mx_m:
+                    mx_id = mx_m.group(1)
+                author_nickname = ""
+                try:
+                    author_nickname = await self.app.instance.map_manager.get_map_author_nickname(info)
+                except Exception:
+                    pass
+                uploaded = await _Map.get_or_create_from_info(
+                    uid=info["UId"],
+                    name=info["Name"],
+                    author_login=info["Author"],
+                    author_nickname=author_nickname,
+                    file=info["FileName"],
+                    environment=info.get("Environnement", ""),
+                    map_type=info.get("MapType", ""),
+                    map_style=info.get("MapStyle", ""),
+                    num_laps=info.get("NbLaps", 0),
+                    num_checkpoints=info.get("NbCheckpoints", 0),
+                    time_author=info.get("AuthorTime", 0),
+                    time_bronze=info.get("BronzeTime", 0),
+                    time_silver=info.get("SilverTime", 0),
+                    time_gold=info.get("GoldTime", 0),
+                    price=info.get("CopperPrice", 0),
+                    mx_id=mx_id,
+                )
         except Exception:
-            logger.exception("gamemodes: update_list failed (#%s)", tid)
+            logger.exception("gamemodes: GetMapInfo/get_or_create failed (#%s)", tid)
         if juke_next and uploaded is not None:
             try:
                 await self.app.instance.map_manager.set_next_map(uploaded)

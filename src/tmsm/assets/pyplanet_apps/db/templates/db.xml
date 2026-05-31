@@ -53,7 +53,7 @@
             halign="left" valign="top" />
       {{ ui.label(t.table_name, x=6, y=yy-3, size='sm', color='fff') }}
       {{ ui.label(t.app_label, x=110, y=yy-3, size='sm', color='ccc') }}
-      {{ ui.label(t.count|string, x=170, y=yy-3, halign='right',
+      {{ ui.label('?' if t.count == -1 else t.count|string, x=170, y=yy-3, halign='right',
                   size='sm', color='ccc') }}
 
       {# action buttons (right side) #}

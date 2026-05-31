@@ -196,7 +196,7 @@ class WidgetStorage:
                          login: str | None = None) -> dict[str, Any]:
         out = dict(defaults)
         out.update(self._behavior.get(key, {}))
-        if login:
+        if login and bool(out.get("allow_personal", True)):
             out.update(self._player_beh.get(login, {}).get(key, {}))
         return out
 

@@ -284,7 +284,7 @@ class App_Jukebox(AppConfig):
             await self._on_row_action(player, m.group(1), int(m.group(2)))
             return
 
-        if action == "_close":
+        if action == "_close" or action.startswith("_crumb__"):
             login = player.login
             self._visible_logins.discard(login)
             if self.view is not None:
@@ -294,9 +294,6 @@ class App_Jukebox(AppConfig):
                     await TemplateView.hide(self.view, player_logins=[login])
                 except Exception:
                     logger.exception("jukebox: hide on close failed")
-            return
-
-        if action.startswith("_crumb__"):
             return
 
     async def _on_row_action(self, player, op: str, index: int) -> None:

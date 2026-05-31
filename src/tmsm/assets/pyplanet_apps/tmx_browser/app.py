@@ -177,6 +177,12 @@ class TmxBrowserApp(AppConfig):
         self._tags_cache: list[dict[str, Any]] = []
         self._policy: dict[str, Any] = _policy.default_policy()
         self._lock = asyncio.Lock()
+        self._visible_logins: dict[str, set[str]] = {
+            "main": set(),
+            "detail": set(),
+            "filters": set(),
+            "policy": set(),
+        }
 
     # ---- lifecycle -----------------------------------------------------
 
@@ -287,11 +293,14 @@ class TmxBrowserApp(AppConfig):
     async def _open(self, player) -> None:
         if self.view is None:
             return
-        st = self._state.setdefault(player.login, self._default_state())
+        login = player.login
+        st = self._state.setdefault(login, self._default_state())
         first_open = not st["results"] and not st["loaded"]
         try:
-            await self.view.display(player_logins=[player.login])
-            self.view._visible = True
+            await self.view.display(player_logins=[login])
+            self.view._visible_logins.add(login)
+            self._visible_logins["main"].add(login)
+            self.view._visible = bool(self._visible_logins["main"])
         except Exception:
             logger.exception("tmx_browser: open failed")
             return
@@ -560,11 +569,21 @@ class TmxBrowserApp(AppConfig):
             logger.exception("tmx_browser: notify failed")
 
     async def _refresh_views(self) -> None:
-        for v in (self.view, self.detail_view, self.filters_view, self.policy_view):
+        entries = (
+            ("main", self.view),
+            ("detail", self.detail_view),
+            ("filters", self.filters_view),
+            ("policy", self.policy_view),
+        )
+        for key, v in entries:
             if v is None:
                 continue
             try:
-                if getattr(v, "_visible", False):
+                if (
+                    self._visible_logins[key]
+                    and getattr(v, "_visible", False)
+                    and bool(getattr(v, "_visible_logins", set()))
+                ):
                     await v.refresh()
             except Exception:
                 logger.exception("tmx_browser: refresh failed")
@@ -638,7 +657,27 @@ class TmxBrowserApp(AppConfig):
             await self._on_policy_tab(player, m.group(1))
             return
 
-        if action in ("_close",) or action.startswith("_crumb__"):
+        if action == "_close":
+            from pyplanet.views.template import TemplateView
+            views = (
+                ("main", self.view),
+                ("detail", self.detail_view),
+                ("filters", self.filters_view),
+                ("policy", self.policy_view),
+            )
+            for key, view in views:
+                self._visible_logins[key].discard(login)
+                if view is None:
+                    continue
+                view._visible_logins.discard(login)
+                view._visible = bool(self._visible_logins[key])
+                try:
+                    await TemplateView.hide(view, player_logins=[login])
+                except Exception:
+                    logger.exception("tmx_browser: hide on close failed")
+            return
+
+        if action.startswith("_crumb__"):
             return
         logger.debug("tmx_browser: unmatched action %s", action)
 
@@ -800,12 +839,16 @@ class TmxBrowserApp(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.view, player_logins=[login])
-                self.view._visible = False
+                self._visible_logins["main"].discard(login)
+                self.view._visible_logins.discard(login)
+                self.view._visible = bool(self._visible_logins["main"])
             except Exception:
                 logger.exception("tmx_browser: hide list failed")
         try:
             await self.detail_view.display(player_logins=[login])
-            self.detail_view._visible = True
+            self._visible_logins["detail"].add(login)
+            self.detail_view._visible_logins.add(login)
+            self.detail_view._visible = bool(self._visible_logins["detail"])
         except Exception:
             logger.exception("tmx_browser: open details failed")
 
@@ -815,7 +858,9 @@ class TmxBrowserApp(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.detail_view, player_logins=[login])
-                self.detail_view._visible = False
+                self._visible_logins["detail"].discard(login)
+                self.detail_view._visible_logins.discard(login)
+                self.detail_view._visible = bool(self._visible_logins["detail"])
             except Exception:
                 logger.exception("tmx_browser: hide details failed")
         await self._open(player)
@@ -849,12 +894,16 @@ class TmxBrowserApp(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.view, player_logins=[login])
-                self.view._visible = False
+                self._visible_logins["main"].discard(login)
+                self.view._visible_logins.discard(login)
+                self.view._visible = bool(self._visible_logins["main"])
             except Exception:
                 logger.exception("tmx_browser: hide list failed")
         try:
             await self.filters_view.display(player_logins=[login])
-            self.filters_view._visible = True
+            self._visible_logins["filters"].add(login)
+            self.filters_view._visible_logins.add(login)
+            self.filters_view._visible = bool(self._visible_logins["filters"])
         except Exception:
             logger.exception("tmx_browser: open filters failed")
 
@@ -864,7 +913,9 @@ class TmxBrowserApp(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.filters_view, player_logins=[login])
-                self.filters_view._visible = False
+                self._visible_logins["filters"].discard(login)
+                self.filters_view._visible_logins.discard(login)
+                self.filters_view._visible = bool(self._visible_logins["filters"])
             except Exception:
                 logger.exception("tmx_browser: hide filters failed")
         await self._open(player)
@@ -898,13 +949,17 @@ class TmxBrowserApp(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.filters_view, player_logins=[login])
-                self.filters_view._visible = False
+                self._visible_logins["filters"].discard(login)
+                self.filters_view._visible_logins.discard(login)
+                self.filters_view._visible = bool(self._visible_logins["filters"])
             except Exception:
                 logger.exception("tmx_browser: hide filters failed")
         if self.view is not None:
             try:
                 await self.view.display(player_logins=[login])
-                self.view._visible = True
+                self._visible_logins["main"].add(login)
+                self.view._visible_logins.add(login)
+                self.view._visible = bool(self._visible_logins["main"])
             except Exception:
                 logger.exception("tmx_browser: reopen list failed")
         await self._load_current(player)
@@ -990,12 +1045,16 @@ class TmxBrowserApp(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.view, player_logins=[login])
-                self.view._visible = False
+                self._visible_logins["main"].discard(login)
+                self.view._visible_logins.discard(login)
+                self.view._visible = bool(self._visible_logins["main"])
             except Exception:
                 logger.exception("tmx_browser: hide list failed")
         try:
             await self.policy_view.display(player_logins=[login])
-            self.policy_view._visible = True
+            self._visible_logins["policy"].add(login)
+            self.policy_view._visible_logins.add(login)
+            self.policy_view._visible = bool(self._visible_logins["policy"])
         except Exception:
             logger.exception("tmx_browser: open policy failed")
 
@@ -1006,7 +1065,9 @@ class TmxBrowserApp(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.policy_view, player_logins=[login])
-                self.policy_view._visible = False
+                self._visible_logins["policy"].discard(login)
+                self.policy_view._visible_logins.discard(login)
+                self.policy_view._visible = bool(self._visible_logins["policy"])
             except Exception:
                 logger.exception("tmx_browser: hide policy failed")
         await self._open(player)

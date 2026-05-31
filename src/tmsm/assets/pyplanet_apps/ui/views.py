@@ -210,6 +210,8 @@ class BaseView(TemplateView):
         a login. Re-render so this view reflects the new effective level."""
         if not self._visible or not login:
             return
+        if login not in self._visible_logins:
+            return
         try:
             await self.display(player_logins=[login])
         except Exception:

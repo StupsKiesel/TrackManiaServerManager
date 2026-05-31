@@ -117,6 +117,7 @@ class ImpersonateApp(AppConfig):
             return
         try:
             await self.view.display(player_logins=[player.login])
+            self.view._visible_logins.add(player.login)
             self.view._visible = True
         except Exception:
             logger.exception("impersonate: open display failed")
@@ -176,6 +177,8 @@ class ImpersonateApp(AppConfig):
 
     async def _refresh(self, login: str) -> None:
         if self.view is None:
+            return
+        if login not in self.view._visible_logins:
             return
         try:
             await self.view.display(player_logins=[login])

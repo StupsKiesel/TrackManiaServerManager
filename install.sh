@@ -240,6 +240,15 @@ fi
 "$VENV/bin/pip" install --upgrade pip >/dev/null
 "$VENV/bin/pip" install -e "$SRC_DIR"
 
+# --- copy helper scripts into TMSM_HOME so they're available even if the
+# original checkout is moved/removed. Cheap mirror — overwrite each time.
+if [[ -d "$SRC_DIR/scripts" ]]; then
+    mkdir -p "$TMSM_HOME/scripts"
+    cp -f "$SRC_DIR/scripts/"*.py "$TMSM_HOME/scripts/" 2>/dev/null || true
+    chmod +x "$TMSM_HOME/scripts/"*.py 2>/dev/null || true
+    echo "Mirrored helper scripts into $TMSM_HOME/scripts"
+fi
+
 # --- launcher ---
 LAUNCHER="$BIN_DIR/tmsm"
 cat > "$LAUNCHER" <<EOF

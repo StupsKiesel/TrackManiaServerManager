@@ -93,11 +93,27 @@ def _bin(name: str) -> Path:
 
 def install_mariadb(log: Log) -> None:
     """Download portable MariaDB, init datadir, set root password, save it to config."""
+    cfg = config.load()
+
+    # Always reconcile the configured port with reality, even when MariaDB
+    # is already installed: a previous install may have saved port=3306
+    # before the auto-pick logic existed, and the box may now have another
+    # mysqld squatting on that port.
+    if not _port_free(cfg.mariadb.host, cfg.mariadb.port):
+        free_port = _pick_free_port(cfg.mariadb.host, cfg.mariadb.port, log)
+        log(f"Auto-selecting MariaDB port {free_port} "
+            f"(configured {cfg.mariadb.port} unavailable).")
+        cfg.mariadb.port = free_port
+        config.save(cfg)
+        # Re-emit my.cnf so the next start uses the new port.
+        if is_installed():
+            write_my_cnf()
+            log(f"Re-wrote {paths.MARIADB_DIR / 'my.cnf'} with new port.")
+
     if is_installed():
-        log("MariaDB already installed.")
+        log(f"MariaDB already installed (port {cfg.mariadb.port}).")
         return
 
-    cfg = config.load()
     url = cfg.downloads.mariadb_url
 
     paths.MARIADB_DIR.mkdir(parents=True, exist_ok=True)
@@ -127,16 +143,6 @@ def install_mariadb(log: Log) -> None:
     mysqld = _bin("mysqld")
     if not mysqld.is_file():
         raise RuntimeError(f"Extracted archive has no bin/mysqld at {paths.MARIADB_DIST}")
-
-    # If something else (e.g. a system MariaDB) is already listening on the
-    # configured port, bump up until we find a free one and persist the
-    # choice so subsequent starts / pyplanet config use the same value.
-    desired_port = cfg.mariadb.port
-    free_port = _pick_free_port(cfg.mariadb.host, desired_port, log)
-    if free_port != desired_port:
-        log(f"Auto-selecting MariaDB port {free_port} (default {desired_port} unavailable).")
-        cfg.mariadb.port = free_port
-        config.save(cfg)
 
     # my.cnf
     write_my_cnf()

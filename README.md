@@ -1,29 +1,76 @@
-# tmsm — TrackMania Server Manager
+# tmsm - TrackMania Server Manager
 
-A terminal UI (TUI) for managing TrackMania 2020 and ManiaPlanet dedicated
-servers, PyPlanet controllers, and a portable MariaDB instance — all on Linux.
+A Linux/WSL terminal UI for running and managing:
 
----
+- TrackMania 2020 and ManiaPlanet dedicated servers
+- PyPlanet pools
+- a portable MariaDB instance
 
-## Features
+## Stability Notice
 
-| Area | What tmsm does |
+### TUI core status: usable
+The terminal manager itself (instance control, logs, diagnostics, stats, services, firewall, etc.) is working and usable.
+
+### tmsm PyPlanet addons status: risky / in heavy construction
+The addons under `src/tmsm/assets/pyplanet_apps/` are actively evolving and may change completely between updates.
+
+Do not treat them as stable for production yet.
+
+- Not suited for public servers yet
+- Behavior, UI, and data model may change without backward compatibility
+- Recommended for local/dev/staging environments only
+
+## Highlights
+
+| Area | What tmsm provides |
 |---|---|
-| **Game servers** | Download, install, start/stop/restart TM2020 & ManiaPlanet servers |
-| **PyPlanet pools** | Create isolated pools (settings split into `base.py` / `apps.py` / `local.py`), start/stop, edit config |
-| **MariaDB** | Portable single-node MariaDB managed as just another instance |
-| **DB browser** | Launch `lazysql` against any pool or the MariaDB service |
-| **System stats** | Live CPU (per-core + sparkline), memory, disk, network (sparklines), GPU, temperatures |
-| **UFW firewall** | View rules, add rules via structured form, delete rules, enable/disable with SSH-safety toggle |
-| **systemd services** | Browse all services, start / stop / restart / enable / disable, view journal |
-| **File manager** | Open any instance directory in Midnight Commander (`modarin256` skin) |
-| **Log viewer** | Tail tmsm capture logs and native server logs |
-| **Config editor** | Edit settings files in-TUI |
-| **Process model** | Every process runs in a named GNU `screen` session; attach/detach from inside the TUI |
+| Game servers | Download/install/start/stop/restart TM2020 and ManiaPlanet servers |
+| PyPlanet pools | Create isolated pools, manage lifecycle, edit settings |
+| MariaDB | Portable single-node MariaDB managed like a normal instance |
+| DB tool | Open Harlequin for pools/MariaDB |
+| Logs | Tail tmsm capture logs and native server logs |
+| Config editing | In-TUI config file picker/editor |
+| GNU screen integration | Attach/detach and inspect all sessions |
+| System tools | Stats, UFW management, systemd service management |
+| Diagnostics | Built-in checks for common install/runtime issues |
 
----
+## Screenshots (Link-Only)
 
-## Install
+This README intentionally does not embed images directly. Use the links below to open screenshots.
+
+### Hub
+
+- [Player Hub](docs/images/hub_player.png)
+- [Operator Hub](docs/images/hub_operator.png)
+- [Admin Hub](docs/images/hub_admin.png)
+- [Master Hub](docs/images/hub_master.png)
+
+### Apps
+
+- [Restart](docs/images/app_restart.png)
+- [Map List](docs/images/app_maplist.png)
+- [Jukebox](docs/images/app_jukebox.png)
+- [Console](docs/images/app_console.png)
+- [Database](docs/images/app_db.png)
+- [System](docs/images/app_system.png)
+- [Logs](docs/images/app_logs.png)
+- [App Settings](docs/images/app_appsettings.png)
+- [App Store](docs/images/app_appstore.png)
+- [Game Settings](docs/images/app_gamesettings.png)
+- [Trackmania Exchange](docs/images/app_trackmania_exchange.png)
+- [Widgets Editor](docs/images/app_widgets_editor.png)
+
+### UI Framework
+
+- [Buttons](docs/images/ui_framework_buttons.png)
+- [Inputs](docs/images/ui_framework_inputs.png)
+- [More UI](docs/images/ui_framework_more.png)
+
+### Misc
+
+- [tmsm](docs/images/tmsm.png)
+
+## Quick Start
 
 ```bash
 git clone https://github.com/StupsKiesel/TrackManiaServerManager tmsm
@@ -32,159 +79,117 @@ cd tmsm
 tmsm
 ```
 
-**Requirements:** Linux / WSL, Python ≥ 3.11, `git`, `screen`.  
-The first run offers to download a portable MariaDB and a managed Python 3.8
-(via pyenv) for the PyPlanet venv.
+Requirements:
 
-**Update:**
+- Linux or WSL
+- Python 3.11+
+- `git`
+- `screen`
+
+On first run, tmsm can install:
+
+- portable MariaDB
+- managed Python 3.8 (for PyPlanet venv via pyenv)
+
+## Update / Uninstall
+
+Update:
+
 ```bash
 ./install.sh
 ```
-Re-running `install.sh` does a `git pull --ff-only` and refreshes the venv.
-Or update from inside the TUI: press `u` on the main screen (only visible when
-a new version is available) — tmsm pulls, reinstalls, and relaunches itself.
 
-**Uninstall** (data under `~/.tmsm/` is kept):
+This pulls latest git changes (`--ff-only`) and refreshes the venv.
+You can also update from the TUI (`u`) when an update is available.
+
+Uninstall (keep `~/.tmsm` data):
+
 ```bash
 ./uninstall.sh
-# wipe everything including data:
+```
+
+Full purge:
+
+```bash
 ./uninstall.sh --purge
 ```
 
----
-
-## Layout
-
-```
-~/.tmsm/
-  config.toml
-  tmsm-venv/                 # tmsm's own virtualenv
-  run/                       # PID files
-  servers/<name>/            # one folder per game-server instance
-    server/                  # dedicated server binaries
-    logs/tmsm.log
-  pyplanet/
-    venv/                    # Python 3.8 venv (managed by pyenv)
-    src/                     # PyPlanet source
-    pools/<name>/
-      settings/
-        __init__.py          # imports base + apps + optional local
-        base.py              # DB connection, logging, MAP_MATCHSETTINGS
-        apps.py              # APPS list (contrib plugins)
-        local.py             # optional local overrides (not created by default)
-      logs/tmsm.log
-      pool.toml
-  mariadb/                   # portable MariaDB data dir
-  backups/
-  logs/
-```
-
----
-
-## Keys
+## Key Bindings
 
 ### Main screen
 
 | Key | Action |
 |---|---|
-| `↑` / `↓` | Move selection |
-| `Enter` | Open action menu |
+| `Enter` | Open actions menu |
 | `n` | Create new instance |
-| `R` | Refresh instance list |
-| `s` | GNU screen sessions screen |
-| `t` | System stats screen |
-| `f` | UFW firewall screen |
-| `y` | systemd services screen |
+| `R` | Refresh |
+| `s` | Screen sessions |
+| `t` | System stats |
+| `f` | UFW screen |
+| `y` | systemd services |
 | `q` | Quit |
 
-### Action menu (per instance)
+### Per-instance action menu
 
-| Item | Description |
+| Action | Description |
 |---|---|
-| ▶ Start | Start the instance |
-| ■ Stop | Stop the instance |
-| ↻ Restart | Restart the instance |
-| ⇆ Attach | Attach to the GNU screen session |
-| ≡ View logs | Pick and tail a log file |
-| ✎ Edit config | Pick and edit a settings file |
-| ⛁ Open DB tool | Launch `lazysql` (pools and MariaDB only) |
-| ⤓ Update server | Re-download and update game server binaries |
-| 📂 Open location | Open instance directory in `mc` (Midnight Commander) |
-| ✗ Delete | Delete the instance (must be stopped) |
+| Start / Stop / Restart | Lifecycle control |
+| Attach | Attach to GNU screen session |
+| View logs | Pick/tail log file |
+| Edit config | Pick/edit settings file |
+| Open DB tool | Harlequin/lazysql for pools + MariaDB |
+| Update server | Re-download/update game server binaries |
+| Open location | Open in Midnight Commander (`mc`) |
+| Delete | Remove stopped instance |
 
-### Stats screen (`t`)
+## Runtime Model
 
-Two-column layout: CPU panel on the left (per-core bars + sparkline history),
-Memory / Disk / Network / GPU / Temperatures on the right.  
-Auto-refreshes every 2 s. Press `R` to force refresh, `Esc`/`q` to go back.
-
-### UFW screen (`f`)
-
-| Key | Action |
-|---|---|
-| `a` | Add rule — structured form (action / direction / port / protocol / from / to) with live preview |
-| `d` / `Del` | Delete selected rule (with confirmation) |
-| `t` | Toggle UFW on/off — shows a safety dialog with optional "allow SSH first" switch |
-| `R` | Refresh |
-| `Esc` / `q` | Back |
-
-If UFW is not installed the screen shows an install hint instead.  
-sudo credentials are prompted in-TUI (password never reaches the raw terminal)
-and cached for the session.
-
-### systemd screen (`y`)
-
-| Key | Action |
-|---|---|
-| `s` | Start service |
-| `S` | Stop service (with confirmation) |
-| `r` | Restart service |
-| `e` | Enable service |
-| `d` | Disable service (with confirmation) |
-| `j` | View journal (`journalctl -n 200`) |
-| `/` | Filter by name or description |
-| `R` | Refresh |
-| `Esc` / `q` | Back |
-
-### Screen sessions screen (`s`)
-
-Lists all GNU `screen` sessions. `Enter`/`a` to attach, `k`/`Del` to kill.
-
----
-
-## Process model
-
-Every server, pool, and service runs in a detached GNU `screen` session named
-`tmsm-<instance>`. From a shell you can attach with:
+Each managed process runs in a detached GNU `screen` session:
 
 ```bash
 screen -r tmsm-<name>
 ```
 
-Detach with `Ctrl-A d`. The TUI's **Attach** action does the same by suspending
-the TUI, running `screen -r`, and resuming when you detach.
+- Detach: `Ctrl-A d`
+- tmsm logs process output to each instance `logs/tmsm.log`
 
-Output is also captured to each instance's `logs/tmsm.log`.
+## Directory Layout
 
----
+```text
+~/.tmsm/
+  config.toml
+  tmsm-venv/
+  run/
+  servers/<name>/
+    server/
+    logs/tmsm.log
+  pyplanet/
+    venv/
+    src/
+    pools/<name>/
+      settings/
+        __init__.py
+        base.py
+        apps.py
+        local.py
+      logs/tmsm.log
+      pool.toml
+  mariadb/
+  backups/
+  logs/
+```
 
-## sudo / authentication
+## Sudo Handling
 
-Screens that need elevated privileges (UFW, systemd service management) prompt
-for a sudo password inside the TUI using a dedicated authentication dialog.
-The password is verified immediately via `sudo -S -v` and cached in-process for
-the session so you only need to enter it once.
-
----
+For UFW and systemd operations, tmsm prompts in-TUI and validates with `sudo -S -v`.
+Credentials are cached in-process for the current session.
 
 ## License
 
-tmsm is licensed under the **GNU General Public License v3.0 or later**
-(GPL-3.0-or-later) — see the [LICENSE](LICENSE) file for the full text.
+tmsm is licensed under GNU GPL v3.0 or later.
+See [LICENSE](LICENSE).
 
-This includes the PyPlanet addons shipped in
-`src/tmsm/assets/pyplanet_apps/`, which are derivative works of
-[PyPlanet](https://github.com/PyPlanet/PyPlanet) (also GPL-3.0).
+Notes:
 
-Community PyPlanet addons fetched at install time (from `catalog.json`) are
-covered by their own upstream licenses — see each repo for details.
+- Addons in `src/tmsm/assets/pyplanet_apps/` are derivative works of [PyPlanet](https://github.com/PyPlanet/PyPlanet) (GPL-3.0).
+- Community addons installed from catalog entries keep their upstream licenses.

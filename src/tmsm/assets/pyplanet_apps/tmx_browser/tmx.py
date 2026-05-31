@@ -1,14 +1,21 @@
-"""Async client for trackmania.exchange (TM2020) and mania-exchange (TM2 / SM).
+"""Async client for the unified ManiaExchange v2 API (``/api/maps``).
 
-Two distinct sites with very similar — but not identical — REST shapes:
+Three sites, identical REST shape:
 
 * TM2020 (Trackmania, ``tmnext``) → ``https://trackmania.exchange``
-* Maniaplanet TM2 (``tm``)        → ``https://tm.mania-exchange.com``
-* Maniaplanet SM (``sm``)         → ``https://sm.mania-exchange.com``
+* Maniaplanet TM2 (``tm``)        → ``https://tm.mania.exchange``
+* Maniaplanet SM  (``sm``)        → ``https://sm.mania.exchange``
+
+Docs: https://api2.mania.exchange/Method/Index/53
+
+Pagination is cursor-based: pass ``after=<MapId of last result>`` to fetch the
+following page. ``page`` numbers exist only on the deprecated mapsearch2
+endpoint and have been retired here.
 
 We expose two operations:
 
-* ``search(query, page, limit)``  → ``{"results": [Map, ...], "more": bool}``
+* ``search(query, after, limit)`` → ``{"results": [...], "more": bool,
+                                      "last_id": int | None}``
 * ``download(track_id)``          → raw ``.Map.Gbx`` / ``.Challenge.Gbx`` bytes
 
 The result dicts are normalized to a small shared shape::
@@ -39,11 +46,51 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "tmsm/tmx_browser (+https://github.com/StupsKiesel/TrackManiaServerManager)"
 TIMEOUT_S = 20
 
-# game key -> (base url, "maps" path component used by both search & download)
+# game key -> (base url, "maps" path component used by the GBX download URL)
 _SITES: dict[str, tuple[str, str]] = {
     "tmnext": ("https://trackmania.exchange", "maps"),
-    "tm":     ("https://tm.mania-exchange.com", "tracks"),
-    "sm":     ("https://sm.mania-exchange.com", "tracks"),
+    "tm":     ("https://tm.mania.exchange", "tracks"),
+    "sm":     ("https://sm.mania.exchange", "tracks"),
+}
+
+# Map Search Orders (MX v2 /api/maps order1). Discovered empirically against
+# trackmania.exchange — there is no public enum for the TMX site.
+ORDER_RECENT  = 0    # UploadedAt desc
+ORDER_AWARDED = 12   # AwardCount desc
+
+# Field list requested from the v2 API. Keep this small but cover both the
+# list and the detail sub-view.
+_FIELDS = (
+    "MapId,MapUid,Name,GbxMapName,Uploader.Name,Authors,Environment,Vehicle,"
+    "Mood,MapType,TitlePack,Length,Laps,AwardCount,CommentCount,DownloadCount,"
+    "ReplayCount,Difficulty,Routes,Tags,HasThumbnail,IsPublic,IsListed,"
+    "AuthorComments,UploadedAt,UpdatedAt,Medals.Author"
+)
+
+_DIFFICULTIES: dict[int, str] = {
+    0: "Beginner", 1: "Intermediate", 2: "Advanced",
+    3: "Expert", 4: "Lunatic", 5: "Impossible",
+}
+_ROUTES: dict[int, str] = {
+    0: "Single", 1: "Multi", 2: "Symmetric",
+}
+_MOODS: dict[int, str] = {
+    0: "Day", 1: "Sunrise", 2: "Sunset", 3: "Night",
+}
+# Environment enum varies per game; the v2 docs only enumerate a few names per
+# site. We render the int when the name is unknown.
+_ENVIRONMENTS: dict[str, dict[int, str]] = {
+    "tmnext": {0: "Custom", 1: "Stadium", 2: "Red Island",
+               3: "Green Coast", 4: "Blue Bay", 5: "White Shore"},
+    "tm":     {0: "Custom", 1: "Canyon", 2: "Stadium", 3: "Valley",
+               4: "Lagoon", 5: "Desert", 6: "Snow", 7: "Rally",
+               8: "Coast", 9: "Bay", 10: "Island"},
+    "sm":     {0: "Custom", 1: "Storm"},
+}
+_VEHICLES: dict[str, dict[int, str]] = {
+    "tmnext": {0: "Custom", 1: "CarSport"},
+    "tm":     {0: "Custom"},
+    "sm":     {0: "Custom"},
 }
 
 
@@ -53,6 +100,13 @@ def site_for(game: str) -> tuple[str, str]:
     Falls back to TM2020 for unknown values so the UI never blows up.
     """
     return _SITES.get(game, _SITES["tmnext"])
+
+
+def _fmt_length(ms: int) -> str:
+    if ms <= 0:
+        return ""
+    s = ms // 1000
+    return f"{s // 60}:{s % 60:02d}"
 
 
 # Best-known TMX (TM2020) tag id -> short label. Used to render the comma-
@@ -79,10 +133,22 @@ TMNEXT_TAGS: dict[int, str] = {
 }
 
 
-def _tag_names(raw: str | None) -> list[str]:
-    """Split TMX's comma-separated tag id list into readable names."""
+def _tag_names(raw: Any) -> list[str]:
+    """Render the v2 ``Tags`` array (or the legacy comma-string) as names."""
     out: list[str] = []
-    for chunk in (raw or "").split(","):
+    if isinstance(raw, list):
+        for t in raw:
+            if isinstance(t, dict):
+                name = str(t.get("Name") or "").strip()
+                if name:
+                    out.append(name)
+                    continue
+                tid = t.get("TagId")
+                if isinstance(tid, int):
+                    out.append(TMNEXT_TAGS.get(tid, f"#{tid}"))
+        return out
+    # Legacy: comma-separated tag ids.
+    for chunk in (str(raw or "")).split(","):
         chunk = chunk.strip()
         if not chunk:
             continue
@@ -96,94 +162,189 @@ def _tag_names(raw: str | None) -> list[str]:
 
 
 def thumbnail_url(game: str, track_id: int) -> str:
-    """Public thumbnail URL (raw JPG) for the given map on the matching TMX site.
+    """Public thumbnail URL (raw JPG) for the given map on the matching MX site.
 
-    TM2020 serves the raw image at ``/mapthumb/<id>`` (``/maps/thumbnail/<id>``
-    is the HTML viewer page). Mania-exchange sites expose ``/tracks/thumbnail/<id>``
-    directly.
+    The v2 API exposes ``/api/maps/thumbnail/{id}`` on every site.
     """
-    base, kind = site_for(game)
-    if kind == "maps":  # trackmania.exchange (TM2020)
-        return f"{base}/mapthumb/{int(track_id)}"
-    return f"{base}/tracks/thumbnail/{int(track_id)}"
+    base, _ = site_for(game)
+    return f"{base}/api/maps/thumbnail/{int(track_id)}"
 
 
-def _norm(item: dict[str, Any]) -> dict[str, Any]:
-    """Coerce a raw TMX/MX map dict into our shared shape (see module docstring).
+def _norm(item: dict[str, Any], game: str = "tmnext") -> dict[str, Any]:
+    """Coerce a raw v2 ``/api/maps`` item into our shared shape.
 
     Includes detail-view fields so the sub-window doesn't need a 2nd HTTP call.
+    Also tolerates the legacy ``mapsearch2`` payload, for any old call site.
     """
     get = item.get
-    tid = int(get("TrackID") or get("MapID") or get("Id") or 0)
+
+    tid = int(get("MapId") or get("TrackID") or get("MapID") or 0)
+
+    # Uploader.Name in v2 is nested.
+    uploader = get("Uploader")
+    if isinstance(uploader, dict):
+        author = str(uploader.get("Name") or "")
+    else:
+        author = str(get("Username") or get("AuthorLogin") or "")
+
+    # Length is int milliseconds in v2; mapsearch2 used "LengthName" ("1 min").
+    length_raw = get("Length")
+    if isinstance(length_raw, int):
+        length = _fmt_length(length_raw)
+    else:
+        length = str(get("LengthName") or length_raw or "")
+
+    # Difficulty is enum int (v2) or already a name (legacy).
+    diff_raw = get("Difficulty")
+    if isinstance(diff_raw, int):
+        difficulty = _DIFFICULTIES.get(diff_raw, str(diff_raw))
+    else:
+        difficulty = str(get("DifficultyName") or diff_raw or "")
+
+    env_raw = get("Environment")
+    if isinstance(env_raw, int):
+        environment = _ENVIRONMENTS.get(game, {}).get(env_raw, str(env_raw))
+    else:
+        environment = str(get("EnvironmentName") or env_raw or "")
+
+    veh_raw = get("Vehicle")
+    if isinstance(veh_raw, int):
+        vehicle = _VEHICLES.get(game, {}).get(veh_raw, str(veh_raw))
+    else:
+        vehicle = str(get("VehicleName") or veh_raw or "")
+
+    mood_raw = get("Mood")
+    if isinstance(mood_raw, int):
+        mood = _MOODS.get(mood_raw, str(mood_raw))
+    else:
+        mood = str(get("MoodFull") or mood_raw or "")
+
+    routes_raw = get("Routes")
+    if isinstance(routes_raw, int):
+        route = _ROUTES.get(routes_raw, str(routes_raw))
+    else:
+        route = str(get("RouteName") or routes_raw or "")
+
     return {
         # core (used by the list view)
         "track_id": tid,
-        "uid":      str(get("TrackUID") or get("MapUID") or get("MapUid") or ""),
+        "uid":      str(get("MapUid") or get("MapUID") or get("TrackUID") or ""),
         "name":     str(get("Name") or "(unnamed)"),
-        "author":   str(get("Username") or get("AuthorLogin") or get("GbxAuthorLogin") or ""),
-        "length":   str(get("LengthName") or get("Length") or ""),
-        "difficulty": str(get("DifficultyName") or get("Difficulty") or ""),
-        "awards":   int(get("AwardCount") or get("Awards") or 0),
-        "style":    str(get("StyleName") or get("PrimaryType") or ""),
+        "author":   author,
+        "length":   length,
+        "difficulty": difficulty,
+        "awards":   int(get("AwardCount") or 0),
+        "style":    "",  # primary tag — fold in from tags[0] if needed
         "uploaded": str(get("UploadedAt") or get("UpdatedAt") or ""),
         "filename": str(get("GbxMapName") or get("Filename") or ""),
         # extra (used by the details sub-window)
-        "map_type":      str(get("TypeName") or get("MapType") or ""),
-        "title_pack":    str(get("TitlePack") or ""),
-        "environment":   str(get("EnvironmentName") or ""),
-        "vehicle":       str(get("VehicleName") or ""),
-        "mood":          str(get("Mood") or ""),
-        "route":         str(get("RouteName") or ""),
+        "map_type":      str(get("MapType") or get("TypeName") or ""),
+        "title_pack":    str(get("TitlePack") or get("Titlepack") or ""),
+        "environment":   environment,
+        "vehicle":       vehicle,
+        "mood":          mood,
+        "route":         route,
         "tags":          _tag_names(get("Tags")),
         "comment_count": int(get("CommentCount") or 0),
         "replay_count":  int(get("ReplayCount") or 0),
-        "track_value":   int(get("TrackValue") or get("MapValue") or 0),
+        "track_value":   int(get("TrackValue") or 0),
         "display_cost":  int(get("DisplayCost") or 0),
         "laps":          int(get("Laps") or 0),
         "has_thumbnail": bool(get("HasThumbnail")),
-        "downloadable":  bool(get("Downloadable", True)),
-        "author_time":   int(get("AuthorTime") or 0),
-        "comments":      str(get("Comments") or ""),
+        "downloadable":  bool(get("IsPublic", get("Downloadable", True))),
+        "author_time":   int((get("Medals") or {}).get("Author") or get("AuthorTime") or 0),
+        "comments":      str(get("AuthorComments") or get("Comments") or ""),
     }
+
+
+# Collection ("in*") flag keys accepted by the v2 API. Single-select on UI.
+COLLECTIONS: dict[str, str] = {
+    "beta":          "inbeta",
+    "featured":      "infeatured",
+    "supporter":     "insupporter",
+    "collaborative": "incollaborative",
+    "totd":          "intotd",
+}
 
 
 async def search(
     game: str,
     query: str = "",
-    page: int = 1,
+    after: int | None = None,
     limit: int = 12,
     order: int | None = None,
     random: bool = False,
+    *,
+    author: str = "",
+    environment: int | None = None,
+    vehicle: int | None = None,
+    maptype: str = "",
+    mood: int | None = None,
+    difficulty: int | None = None,
+    routes: int | None = None,
+    tags: list[int] | None = None,
+    length_min_ms: int | None = None,
+    length_max_ms: int | None = None,
+    order2: int | None = None,
+    collection: str | None = None,
 ) -> dict[str, Any]:
-    """Search/list maps on TMX.
+    """Search/list maps via the v2 ``/api/maps`` endpoint.
 
-    ``query``  — partial map name (omitted when empty).
-    ``order``  — TMX sort code. Stable values (mapsearch2):
-                   2 = Uploaded (desc, "Recent")
-                   4 = Awards   (desc, "Most awarded")
-                 omit for site default.
-    ``random`` — ask TMX for a random sample; pairs well with ``page=1``.
+    All filter kwargs are optional; only set parameters are forwarded to the
+    API. ``collection`` is the short key (see ``COLLECTIONS``) that maps to
+    one of the ``in*`` boolean flags.
+
+    Returns ``{"results": [...], "more": bool, "last_id": int | None}``.
     """
-    base, kind = site_for(game)
-    # TMX endpoint differs by site:
-    #   * trackmania.exchange  →  /mapsearch2/search
-    #   * *.mania-exchange.com →  /tracksearch2/search
-    path = "mapsearch2/search" if kind == "maps" else "tracksearch2/search"
+    base, _ = site_for(game)
+    count = 1 if random else max(1, min(100, int(limit)))
     params: dict[str, str] = {
-        "api":    "on",
-        "format": "json",
-        "limit":  str(max(1, min(50, int(limit)))),
-        "page":   str(max(1, int(page))),
+        "fields": _FIELDS,
+        "count":  str(count),
     }
     q = (query or "").strip()
     if q:
-        params["trackname"] = q
+        params["name"] = q
     if order is not None:
-        params["order"] = str(int(order))
+        params["order1"] = str(int(order))
+    if order2 is not None:
+        params["order2"] = str(int(order2))
     if random:
         params["random"] = "1"
+    elif after is not None and int(after) > 0:
+        params["after"] = str(int(after))
 
-    url = f"{base}/{path}"
+    if author.strip():
+        params["author"] = author.strip()
+    if environment is not None:
+        params["environment"] = str(int(environment))
+    if vehicle is not None:
+        params["vehicle"] = str(int(vehicle))
+    if maptype.strip():
+        params["maptype"] = maptype.strip()
+    if mood is not None:
+        params["mood"] = str(int(mood))
+    if difficulty is not None:
+        params["difficulty"] = str(int(difficulty))
+    if routes is not None:
+        params["routes"] = str(int(routes))
+    if tags:
+        params["tag"] = ",".join(str(int(t)) for t in tags)
+    if length_min_ms is not None and length_min_ms > 0:
+        params["lengthop"] = "1"  # >=
+        params["length"] = str(int(length_min_ms))
+    if length_max_ms is not None and length_max_ms > 0:
+        # If both are set, only one length comparator is supported by the API;
+        # prefer the upper bound (more selective). Min is then applied client-
+        # side by the caller if needed.
+        params["lengthop"] = "2"  # <=
+        params["length"] = str(int(length_max_ms))
+    if collection:
+        flag = COLLECTIONS.get(collection)
+        if flag:
+            params[flag] = "1"
+
+    url = f"{base}/api/maps"
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     timeout = aiohttp.ClientTimeout(total=TIMEOUT_S)
 
@@ -195,21 +356,75 @@ async def search(
     items: list[dict[str, Any]] = []
     more = False
     if isinstance(data, dict):
-        raw = data.get("Results") or data.get("results") or []
-        more = bool(data.get("More") or data.get("more"))
-        items = [_norm(it) for it in raw if isinstance(it, dict)]
-    elif isinstance(data, list):
-        items = [_norm(it) for it in data if isinstance(it, dict)]
-    return {"results": items, "more": more}
+        raw = data.get("Results") or []
+        more = bool(data.get("More"))
+        items = [_norm(it, game=game) for it in raw if isinstance(it, dict)]
+
+    # Client-side trim when both min and max were requested (API only honors
+    # one side; we picked max above so filter the lower bound here).
+    if (length_min_ms is not None and length_min_ms > 0
+            and length_max_ms is not None and length_max_ms > 0):
+        def _ms(row: dict[str, Any]) -> int:
+            ln = row.get("length") or ""
+            if isinstance(ln, str) and ":" in ln:
+                m, s = ln.split(":", 1)
+                try:
+                    return (int(m) * 60 + int(s)) * 1000
+                except ValueError:
+                    return 0
+            return 0
+        items = [it for it in items if _ms(it) >= int(length_min_ms)]
+
+    last_id = items[-1]["track_id"] if items else None
+    return {"results": items, "more": more, "last_id": last_id}
+
+
+async def tags(game: str) -> list[dict[str, Any]]:
+    """Fetch the global TMX tag dictionary.
+
+    Returns a list of ``{"id": int, "name": str, "color": str}``. Empty list
+    on failure (network/HTTP).
+    """
+    base, _ = site_for(game)
+    url = f"{base}/api/tags/gettags"
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    timeout = aiohttp.ClientTimeout(total=TIMEOUT_S)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+    except (aiohttp.ClientError, OSError) as e:
+        logger.warning("tmx.tags: fetch failed: %s", e)
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for t in data:
+        if not isinstance(t, dict):
+            continue
+        try:
+            tid = int(t.get("ID") or 0)
+        except (TypeError, ValueError):
+            continue
+        if tid <= 0:
+            continue
+        out.append({
+            "id":    tid,
+            "name":  str(t.get("Name") or f"#{tid}"),
+            "color": str(t.get("Color") or ""),
+        })
+    return out
 
 
 async def download(game: str, track_id: int) -> Optional[bytes]:
     """Download the raw ``.Map.Gbx`` / ``.Challenge.Gbx`` bytes for ``track_id``.
 
-    Returns ``None`` on 404 (map removed). All other HTTP errors propagate.
+    Uses the documented v2 endpoint ``/mapgbx/{id}``. Returns ``None`` on 404
+    (map removed). All other HTTP errors propagate.
     """
-    base, kind = site_for(game)
-    url = f"{base}/{kind}/download/{int(track_id)}"
+    base, _ = site_for(game)
+    url = f"{base}/mapgbx/{int(track_id)}"
     headers = {"User-Agent": USER_AGENT}
     timeout = aiohttp.ClientTimeout(total=60)
 

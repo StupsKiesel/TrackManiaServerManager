@@ -1,0 +1,70 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (see TmsmGamemodesApp.vote_panel_context):
+     vote          - {title, options[{value,label}], tally{value:int},
+                      total, remaining, duration, key}
+     has_voted     - whether the viewing player has already cast a ballot
+     picked_value  - the option this player chose (if any)
+#}
+
+{% if vote %}
+
+{% set win_w = 110 %}
+{% set rows  = vote.options|length %}
+{% set win_h = 16 + rows * 7 + 8 %}
+
+{# Bottom-centre overlay so it doesn't fight with the main HUD. #}
+<frame pos="{{ -win_w / 2 }} 50" z-index="850">
+
+  <quad pos="0 0" z-index="850" size="{{ win_w }} {{ win_h }}"
+        bgcolor="000c" halign="left" valign="top" />
+  <quad pos="0 -0.2" z-index="851" size="{{ win_w }} 0.4"
+        bgcolor="fc4f" halign="left" valign="top" />
+
+  {{ ui.label('VOTE', x=4, y=-3, size='sm', color='fc4', bold=True, z=860) }}
+  {{ ui.label(vote.title,
+              x=4, y=-7, size='sm', color='fff', z=860) }}
+  {{ ui.label(vote.remaining ~ 's left',
+              x=win_w - 4, y=-3, halign='right',
+              size='sm', color='fc4', z=860) }}
+  {{ ui.label(vote.total ~ ' vote' ~ ('s' if vote.total != 1 else ''),
+              x=win_w - 4, y=-7, halign='right',
+              size='sm', color='ddd', z=860) }}
+
+  {% for opt in vote.options %}
+    {% set oy = -14 - loop.index0 * 7 %}
+    {% set count = vote.tally[opt.value] if opt.value in vote.tally else 0 %}
+    {% set frac = (count / vote.total) if vote.total > 0 else 0 %}
+    {% set picked = (has_voted and picked_value == opt.value) %}
+    {% set fill = ('0c4a' if picked else '15f7') %}
+
+    {# Track + fill bar inside one row. Bar fills from left to right. #}
+    <quad pos="4 {{ oy }}" z-index="852" size="{{ win_w - 8 }} 6"
+          bgcolor="222d" halign="left" valign="top" />
+    {% if frac > 0 %}
+      <quad pos="4 {{ oy }}" z-index="853"
+            size="{{ (win_w - 8) * frac }} 6"
+            bgcolor="{{ fill }}" halign="left" valign="top" />
+    {% endif %}
+
+    {# Click target on top of the bar; disabled (no scriptevents) when voted. #}
+    {% if not has_voted %}
+      <quad pos="4 {{ oy }}" z-index="854" size="{{ win_w - 8 }} 6"
+            bgcolor="0000" halign="left" valign="top"
+            id="uibtn_ghost_{{ id }}__vote__pick__{{ opt.value }}"
+            action="{{ id }}__vote__pick__{{ opt.value }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+    {% endif %}
+
+    {{ ui.label(opt.label,
+                x=6, y=oy - 3, size='sm',
+                color=('fff' if picked else 'fff'), bold=picked, z=860) }}
+    {{ ui.label(count|string,
+                x=win_w - 6, y=oy - 3, halign='right',
+                size='sm', color='fff', bold=True, z=860) }}
+  {% endfor %}
+
+  {{ ui.hover_script() }}
+</frame>
+
+{% endif %}

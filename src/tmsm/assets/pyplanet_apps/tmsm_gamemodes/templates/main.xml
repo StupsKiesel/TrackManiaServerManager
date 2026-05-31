@@ -1,0 +1,164 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (see TmsmGamemodesApp.operator_context):
+     modes               - [{key,name,description,icon,color,category,active,is_active}]
+     active_key          - currently-running mode key (or None)
+     active_name         - display name
+     active_status_lines - list[str] status text from the active mode
+     active_config       - list[{key,label,type,value,help,min,max,choices}]
+     selected_key        - which mode is selected in the right panel (== active or operator pick)
+     editing_key         - mode whose config is being edited (=selected_key)
+     vote_snapshot       - optional dict for the live-vote summary
+#}
+
+{% set win_w = 240 %}
+{% set win_h = 150 %}
+
+{% set list_x  = 4 %}
+{% set list_y  = -12 %}
+{% set list_w  = 88 %}
+{% set card_h  = 14 %}
+
+{% set right_x = list_x + list_w + 4 %}
+{% set right_w = win_w - right_x - 4 %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
+
+  {{ ui.window('Game Modes', icon='cogs',
+               x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {# ============================== LEFT: MODE LIST ====================== #}
+  {{ ui.label('Available modes', x=list_x, y=-12, size='sm', color='aaa') }}
+
+  {% if not modes %}
+    {{ ui.label('(no modes registered)', x=list_x, y=-22, size='sm', color='666') }}
+  {% endif %}
+
+  {% for m in modes %}
+    {% set cy = -18 - loop.index0 * (card_h + 1) %}
+    {% set is_sel = (m.key == selected_key) %}
+    {% set bg = ('15f5' if is_sel else 'fff1') %}
+
+    {# Click anywhere on the card selects it for the right pane. #}
+    <quad pos="{{ list_x }} {{ cy }}" z-index="180"
+          size="{{ list_w }} {{ card_h }}"
+          bgcolor="{{ bg }}" halign="left" valign="top"
+          id="uibtn_ghost_{{ id }}__mode_select__{{ m.key }}"
+          action="{{ id }}__mode_select__{{ m.key }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+
+    {# Accent strip on the left. #}
+    <quad pos="{{ list_x }} {{ cy }}" z-index="181"
+          size="0.8 {{ card_h }}"
+          bgcolor="{{ m.color }}f" halign="left" valign="top" />
+
+    {{ ui.label(m.name,
+                x=list_x + 3, y=cy - 2.5, size='sm', color='fff', bold=True) }}
+    {{ ui.label((m.description or '')|truncate(58, true, ''),
+                x=list_x + 3, y=cy - 6.5, size='sm', color='aaa') }}
+
+    {% if m.is_active %}
+      {{ ui.badge('LIVE',
+                  x=list_x + list_w - 3, y=cy - 2,
+                  variant='success', size='sm', halign='right') }}
+    {% endif %}
+    {{ ui.label('$888' ~ (m.category or ''),
+                x=list_x + list_w - 3, y=cy - 9, halign='right',
+                size='sm', color='888') }}
+  {% endfor %}
+
+  {# ============================== RIGHT: DETAILS ====================== #}
+  {{ ui.label('Selected mode', x=right_x, y=-12, size='sm', color='aaa') }}
+
+  {% if selected_key %}
+    {% set ns = namespace(sel=None) %}
+    {% for m in modes %}{% if m.key == selected_key %}{% set ns.sel = m %}{% endif %}{% endfor %}
+    {% set sel = ns.sel %}
+
+    {% if sel %}
+      {{ ui.label(sel.name, x=right_x, y=-18, size='md', color='fff', bold=True) }}
+      {{ ui.label((sel.description or ''),
+                  x=right_x, y=-23, size='sm', color='ccc') }}
+
+      {# Action bar: Activate / Stop on the same row. #}
+      {% set ay = -30 %}
+      {% if active_key == sel.key %}
+        {{ ui.push_button('mode_stop', 'Stop',
+                          x=right_x, y=ay, halign='left',
+                          icon='stop', variant='danger', size='sm', width=24) }}
+      {% else %}
+        {{ ui.push_button('mode_start__' ~ sel.key, 'Activate',
+                          x=right_x, y=ay, halign='left',
+                          icon='play', variant='success', size='sm', width=24) }}
+      {% endif %}
+      {{ ui.push_button('mode_save', 'Save config',
+                        x=right_x + 26, y=ay, halign='left',
+                        icon='save', variant='primary', size='sm', width=28) }}
+
+      {# Active mode status block. #}
+      {% if active_key == sel.key %}
+        {% call ui.group_box(title='Live status',
+                             x=right_x, y=ay - 6, w=right_w, h=24,
+                             color='fff', border='0a85') %}
+          {% for line in active_status_lines %}
+            {{ ui.label(line,
+                        x=right_x + 3, y=ay - 11 - loop.index0 * 4.5,
+                        size='sm', color='cff') }}
+          {% endfor %}
+          {% if not active_status_lines %}
+            {{ ui.label('(no status yet)',
+                        x=right_x + 3, y=ay - 11, size='sm', color='666') }}
+          {% endif %}
+        {% endcall %}
+        {% set cfg_y = ay - 34 %}
+      {% else %}
+        {% set cfg_y = ay - 8 %}
+      {% endif %}
+
+      {# Config editor. #}
+      {% if active_config %}
+        {% call ui.group_box(title='Configuration',
+                             x=right_x, y=cfg_y,
+                             w=right_w, h=(active_config|length) * 7 + 5,
+                             color='fff', border='fff5') %}
+          {% for field in active_config %}
+            {% set fy = cfg_y - 5 - loop.index0 * 7 %}
+            {{ ui.label(field.label,
+                        x=right_x + 3, y=fy, size='sm', color='ccc') }}
+            {% if field.type == 'bool' %}
+              {{ ui.check_box('cfg__' ~ field.key, label='',
+                              checked=field.value,
+                              x=right_x + right_w - 8, y=fy, size='sm') }}
+            {% elif field.type == 'int' %}
+              {{ ui.line_edit('cfg__' ~ field.key,
+                              value=(field.value|string),
+                              placeholder=(field.value|string),
+                              x=right_x + right_w - 28, y=fy - 1.5,
+                              width=24, size='sm') }}
+            {% else %}
+              {{ ui.line_edit('cfg__' ~ field.key,
+                              value=(field.value|string),
+                              x=right_x + right_w - 38, y=fy - 1.5,
+                              width=34, size='sm') }}
+            {% endif %}
+          {% endfor %}
+        {% endcall %}
+      {% endif %}
+
+    {% endif %}
+  {% else %}
+    {{ ui.label('Pick a mode from the list on the left.',
+                x=right_x, y=-22, size='sm', color='888') }}
+  {% endif %}
+
+  {# ============================== VOTE TICKER ========================== #}
+  {% if vote_snapshot %}
+    {% set vy = -win_h + 14 %}
+    {{ ui.label('Live vote: ' ~ vote_snapshot.title
+                ~ '   (' ~ vote_snapshot.total
+                ~ ' votes, ' ~ vote_snapshot.remaining ~ 's left)',
+                x=4, y=vy, size='sm', color='fc4') }}
+  {% endif %}
+
+  {{ ui.hover_script() }}
+</frame>

@@ -1,0 +1,247 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (provided by app.policy_context):
+     draft           - policy draft dict
+     draft_length_min_text / draft_length_max_text
+     locked, hidden, open_combo
+     tags_all, tags_req_chips, tags_blk_chips, tag_mode
+     env_opts, vehicle_opts, maptype_opts, mood_opts, diff_opts,
+       route_opts, collection_opts
+     tab             - 'filters' | 'length' | 'tags'
+#}
+
+{% set win_w = 200 %}
+{% set win_h = 130 %}
+
+{% macro lock_hide(key, lx, ly) %}
+  {% set is_lock = key in locked %}
+  {% set is_hide = key in hidden %}
+  <quad pos="{{ lx }} {{ ly }}" z-index="200" size="6 5"
+        bgcolor="{{ '0a85' if is_lock else '2225' }}"
+        halign="left" valign="top"
+        id="uibtn_ghost_{{ id }}__plock__{{ key }}"
+        action="{{ id }}__plock__{{ key }}" scriptevents="1"
+        class="ui-btn ui-btn-ghost" />
+  <label pos="{{ lx + 3 }} {{ ly - 2.5 }}" z-index="201"
+         halign="center" valign="center2"
+         text="${{ 'fff' if is_lock else 'aaa' }}L"
+         textsize="0.8" textfont="GameFontBlack" />
+  <quad pos="{{ lx + 7 }} {{ ly }}" z-index="200" size="6 5"
+        bgcolor="{{ 'a005' if is_hide else '2225' }}"
+        halign="left" valign="top"
+        id="uibtn_ghost_{{ id }}__phide__{{ key }}"
+        action="{{ id }}__phide__{{ key }}" scriptevents="1"
+        class="ui-btn ui-btn-ghost" />
+  <label pos="{{ lx + 10 }} {{ ly - 2.5 }}" z-index="201"
+         halign="center" valign="center2"
+         text="${{ 'fff' if is_hide else 'aaa' }}H"
+         textsize="0.8" textfont="GameFontBlack" />
+{% endmacro %}
+
+{% macro combo_with_any(name, options, selected, x, y, w=46) %}
+  {% set opts = [['_any', 'Any']] %}
+  {% for opt in options %}{% set _ = opts.append([opt[0], opt[1]]) %}{% endfor %}
+  {{ ui.combo_box('pcombo_' ~ name, opts,
+                  selected=selected if selected not in (None, '') else '_any',
+                  open=(open_combo == name),
+                  x=x, y=y, w=w, size='sm', z=400) }}
+{% endmacro %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
+
+  {{ ui.window('TMX Admin Policy', icon='cog',
+               x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {{ ui.label('L = lock value (operator can\'t change)   '
+              ~ 'H = hide row from operators',
+              x=4, y=-12, size='sm', color='888') }}
+
+  {% set _tabs = [
+    {'key': 'filters', 'label': 'Filters'},
+    {'key': 'length',  'label': 'Length'},
+    {'key': 'tags',    'label': 'Tags'},
+  ] %}
+
+  {% set tabs_y = -18 %}
+  {% set body_y = tabs_y - 5 %}
+
+  {% call(tab_key, t) ui.tabs('policy_tabs', _tabs, active=tab,
+                              x=4, y=tabs_y, w=win_w - 8, tab_h=5,
+                              body_h=win_h + body_y - 14, size='sm') %}
+
+    {# ==== tab: filters =========================================== #}
+    {% if tab_key == 'filters' %}
+      {% set y0 = body_y - 5 %}
+      {% set row_h = 7 %}
+      {% set lbl_x = 6 %}
+      {% set lbl_w = 22 %}
+      {% set ctl_x_l = lbl_x + lbl_w %}
+      {% set lh_x_l  = ctl_x_l + 50 %}
+      {% set lbl_x_r = 100 %}
+      {% set ctl_x_r = lbl_x_r + 22 %}
+      {% set lh_x_r  = ctl_x_r + 50 %}
+
+      {{ ui.label('Author',  x=lbl_x, y=y0 - 0*row_h, size='sm', color='aaa') }}
+      {{ ui.line_edit('pauthor', value=draft.author or '',
+                      placeholder='username...',
+                      x=ctl_x_l, y=y0 - 0*row_h - 1.5, width=46, size='sm') }}
+      {{ lock_hide('author', lh_x_l, y0 - 0*row_h - 1) }}
+
+      {{ ui.label('Vista',   x=lbl_x, y=y0 - 1*row_h, size='sm', color='aaa') }}
+      {{ combo_with_any('environment', env_opts, draft.environment,
+                        ctl_x_l, y0 - 1*row_h - 1.5) }}
+      {{ lock_hide('environment', lh_x_l, y0 - 1*row_h - 1) }}
+
+      {{ ui.label('Vehicle', x=lbl_x, y=y0 - 2*row_h, size='sm', color='aaa') }}
+      {{ combo_with_any('vehicle', vehicle_opts, draft.vehicle,
+                        ctl_x_l, y0 - 2*row_h - 1.5) }}
+      {{ lock_hide('vehicle', lh_x_l, y0 - 2*row_h - 1) }}
+
+      {{ ui.label('Map type', x=lbl_x, y=y0 - 3*row_h, size='sm', color='aaa') }}
+      {{ ui.line_edit('pmaptype', value=draft.maptype or '',
+                      placeholder='TM_Race / ...',
+                      x=ctl_x_l, y=y0 - 3*row_h - 1.5, width=46, size='sm') }}
+      {{ lock_hide('maptype', lh_x_l, y0 - 3*row_h - 1) }}
+
+      {{ ui.label('Collection', x=lbl_x_r, y=y0 - 0*row_h, size='sm', color='aaa') }}
+      {{ combo_with_any('collection', collection_opts, draft.collection,
+                        ctl_x_r, y0 - 0*row_h - 1.5) }}
+      {{ lock_hide('collection', lh_x_r, y0 - 0*row_h - 1) }}
+
+      {{ ui.label('Mood',    x=lbl_x_r, y=y0 - 1*row_h, size='sm', color='aaa') }}
+      {{ combo_with_any('mood', mood_opts, draft.mood,
+                        ctl_x_r, y0 - 1*row_h - 1.5) }}
+      {{ lock_hide('mood', lh_x_r, y0 - 1*row_h - 1) }}
+
+      {{ ui.label('Difficulty', x=lbl_x_r, y=y0 - 2*row_h, size='sm', color='aaa') }}
+      {{ combo_with_any('difficulty', diff_opts, draft.difficulty,
+                        ctl_x_r, y0 - 2*row_h - 1.5) }}
+      {{ lock_hide('difficulty', lh_x_r, y0 - 2*row_h - 1) }}
+
+      {{ ui.label('Routes',  x=lbl_x_r, y=y0 - 3*row_h, size='sm', color='aaa') }}
+      {{ combo_with_any('routes', route_opts, draft.routes,
+                        ctl_x_r, y0 - 3*row_h - 1.5) }}
+      {{ lock_hide('routes', lh_x_r, y0 - 3*row_h - 1) }}
+    {% endif %}
+
+    {# ==== tab: length =========================================== #}
+    {% if tab_key == 'length' %}
+      {% set y0 = body_y - 8 %}
+      {% set row_h = 8 %}
+      {% set lbl_x = 8 %}
+      {% set ctl_x = 40 %}
+      {% set lh_x  = ctl_x + 50 %}
+
+      {{ ui.label('Min length', x=lbl_x, y=y0 - 0*row_h, size='sm', color='aaa') }}
+      {{ ui.line_edit('plmin', value=draft_length_min_text,
+                      placeholder='0h 0m 0s',
+                      x=ctl_x, y=y0 - 0*row_h - 1.5, width=46, size='sm') }}
+
+      {{ ui.label('Max length', x=lbl_x, y=y0 - 1*row_h, size='sm', color='aaa') }}
+      {{ ui.line_edit('plmax', value=draft_length_max_text,
+                      placeholder='0h 0m 0s',
+                      x=ctl_x, y=y0 - 1*row_h - 1.5, width=46, size='sm') }}
+
+      {{ lock_hide('length', lh_x, y0 - 0*row_h - 1) }}
+
+      {{ ui.label('Operator length filter is clamped to this range.',
+                  x=lbl_x, y=y0 - 3*row_h, size='sm', color='888') }}
+      {{ ui.label('"Hide" removes the length row from the operator UI entirely.',
+                  x=lbl_x, y=y0 - 3*row_h - 4, size='sm', color='888') }}
+    {% endif %}
+
+    {# ==== tab: tags ============================================= #}
+    {% if tab_key == 'tags' %}
+      {% set y0 = body_y - 5 %}
+      {% set req_active = (tag_mode == 'req') %}
+      {{ ui.label('Tag policy', x=6, y=y0, size='sm', color='aaa') }}
+
+      <quad pos="32 {{ y0 - 1 }}" z-index="200" size="22 5"
+            bgcolor="{{ 'f805' if req_active else '2225' }}"
+            halign="left" valign="top"
+            id="uibtn_ghost_{{ id }}__policy_tagmode__req"
+            action="{{ id }}__policy_tagmode__req" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+      <label pos="43 {{ y0 - 3.5 }}" z-index="201"
+             halign="center" valign="center2"
+             text="${{ 'fff' if req_active else 'aaa' }}Required"
+             textsize="0.8" textfont="GameFontBlack" />
+      <quad pos="56 {{ y0 - 1 }}" z-index="200" size="22 5"
+            bgcolor="{{ '5113' if not req_active else '2225' }}"
+            halign="left" valign="top"
+            id="uibtn_ghost_{{ id }}__policy_tagmode__blk"
+            action="{{ id }}__policy_tagmode__blk" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+      <label pos="67 {{ y0 - 3.5 }}" z-index="201"
+             halign="center" valign="center2"
+             text="${{ 'fff' if not req_active else 'aaa' }}Blocked"
+             textsize="0.8" textfont="GameFontBlack" />
+      {{ lock_hide('tags', 130, y0 - 1) }}
+
+      {% set chips = tags_req_chips if req_active else tags_blk_chips %}
+      {% set chips_y = y0 - 8 %}
+      {% if chips %}
+        {{ ui.tag_list('ptagchip', chips,
+                       x=6, y=chips_y, gap=1.0, size='sm') }}
+      {% else %}
+        {{ ui.label('(none)', x=6, y=chips_y, size='sm', color='666') }}
+      {% endif %}
+
+      {% set grid_y = y0 - 18 %}
+      {{ ui.label('Toggle tags into the active list above:',
+                  x=6, y=grid_y, size='sm', color='aaa') }}
+
+      {% set cols_n  = 6 %}
+      {% set cell_w  = (win_w - 12) / cols_n %}
+      {% set cell_h  = 4.5 %}
+      {% set req_ids = (draft.tags_required_any or []) | map('int') | list %}
+      {% set blk_ids = (draft.tags_blocked or [])      | map('int') | list %}
+      {% set sel_ids = req_ids if req_active else blk_ids %}
+
+      {% if tags_all %}
+        {% for tag in tags_all %}
+          {% set i = loop.index0 %}
+          {% set cx = 6 + (i % cols_n) * cell_w %}
+          {% set cy = grid_y - 4 - (i // cols_n) * cell_h %}
+          {% set is_sel = (tag.id in sel_ids) %}
+          {% set other  = (tag.id in (blk_ids if req_active else req_ids)) %}
+          {% set bg = ('f805' if (is_sel and req_active) else
+                       ('5113' if (is_sel and not req_active) else
+                       ('2222' if other else '2225'))) %}
+          <quad pos="{{ cx }} {{ cy }}" z-index="200"
+                size="{{ cell_w - 0.6 }} {{ cell_h - 0.4 }}"
+                bgcolor="{{ bg }}"
+                halign="left" valign="top"
+                id="uibtn_ghost_{{ id }}__ptag__{{ tag.id }}"
+                action="{{ id }}__ptag__{{ tag.id }}" scriptevents="1"
+                class="ui-btn ui-btn-ghost" />
+          <label pos="{{ cx + cell_w/2 }} {{ cy - cell_h/2 }}" z-index="201"
+                 halign="center" valign="center2"
+                 text="${{ 'fff' if is_sel else ('888' if other else 'ccc') }}{{ tag.name }}"
+                 textsize="0.8" textfont="GameFont" />
+        {% endfor %}
+      {% else %}
+        {{ ui.label('(tag list unavailable - retry later)',
+                    x=6, y=grid_y - 8, size='sm', color='666') }}
+      {% endif %}
+    {% endif %}
+
+  {% endcall %}
+
+  {# ---- footer ---------------------------------------------------- #}
+  {% set foot_y = -win_h + 8 %}
+  {{ ui.push_button('policy_reset', 'Reset',
+                    x=4, y=foot_y, halign='left',
+                    icon='undo', variant='ghost', size='sm') }}
+  {{ ui.push_button('policy_close', 'Cancel',
+                    x=win_w - 50, y=foot_y, halign='left',
+                    icon='cross', variant='ghost', size='sm') }}
+  {{ ui.push_button('policy_save', 'Save',
+                    x=win_w - 4, y=foot_y, halign='right',
+                    icon='check', variant='success', size='sm') }}
+
+  {{ ui.label(status, x=win_w/2, y=foot_y - 6, halign='center',
+              color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>

@@ -1,0 +1,236 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context:
+     draft          - draft filter dict (key -> value)
+     draft_length_min_text / draft_length_max_text
+     open_combo     - name of the currently expanded combo, or None
+     tags_all       - [{id, name, color}, ...]
+     tag_chips      - [{value, label}] for the currently selected tags
+     env_opts, vehicle_opts, maptype_opts, mood_opts, diff_opts,
+       route_opts, collection_opts, order_opts
+                    - [(value, label), ...] sequences for each combo
+     status, status_color
+     policy_locked  - {key: forced_value} from admin policy (read-only rows)
+     policy_hidden  - [key, ...] admin-hidden filter rows (omit entirely)
+     policy_min_text / policy_max_text - admin clamp hints (text or '')
+     policy_req_tag_ids / policy_blocked_tag_ids - tag policy ids
+#}
+
+{% set win_w = 220 %}
+{% set win_h = 170 %}
+
+{# Always render "Any" as the first entry of every combo so the user can
+   clear a slot. Encoded as the literal token `_any` because the macro
+   serializes the option value into the action url. #}
+{% macro combo_with_any(name, options, selected, open_combo, x, y, w=58, locked=False) %}
+  {% set opts = [['_any', 'Any']] %}
+  {% for opt in options %}
+    {% set _ = opts.append([opt[0], opt[1]]) %}
+  {% endfor %}
+  {% if locked %}
+    {# Render a non-interactive label that shows the forced value. #}
+    {% set lbl = 'Any' %}
+    {% for opt in opts %}
+      {% if opt[0] == (selected if selected not in (None, '') else '_any') %}
+        {% set lbl = opt[1] %}
+      {% endif %}
+    {% endfor %}
+    <quad pos="{{ x }} {{ y }}" z-index="200" size="{{ w }} 5"
+          bgcolor="2222" halign="left" valign="top" />
+    <label pos="{{ x + 1.5 }} {{ y - 2.5 }}" z-index="201"
+           halign="left" valign="center2"
+           text="$888{{ lbl }}  $666(locked)"
+           textsize="0.9" textfont="GameFont" />
+  {% else %}
+    {{ ui.combo_box('fcombo_' ~ name, opts,
+                    selected=selected if selected not in (None, '') else '_any',
+                    open=(open_combo == name),
+                    x=x, y=y, w=w, size='sm', z=400) }}
+  {% endif %}
+{% endmacro %}
+
+{% set _hidden = policy_hidden or [] %}
+{% set _locked = policy_locked or {} %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
+
+  {{ ui.window('TMX Filters', icon='sliders',
+               x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {# ---------- form rows: 2 columns ---------------------------------- #}
+  {% set y0 = -14 %}
+  {% set row_h = 7 %}
+  {% set lbl_w = 20 %}
+  {% set ctl_x_l = 4 + lbl_w %}
+  {% set ctl_x_r = 116 + lbl_w %}
+
+  {# left column #}
+  {% if 'author' not in _hidden %}
+  {{ ui.label('Author',     x=4,   y=y0 - 0*row_h, size='sm', color='aaa') }}
+  {% if 'author' in _locked %}
+    <quad pos="{{ ctl_x_l }} {{ y0 - 0*row_h - 1.5 }}" z-index="200"
+          size="58 5" bgcolor="2222" halign="left" valign="top" />
+    <label pos="{{ ctl_x_l + 1.5 }} {{ y0 - 0*row_h - 4 }}" z-index="201"
+           halign="left" valign="center2"
+           text="$888{{ _locked['author'] or 'Any' }}  $666(locked)"
+           textsize="0.9" textfont="GameFont" />
+  {% else %}
+    {{ ui.line_edit('fauthor', value=draft.author or '',
+                    placeholder='username...',
+                    x=ctl_x_l, y=y0 - 0*row_h - 1.5, width=58, size='sm') }}
+  {% endif %}
+  {% endif %}
+
+  {% if 'environment' not in _hidden %}
+  {{ ui.label('Vista',      x=4,   y=y0 - 1*row_h, size='sm', color='aaa') }}
+  {{ combo_with_any('environment', env_opts,
+                    _locked['environment'] if 'environment' in _locked else draft.environment,
+                    open_combo, ctl_x_l, y0 - 1*row_h - 1.5,
+                    locked=('environment' in _locked)) }}
+  {% endif %}
+
+  {% if 'vehicle' not in _hidden %}
+  {{ ui.label('Vehicle',    x=4,   y=y0 - 2*row_h, size='sm', color='aaa') }}
+  {{ combo_with_any('vehicle', vehicle_opts,
+                    _locked['vehicle'] if 'vehicle' in _locked else draft.vehicle,
+                    open_combo, ctl_x_l, y0 - 2*row_h - 1.5,
+                    locked=('vehicle' in _locked)) }}
+  {% endif %}
+
+  {% if 'maptype' not in _hidden %}
+  {{ ui.label('Map type',   x=4,   y=y0 - 3*row_h, size='sm', color='aaa') }}
+  {{ combo_with_any('maptype', maptype_opts,
+                    _locked['maptype'] if 'maptype' in _locked else draft.maptype,
+                    open_combo, ctl_x_l, y0 - 3*row_h - 1.5,
+                    locked=('maptype' in _locked)) }}
+  {% endif %}
+
+  {% if 'collection' not in _hidden %}
+  {{ ui.label('Collection', x=4,   y=y0 - 4*row_h, size='sm', color='aaa') }}
+  {{ combo_with_any('collection', collection_opts,
+                    _locked['collection'] if 'collection' in _locked else draft.collection,
+                    open_combo, ctl_x_l, y0 - 4*row_h - 1.5,
+                    locked=('collection' in _locked)) }}
+  {% endif %}
+
+  {% if 'mood' not in _hidden %}
+  {{ ui.label('Mood',       x=4,   y=y0 - 5*row_h, size='sm', color='aaa') }}
+  {{ combo_with_any('mood', mood_opts,
+                    _locked['mood'] if 'mood' in _locked else draft.mood,
+                    open_combo, ctl_x_l, y0 - 5*row_h - 1.5,
+                    locked=('mood' in _locked)) }}
+  {% endif %}
+
+  {% if 'difficulty' not in _hidden %}
+  {{ ui.label('Difficulty', x=4,   y=y0 - 6*row_h, size='sm', color='aaa') }}
+  {{ combo_with_any('difficulty', diff_opts,
+                    _locked['difficulty'] if 'difficulty' in _locked else draft.difficulty,
+                    open_combo, ctl_x_l, y0 - 6*row_h - 1.5,
+                    locked=('difficulty' in _locked)) }}
+  {% endif %}
+
+  {% if 'routes' not in _hidden %}
+  {{ ui.label('Routes',     x=4,   y=y0 - 7*row_h, size='sm', color='aaa') }}
+  {{ combo_with_any('routes', route_opts,
+                    _locked['routes'] if 'routes' in _locked else draft.routes,
+                    open_combo, ctl_x_l, y0 - 7*row_h - 1.5,
+                    locked=('routes' in _locked)) }}
+  {% endif %}
+
+  {# right column #}
+  {{ ui.label('Order',      x=116, y=y0 - 0*row_h, size='sm', color='aaa') }}
+  {{ combo_with_any('order1', order_opts, draft.order1,
+                    open_combo, ctl_x_r, y0 - 0*row_h - 1.5) }}
+
+  {{ ui.label('Order (2)',  x=116, y=y0 - 1*row_h, size='sm', color='aaa') }}
+  {{ combo_with_any('order2', order_opts, draft.order2,
+                    open_combo, ctl_x_r, y0 - 1*row_h - 1.5) }}
+
+  {% if 'length' not in _hidden %}
+  {% set _lmin_lbl = 'Length min' ~ ((' ($888min ' ~ policy_min_text ~ '$aaa)') if policy_min_text else '') %}
+  {{ ui.label(_lmin_lbl, x=116, y=y0 - 2*row_h, size='sm', color='aaa') }}
+  {{ ui.line_edit('flmin', value=draft_length_min_text,
+                  placeholder=(policy_min_text or '0h 0m 0s'),
+                  x=ctl_x_r, y=y0 - 2*row_h - 1.5, width=58, size='sm') }}
+
+  {% set _lmax_lbl = 'Length max' ~ ((' ($888max ' ~ policy_max_text ~ '$aaa)') if policy_max_text else '') %}
+  {{ ui.label(_lmax_lbl, x=116, y=y0 - 3*row_h, size='sm', color='aaa') }}
+  {{ ui.line_edit('flmax', value=draft_length_max_text,
+                  placeholder=(policy_max_text or '0h 0m 0s'),
+                  x=ctl_x_r, y=y0 - 3*row_h - 1.5, width=58, size='sm') }}
+  {% endif %}
+
+  {# ---------- selected tag chips ----------------------------------- #}
+  {% if 'tags' not in _hidden %}
+  {% set chips_y = y0 - 4*row_h - 2 %}
+  {{ ui.label('Selected tags', x=116, y=chips_y, size='sm', color='aaa') }}
+  {% if tag_chips %}
+    {{ ui.tag_list('ftagchip', tag_chips,
+                   x=116, y=chips_y - 6, gap=1.0, size='sm') }}
+  {% else %}
+    {{ ui.label('(none)', x=116, y=chips_y - 6, size='sm', color='666') }}
+  {% endif %}
+
+  {# ---------- tag grid (multi-select) ------------------------------- #}
+  {% set grid_y = y0 - 8*row_h - 6 %}
+  {% set _req_ids = policy_req_tag_ids or [] %}
+  {% set _blk_ids = policy_blocked_tag_ids or [] %}
+  {% set _has_req = _req_ids | length > 0 %}
+  {% set _tag_hint = '' %}
+  {% if _has_req %}{% set _tag_hint = ' $f80(* required by policy)' %}{% endif %}
+  {{ ui.label('Tags (toggle to add/remove):' ~ _tag_hint,
+              x=4, y=grid_y, size='sm', color='aaa') }}
+
+  {% set cols_n  = 5 %}
+  {% set cell_w  = (win_w - 8) / cols_n %}
+  {% set cell_h  = 4.5 %}
+  {% set sel_ids = (draft.tags or []) | map('int') | list %}
+
+  {% if tags_all %}
+    {% for tag in tags_all %}
+      {% set i = loop.index0 %}
+      {% set cx = 4 + (i % cols_n) * cell_w %}
+      {% set cy = grid_y - 4 - (i // cols_n) * cell_h %}
+      {% set is_sel = (tag.id in sel_ids) %}
+      {% set is_blk = (tag.id in _blk_ids) %}
+      {% set is_req = (tag.id in _req_ids) %}
+      {% set bg = '0a85' if is_sel else ('5113' if is_blk else ('f805' if is_req else '2225')) %}
+      <quad pos="{{ cx }} {{ cy }}" z-index="200"
+            size="{{ cell_w - 0.6 }} {{ cell_h - 0.4 }}"
+            bgcolor="{{ bg }}"
+            halign="left" valign="top"
+            {% if not is_blk %}
+            id="uibtn_ghost_{{ id }}__ftag__{{ tag.id }}"
+            action="{{ id }}__ftag__{{ tag.id }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost"
+            {% endif %} />
+      {% set _name = tag.name ~ ('*' if is_req else '') %}
+      {% set _color = '888' if is_blk else ('fff' if is_sel else 'ccc') %}
+      <label pos="{{ cx + cell_w/2 }} {{ cy - cell_h/2 }}" z-index="201"
+             halign="center" valign="center2"
+             text="${{ _color }}{{ _name }}"
+             textsize="0.8" textfont="GameFont" />
+    {% endfor %}
+  {% else %}
+    {{ ui.label('(tag list unavailable - retry later)',
+                x=4, y=grid_y - 8, size='sm', color='666') }}
+  {% endif %}
+  {% endif %}
+
+  {# ---------- footer bar ------------------------------------------- #}
+  {% set foot_y = -win_h + 8 %}
+  {{ ui.push_button('filters_reset', 'Reset',
+                    x=4, y=foot_y, halign='left',
+                    icon='undo', variant='ghost', size='sm') }}
+  {{ ui.push_button('filters_close', 'Cancel',
+                    x=win_w - 50, y=foot_y, halign='left',
+                    icon='cross', variant='ghost', size='sm') }}
+  {{ ui.push_button('filters_apply', 'Apply',
+                    x=win_w - 4, y=foot_y, halign='right',
+                    icon='check', variant='success', size='sm') }}
+
+  {{ ui.label(status, x=win_w/2, y=foot_y - 6, halign='center',
+              color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>

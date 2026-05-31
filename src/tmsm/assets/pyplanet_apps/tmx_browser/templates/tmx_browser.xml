@@ -2,132 +2,164 @@
 
 {# context:
      site_label       - host string for the active TMX site
-     sections         - [{key,label,selected}] for the tab row
-     section          - active section key
-     is_search        - True iff section == 'search'
      query            - current search text
-     page             - 1-based page number for the active section
-     results          - list of normalized TMX map dicts for the active section
+     page             - 1-based page number
+     results          - list of normalized TMX map dicts
      more             - True if a next page exists
      busy             - request in flight
-     loaded           - True if the active section was ever fetched
+     loaded           - True if any fetch ever completed
+     selected_idx     - row index of the currently selected map (-1 if none)
+     selected_id      - track_id of the selected map (None if none)
+     selected_name    - display name of the selected map ('' if none)
+     filter_count     - non-default filter slot count (badge)
      juke_after, save_match
      status, status_color
 #}
 
-{% set win_w  = 220 %}
+{% set win_w  = 240 %}
 {% set rows   = results|length %}
-{% set row_h  = 6 %}
+{% set row_h  = 5 %}
+{% set hdr_h  = 6 %}
 
-{# section tabs y=-12, then optional search bar y=-19, then results group #}
-{% set table_y = -27 if not is_search else -33 %}
-{% set table_h = (rows if rows else 1) * row_h + 6 %}
-{% set footer_y = table_y - table_h - 4 %}
-{% set status_y = footer_y - 7 %}
-{% set win_h = (-status_y) + 6 %}
+{# Reserve a 6u-tall strip below the table when horizontal column scrolling
+   is needed so the scrollbar doesn't collide with the footer row. #}
+{% set has_hscroll = (cols_total or 0) > (cols_visible or 0) %}
+{% set hscroll_pad = 7 if has_hscroll else 0 %}
 
-{# ----- selected/unselected pill (same style as restart form) ---- #}
-{% macro tab(key, label, selected, x, y, w, z=302) -%}
-  {% if selected %}
-    <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} 5"
-          bgcolor="0d4f" halign="left" valign="center"
-          action="{{ id }}__section__{{ key }}" scriptevents="1"
-          class="ui-btn ui-btn-primary" />
-    <label pos="{{ x + w/2 }} {{ y }}" z-index="{{ z + 2 }}"
-           halign="center" valign="center2"
-           text="$fff{{ label }}"
-           textsize="0.9" textfont="GameFontBlack" />
-  {% else %}
-    <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} 5"
-          bgcolor="fff2" halign="left" valign="center"
-          action="{{ id }}__section__{{ key }}" scriptevents="1"
-          class="ui-btn ui-btn-ghost" />
-    <label pos="{{ x + w/2 }} {{ y }}" z-index="{{ z + 2 }}"
-           halign="center" valign="center2"
-           text="$bbb{{ label }}"
-           textsize="0.9" textfont="GameFont" />
-  {% endif %}
-{%- endmacro %}
+{% set table_y = -20 %}
+{% set table_h = hdr_h + (rows if rows else 1) * row_h %}
+{% set footer_y = table_y - table_h - hscroll_pad - 6 %}
+{% set win_h = (-footer_y) + 8 %}
 
 <frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
 
   {{ ui.window('Trackmania Exchange', icon='globe',
                x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
 
-  {# ============================ SECTION TABS ========================== #}
+  {# ---------- HEADER: search box + filter button --------------------- #}
   {{ ui.label('Source: ' ~ site_label, x=4, y=-12, size='sm', color='888') }}
 
-  {% set tab_w = 22 %}
-  {% set tabs_x = win_w - 4 - (sections|length) * (tab_w + 1) %}
-  {% for s in sections %}
-    {{ tab(s.key, s.label, s.selected,
-           tabs_x + loop.index0 * (tab_w + 1), -12, tab_w) }}
-  {% endfor %}
+  {{ ui.search_input('query', value=query,
+                     placeholder='search map name...',
+                     x=44, y=-12, width=140, size='sm') }}
 
-  {# ============================ SEARCH BAR (search tab only) ========== #}
-  {% if is_search %}
-    {{ ui.search_input('query', value=query, placeholder='search by name...',
-                       x=4, y=-19, width=180, size='sm') }}
-    {{ ui.push_button('search', 'Search',
-                      x=win_w - 4, y=-19, halign='right',
-                      icon='search', variant='primary', size='sm') }}
+  {# Header right-side cluster: Search | Policy (admin only) | Filters,
+     tightly packed against the Filters button (which is flush right). #}
+  {{ ui.push_button('search', 'Search',
+                    x=186, y=-12, halign='left', width=22,
+                    icon='search', variant='primary', size='sm') }}
+
+  {% if is_admin %}
+    {{ ui.tool_button('open_policy', icon='cog',
+                      x=210, y=-12, halign='left',
+                      variant='warning', size='md',
+                      tooltip=('Policy (active)' if policy_active else 'Policy')) }}
   {% endif %}
 
-  {# ============================ RESULTS TABLE ========================= #}
-  {% call ui.group_box(title='Maps', x=4, y=table_y,
-                       w=win_w - 8, h=table_h,
-                       color='fff', border='fff5') %}
+  {% set fbtn_label = 'Filters' if not filter_count else ('Filters (' ~ filter_count ~ ')') %}
+  {{ ui.push_button('open_filters', fbtn_label,
+                    x=win_w - 4, y=-12, halign='right',
+                    icon='sliders', variant='ghost', size='sm', width=20) }}
 
-    {% set hy = table_y - 5 %}
-    {{ ui.label('Name',   x=8,   y=hy, size='sm', color='888') }}
-    {{ ui.label('Author', x=98,  y=hy, size='sm', color='888') }}
-    {{ ui.label('Len',    x=140, y=hy, size='sm', color='888') }}
-    {{ ui.label('Diff',   x=158, y=hy, size='sm', color='888') }}
-    {{ ui.label('Awd',    x=180, y=hy, size='sm', color='888') }}
+  {# ---------- RESULTS TABLE ------------------------------------------ #}
+  {% set tx = 4 %}
+  {% set tw = win_w - 8 %}
 
-    {% if rows %}
-      {% for r in results %}
-        {% set ry = hy - 3 - loop.index0 * row_h %}
-        {% if loop.index0 is divisibleby 2 %}
-          <quad pos="6 {{ ry }}" z-index="151"
-                size="{{ win_w - 12 }} {{ row_h - 0.4 }}"
-                bgcolor="fff1" halign="left" valign="center" />
-        {% endif %}
-        {{ ui.label(r.name|truncate(34, true, ''),
-                    x=8, y=ry, size='sm', color='fff') }}
-        {{ ui.label(r.author|truncate(14, true, ''),
-                    x=98, y=ry, size='sm', color='ccc') }}
-        {{ ui.label(r.length|string|truncate(7, true, ''),
-                    x=140, y=ry, size='sm', color='ccc') }}
-        {{ ui.label(r.difficulty|truncate(8, true, ''),
-                    x=158, y=ry, size='sm', color='ccc') }}
-        {{ ui.label(r.awards|string,
-                    x=180, y=ry, size='sm', color='ccc') }}
-        {{ ui.push_button('add__' ~ r.track_id, 'Add',
-                          x=win_w - 6, y=ry, halign='right',
-                          icon='plus', variant='success', size='sm') }}
-        {{ ui.tool_button('details__' ~ r.track_id, 'info',
-                          x=win_w - 24, y=ry, halign='right',
-                          variant='primary', size='sm',
-                          tooltip='Show map details') }}
-      {% endfor %}
+  {# Selection highlight (drawn under the data_table content so the
+     stripe/labels paint on top). Only when not busy — the spinner replaces
+     the table during loading. #}
+  {% if not busy and selected_idx is defined and selected_idx >= 0 %}
+    {% set sel_y = table_y - hdr_h - selected_idx * row_h %}
+    <quad pos="{{ tx }} {{ sel_y }}" z-index="199"
+          size="{{ tw }} {{ row_h }}" bgcolor="15d6"
+          halign="left" valign="top" />
+  {% endif %}
+
+  {% if busy %}
+    {{ ui.spinner(x=win_w/2, y=table_y - table_h/2,
+                  size=18, color='15f', label='loading from TMX...') }}
+  {% elif rows %}
+    {{ ui.data_table('tmxtable', columns, results,
+                     x=tx, y=table_y, w=tw, row_h=row_h, header_h=hdr_h,
+                     row_action=True, stripe=True, font=0.9, z=200) }}
+  {% else %}
+    {# empty-state: render just the header bar + a centered message #}
+    {{ ui.data_table('tmxtable', columns, [],
+                     x=tx, y=table_y, w=tw, row_h=row_h, header_h=hdr_h,
+                     row_action=False, stripe=False, font=0.9, z=200) }}
+    {% if not loaded %}
+      {{ ui.label('press Search to load maps',
+                  x=win_w/2, y=table_y - hdr_h - 6,
+                  halign='center', size='sm', color='888') }}
     {% else %}
-      {% if busy %}
-        {{ ui.label('loading...', x=win_w/2, y=table_y - 8,
-                    halign='center', size='sm', color='888') }}
-      {% elif is_search and not loaded %}
-        {{ ui.label('type a name and click Search',
-                    x=win_w/2, y=table_y - 8,
-                    halign='center', size='sm', color='888') }}
-      {% else %}
-        {{ ui.label('no results',
-                    x=win_w/2, y=table_y - 8,
-                    halign='center', size='sm', color='888') }}
-      {% endif %}
+      {{ ui.label('no results',
+                  x=win_w/2, y=table_y - hdr_h - 6,
+                  halign='center', size='sm', color='888') }}
     {% endif %}
-  {% endcall %}
+  {% endif %}
 
-  {# ============================ FOOTER ================================ #}
+  {# ---------- HORIZONTAL COLUMN SCROLLBAR --------------------------- #}
+  {% if has_hscroll and not busy %}
+    {% set SB_Y = table_y - table_h - 2 %}
+    {% set SB_H = 3 %}
+    {% set ARROW_W = 5 %}
+    {% set TRACK_X = tx + ARROW_W %}
+    {% set TRACK_W = tw - 2 * ARROW_W %}
+    {# track #}
+    <quad pos="{{ TRACK_X }} {{ SB_Y }}" z-index="201"
+          size="{{ TRACK_W }} {{ SB_H }}" bgcolor="1115"
+          halign="left" valign="top" />
+    {# thumb #}
+    {% set ratio_vis = cols_visible / cols_total %}
+    {% set ratio_off = col_scroll / cols_total %}
+    {% set thumb_w = TRACK_W * ratio_vis %}
+    {% if thumb_w < 4 %}{% set thumb_w = 4 %}{% endif %}
+    {% set thumb_x = TRACK_X + (TRACK_W * ratio_off) %}
+    <quad pos="{{ thumb_x }} {{ SB_Y }}" z-index="202"
+          size="{{ thumb_w }} {{ SB_H }}" bgcolor="15dfa"
+          halign="left" valign="top" />
+    {# left arrow #}
+    {% if col_can_prev %}
+      <quad pos="{{ tx }} {{ SB_Y }}" z-index="203"
+            size="{{ ARROW_W }} {{ SB_H }}" bgcolor="2228"
+            halign="left" valign="top"
+            id="uibtn_ghost_{{ id }}__cols_prev"
+            action="{{ id }}__cols_prev" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+      <label pos="{{ tx + ARROW_W/2 }} {{ SB_Y - SB_H/2 }}" z-index="204"
+             halign="center" valign="center2"
+             text="$fff&#x25C0;" textsize="0.7" textfont="GameFontBlack" />
+    {% else %}
+      <quad pos="{{ tx }} {{ SB_Y }}" z-index="203"
+            size="{{ ARROW_W }} {{ SB_H }}" bgcolor="1113"
+            halign="left" valign="top" />
+      <label pos="{{ tx + ARROW_W/2 }} {{ SB_Y - SB_H/2 }}" z-index="204"
+             halign="center" valign="center2"
+             text="$555&#x25C0;" textsize="0.7" textfont="GameFontBlack" />
+    {% endif %}
+    {# right arrow #}
+    {% set RX = tx + tw - ARROW_W %}
+    {% if col_can_next %}
+      <quad pos="{{ RX }} {{ SB_Y }}" z-index="203"
+            size="{{ ARROW_W }} {{ SB_H }}" bgcolor="2228"
+            halign="left" valign="top"
+            id="uibtn_ghost_{{ id }}__cols_next"
+            action="{{ id }}__cols_next" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+      <label pos="{{ RX + ARROW_W/2 }} {{ SB_Y - SB_H/2 }}" z-index="204"
+             halign="center" valign="center2"
+             text="$fff&#x25B6;" textsize="0.7" textfont="GameFontBlack" />
+    {% else %}
+      <quad pos="{{ RX }} {{ SB_Y }}" z-index="203"
+            size="{{ ARROW_W }} {{ SB_H }}" bgcolor="1113"
+            halign="left" valign="top" />
+      <label pos="{{ RX + ARROW_W/2 }} {{ SB_Y - SB_H/2 }}" z-index="204"
+             halign="center" valign="center2"
+             text="$555&#x25B6;" textsize="0.7" textfont="GameFontBlack" />
+    {% endif %}
+  {% endif %}
+
+  {# ---------- FOOTER: paging + actions + toggles -------------------- #}
   {{ ui.push_button('prev', 'Prev',
                     x=4, y=footer_y, halign='left',
                     icon='arrow_left', variant='ghost', size='sm') }}
@@ -135,17 +167,19 @@
   {{ ui.push_button('next', 'Next',
                     x=44, y=footer_y, halign='left',
                     icon='arrow_right', variant='ghost', size='sm') }}
-  {{ ui.tool_button('refresh', 'reload',
-                    x=70, y=footer_y, halign='left',
-                    variant='ghost', size='sm', tooltip='Reload section') }}
 
   {{ ui.check_box('toggle_juke', label='Play next',
-                  checked=juke_after, x=86, y=footer_y, size='sm') }}
+                  checked=juke_after, x=70, y=footer_y, size='sm') }}
   {{ ui.check_box('toggle_save', label='Save matchsettings',
-                  checked=save_match, x=130, y=footer_y, size='sm') }}
+                  checked=save_match, x=110, y=footer_y, size='sm') }}
 
-  {{ ui.label(status, x=4, y=status_y, halign='left',
-              color=status_color, size='sm') }}
+  {# Action buttons in the bottom-right corner #}
+  {{ ui.push_button('add_selected', 'Add',
+                    x=win_w - 4, y=footer_y, halign='right',
+                    icon='plus', variant='success', size='sm') }}
+  {{ ui.push_button('info_selected', 'Info',
+                    x=win_w - 24, y=footer_y, halign='right',
+                    icon='info', variant='primary', size='sm') }}
 
   {{ ui.hover_script() }}
 </frame>

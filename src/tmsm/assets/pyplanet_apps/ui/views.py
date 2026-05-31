@@ -35,6 +35,10 @@ class BaseView(TemplateView):
         # who match the audience — otherwise a view auto-pops just because
         # someone joined, even though nobody asked for it to be shown.
         self._visible: bool = False
+        # Per-login visibility: a login is in this set while the view is
+        # currently rendered for them. `_on_close` removes them so a later
+        # `refresh()` does not pop the window back up after they dismissed it.
+        self._visible_logins: set[str] = set()
         try:
             app.context.signals.listen("maniaplanet:player_connect", self._on_player_connect)
         except Exception:
@@ -112,6 +116,12 @@ class BaseView(TemplateView):
                 await self.display()
             except Exception:
                 logger.exception("BaseView.show: global display failed")
+            try:
+                online = list(self.app.instance.player_manager.online)
+                for p in online:
+                    self._visible_logins.add(p.login)
+            except Exception:
+                pass
             return
 
         try:
@@ -127,6 +137,7 @@ class BaseView(TemplateView):
             return
         try:
             await self.display(player_logins=targets)
+            self._visible_logins.update(targets)
             logger.info(
                 "BaseView(%s).show: displayed to %s", self.__class__.__name__, targets
             )
@@ -135,6 +146,7 @@ class BaseView(TemplateView):
 
     async def hide(self) -> None:
         self._visible = False
+        self._visible_logins.clear()
         try:
             await self.destroy()
         except Exception:
@@ -142,6 +154,7 @@ class BaseView(TemplateView):
 
     async def _on_close(self, player) -> None:
         """Default handler for ui.window()'s close button — hide for that player."""
+        self._visible_logins.discard(player.login)
         # Call the underlying _ManiaLink.hide directly to avoid our destroy-on-hide override.
         try:
             await TemplateView.hide(self, player_logins=[player.login])
@@ -150,6 +163,7 @@ class BaseView(TemplateView):
 
     async def _on_crumb_hub(self, player) -> None:
         """Default handler for the `hub` breadcrumb: hide self, show hub."""
+        self._visible_logins.discard(player.login)
         try:
             await TemplateView.hide(self, player_logins=[player.login])
         except Exception:
@@ -166,6 +180,15 @@ class BaseView(TemplateView):
         # Don't push the view to people who haven't asked for it; only
         # re-render for whoever currently has it open.
         if not self._visible:
+            return
+        # If we know exactly who has it open (per-player view), only refresh
+        # those logins. Otherwise fall back to full show() (e.g. global views
+        # that haven't recorded per-login state yet).
+        if self._visible_logins:
+            try:
+                await self.display(player_logins=list(self._visible_logins))
+            except Exception:
+                logger.exception("BaseView.refresh: targeted display failed")
             return
         await self.show()
 

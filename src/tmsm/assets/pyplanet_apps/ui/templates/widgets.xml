@@ -246,7 +246,7 @@
   <label pos="{{ x + icon_w/2 }} {{ y }}" z-index="{{ z + 1 }}"
          halign="center" valign="center2"
          text="$aaa{{ _ICONS['search']|safe }}"
-         textsize="{{ s.font * 1.2 }}" textfont="GameFont" />
+         textsize="{{ s.font * 1.4 }}" textfont="GameFont" />
   {# placeholder (rendered BELOW the entry so typed text covers it) #}
   {% if placeholder and not value %}
     <label pos="{{ x + icon_w + 1 }} {{ y }}" z-index="{{ z + 1 }}"
@@ -1808,8 +1808,31 @@
          text="$fff{{ '&#xf00d;'|safe }}" textsize="1.1" textfont="GameFont" />
 {% endmacro %}
 
+{# === spinner ================================================================
+   Centered rotating loading icon. Emits a labelled quad whose id is picked
+   up by the hover_script ManiaScript loop and rotated each frame. Use as a
+   replacement for content that is being fetched (table, list, etc.):
+       {% if busy %}{{ ui.spinner(x=win_w/2, y=-40, size=12) }}{% endif %}
+   ``size`` is the diameter in UI units. The spinner's id is always
+   ``uispin_<view_id>``; only one per view is supported (sufficient for the
+   loading-indicator use case).
+   ============================================================================ #}
+{% macro spinner(x=0, y=0, size=12, color='15f', label='', z=300) %}
+  <label pos="{{ x }} {{ y }}" z-index="{{ z + 1 }}"
+         id="uispin_{{ id }}" class="ui-spin"
+         halign="center" valign="center2"
+         text="${{ color }}{{ '&#xf110;'|safe }}"
+         textsize="{{ size * 0.25 }}" textfont="GameFont" />
+  {% if label %}
+    <label pos="{{ x }} {{ y - size/2 - 3 }}" z-index="{{ z + 1 }}"
+           halign="center" valign="center2"
+           text="$888{{ label }}" textsize="1.0" textfont="GameFont" />
+  {% endif %}
+{% endmacro %}
+
 {# === hover_script ===========================================================
-   Single Maniascript block animating hover for any push_button / tool_button.
+   Single Maniascript block animating hover for any push_button / tool_button
+   and rotating any spinner emitted by ``ui.spinner`` (id ``uispin_*``).
    Each button quad is emitted with id `uibtn_<variant>_<view_id>__<name>`.
    On MouseOver/MouseOut we look the quad up via `Page.GetFirstChild` and
    swap its `BgColor`. Uses the same TextLib pattern as PyPlanet's own widgets.
@@ -1855,8 +1878,20 @@ main() {
   Page.GetClassChildren("ui-btn-ghost", Page.MainFrame, True);
   foreach (C in Page.GetClassChildren_Result) _SetIdle(C, IdleGhost, IdleGhostOp);
 
+  declare Real SpinAngle = 0.0;
+
   while (True) {
     yield;
+
+    // Rotate any label tagged with class "ui-spin" (ui.spinner emits it).
+    Page.GetClassChildren("ui-spin", Page.MainFrame, True);
+    if (Page.GetClassChildren_Result.count > 0) {
+      SpinAngle = SpinAngle + 8.0;
+      if (SpinAngle > 360.0) SpinAngle = SpinAngle - 360.0;
+      foreach (S in Page.GetClassChildren_Result) {
+        S.RelativeRotation = SpinAngle;
+      }
+    }
 
     foreach (Event in PendingEvents) {
       if (Event.Type != CMlScriptEvent::Type::MouseOver

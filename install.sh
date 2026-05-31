@@ -257,6 +257,41 @@ exec "$VENV/bin/tmsm" "\$@"
 EOF
 chmod +x "$LAUNCHER"
 
+# --- uv bootstrap (required for Harlequin install) ---
+ensure_uv() {
+    if command -v uv >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "'uv' not found. Installing via official installer..."
+    if ! curl -LsSf https://astral.sh/uv/install.sh | sh; then
+        echo "ERROR: failed to install uv." >&2
+        return 1
+    fi
+
+    # The installer usually places uv in ~/.local/bin.
+    export PATH="$HOME/.local/bin:$PATH"
+    if ! command -v uv >/dev/null 2>&1; then
+        echo "ERROR: uv installed but not found on PATH." >&2
+        echo "       Try opening a new shell and re-running install.sh." >&2
+        return 1
+    fi
+}
+
+# --- harlequin (preferred DB TUI) ---
+install_harlequin() {
+    ensure_uv || return 1
+
+    echo "Installing harlequin via uv tool..."
+    if ! uv tool install harlequin; then
+        echo "NOTE: 'uv tool install harlequin' failed; continuing."
+    fi
+    if ! uv tool install 'harlequin[mysql]'; then
+        echo "NOTE: 'uv tool install harlequin[mysql]' failed; continuing."
+    fi
+}
+install_harlequin
+
 # --- lazysql (external DB TUI) ---
 install_lazysql() {
     if command -v lazysql >/dev/null 2>&1; then

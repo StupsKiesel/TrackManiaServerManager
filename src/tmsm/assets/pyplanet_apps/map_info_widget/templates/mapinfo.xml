@@ -1,0 +1,33 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{% call widgets.frame() %}
+  <quad pos="0 0" z-index="40" size="{{ widget_w }} {{ widget_h }}" bgcolor="111c" halign="left" valign="top" />
+  <quad pos="0 0" z-index="41" size="{{ widget_w }} 0.9" bgcolor="0b0f" halign="left" valign="top" />
+
+    <label pos="1.0 -2.2" z-index="42" halign="left" valign="top"
+      text="$3f7●" textsize="1.45" textfont="GameFontBlack" />
+    <label pos="5.0 -2.25" z-index="42" halign="left" valign="top"
+         text="$fff{{ map_author_time }}" textsize="1.35" textfont="GameFontBlack" />
+      <label pos="1.0 -5.2" z-index="42" halign="left" valign="top"
+      text="$39f●" textsize="1.25" textfont="GameFontBlack" />
+      <label pos="3.2 -5.25" z-index="42" halign="left" valign="top"
+        text="$fff{{ map_checkpoints }}" textsize="1.0" textfont="GameFontBlack" />
+
+  {% set bx = widget_w - 12.15 %}
+  <quad pos="{{ bx - 0.6 }} -2.1" z-index="41" size="11.4 6.45" bgcolor="0007" halign="left" valign="top" />
+
+  {# Graphical-only difficulty signal (1..6 bars), no text label. #}
+  {% for i in [1, 2, 3, 4, 5, 6] %}
+    {% set h = 0.75 + (i * 0.7875) %}
+    {% set x = bx + ((i - 1) * 1.65) %}
+    {% set y = -7.025 %}
+    {% if i <= difficulty_bars %}
+      <quad pos="{{ x }} {{ y }}" z-index="42" size="1.05 {{ h }}"
+            bgcolor="{{ difficulty_color }}" halign="left" valign="bottom" />
+    {% else %}
+      <quad pos="{{ x }} {{ y }}" z-index="42" size="1.05 {{ h }}"
+            bgcolor="6667" halign="left" valign="bottom" />
+    {% endif %}
+  {% endfor %}
+
+{% endcall %}

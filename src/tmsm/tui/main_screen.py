@@ -39,6 +39,15 @@ class MainScreen(Screen):
     def __init__(self) -> None:
         super().__init__()
         self.instances: List[Instance] = []
+        # At most one pool can have auto-attach enabled at a time (session-only).
+        self._auto_attach_pool: str | None = None
+        # Last observed pool runtime state: name -> (running, pid).
+        self._pool_state: dict[str, tuple[bool, int | None]] = {}
+        # Whether we've seen the selected auto-attach pool go down and are
+        # waiting to auto-attach when it comes back.
+        self._auto_attach_armed: dict[str, bool] = {}
+        # Guard against re-entrant auto-attach attempts while already attaching.
+        self._auto_attach_busy: bool = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -62,6 +71,8 @@ class MainScreen(Screen):
         prev_row = table.cursor_row if table.row_count else 0
         prev_scroll_x = table.scroll_x
         table.clear()
+        next_pool_state: dict[str, tuple[bool, int | None]] = {}
+        auto_attach_target: Instance | None = None
         for inst in self.instances:
             st = inst.status()
             dot = STATUS_DOT.get(st.status, "?")
@@ -73,10 +84,54 @@ class MainScreen(Screen):
                 port, inst.xmlrpc_port_str(), inst.account_name(),
                 link, inst.screen_session(), mem, inst.cmd_summary(),
             )
+
+            if inst.kind is Kind.POOL:
+                running_now = st.status is Status.RUNNING
+                next_pool_state[inst.name] = (running_now, st.pid)
+
+                # Auto-attach trigger for automatic restart/reload:
+                # - arm when pool is observed down
+                # - fire when armed pool comes up again
+                # - also fire on in-place PID change while still running
+                if (
+                    self._auto_attach_pool == inst.name
+                    and not self._auto_attach_busy
+                    and auto_attach_target is None
+                ):
+                    prev = self._pool_state.get(inst.name)
+                    if not running_now:
+                        self._auto_attach_armed[inst.name] = True
+                    if prev is not None:
+                        prev_running, prev_pid = prev
+                        restarted = False
+                        if running_now and self._auto_attach_armed.get(inst.name, False):
+                            restarted = True
+                        elif prev_running and running_now:
+                            if prev_pid is not None and st.pid is not None and prev_pid != st.pid:
+                                restarted = True
+                        elif (not prev_running) and running_now:
+                            restarted = True
+                        if restarted:
+                            self._auto_attach_armed[inst.name] = False
+                            auto_attach_target = inst
+
+        self._pool_state = next_pool_state
         if table.row_count:
             table.move_cursor(row=min(prev_row, table.row_count - 1))
         table.scroll_x = prev_scroll_x
         self.update_details()
+
+        if auto_attach_target is not None:
+            self._auto_attach_busy = True
+            try:
+                self.notify(
+                    f"Auto Attach: attaching to {auto_attach_target.name} after automatic restart.",
+                    severity="information",
+                    timeout=6,
+                )
+                self._attach_instance(auto_attach_target, automatic=True, refresh_after=False)
+            finally:
+                self._auto_attach_busy = False
 
     def _port_for(self, inst: Instance) -> str:
         if inst.kind is Kind.SERVER:
@@ -235,6 +290,16 @@ class MainScreen(Screen):
             MenuItem("open_location", "📂  Open location (mc)"),
             MenuItem("delete",        "✗  Delete",            enabled=not running),
         ]
+        if inst.kind is Kind.POOL:
+            on = self._auto_attach_pool == inst.name
+            items.insert(
+                4,
+                MenuItem(
+                    "auto_attach_toggle",
+                    f"⟳  Auto Attach ({'ON' if on else 'OFF'})",
+                    enabled=True,
+                ),
+            )
         title = f"{inst.name}  ({inst.kind.value})"
 
         def _dispatch(action: str | None) -> None:
@@ -245,6 +310,57 @@ class MainScreen(Screen):
                 handler()
 
         self.app.push_screen(ActionMenuScreen(title, items), _dispatch)
+
+    def action_auto_attach_toggle(self) -> None:
+        inst = self._selected()
+        if inst is None or inst.kind is not Kind.POOL:
+            self.notify("Auto Attach is only available for PyPlanet pools.", severity="warning")
+            return
+
+        if self._auto_attach_pool == inst.name:
+            self._auto_attach_pool = None
+            self._auto_attach_armed.pop(inst.name, None)
+            self.notify(f"Auto Attach OFF for {inst.name}", severity="information", timeout=5)
+            return
+
+        prev = self._auto_attach_pool
+        if prev and prev != inst.name:
+            self._auto_attach_armed.pop(prev, None)
+        self._auto_attach_pool = inst.name
+        st = inst.status()
+        self._pool_state[inst.name] = (st.status is Status.RUNNING, st.pid)
+        self._auto_attach_armed[inst.name] = False
+        if prev and prev != inst.name:
+            self.notify(
+                f"Auto Attach moved from {prev} to {inst.name}",
+                severity="information",
+                timeout=6,
+            )
+        else:
+            self.notify(f"Auto Attach ON for {inst.name}", severity="information", timeout=5)
+
+    def _attach_instance(self, inst: Instance, *, automatic: bool, refresh_after: bool) -> None:
+        import subprocess
+        if not inst.is_running:
+            self.notify(f"{inst.name} is not running.", severity="warning")
+            return
+        if inst.kind is Kind.SERVICE and inst.name == "mariadb":
+            self.notify(
+                "MariaDB runs as a background daemon — use the DB tool (g) "
+                "or tail the error log instead.",
+                severity="information", timeout=8,
+            )
+            return
+        cmd = supervisor.attach_command(inst.name)
+        with self.app.suspend():
+            try:
+                subprocess.run(cmd)
+            except FileNotFoundError:
+                pass
+        # Keep auto-attach enabled after attach sessions return so it can keep
+        # following future automatic restarts (e.g. restart-app dev reload).
+        if refresh_after:
+            self.refresh_instances()
 
     def action_edit(self) -> None:
         inst = self._selected()
@@ -299,27 +415,10 @@ class MainScreen(Screen):
             )
 
     def action_attach(self) -> None:
-        import subprocess
         inst = self._selected()
         if inst is None:
             return
-        if not inst.is_running:
-            self.notify(f"{inst.name} is not running.", severity="warning")
-            return
-        if inst.kind is Kind.SERVICE and inst.name == "mariadb":
-            self.notify(
-                "MariaDB runs as a background daemon — use the DB tool (g) "
-                "or tail the error log instead.",
-                severity="information", timeout=8,
-            )
-            return
-        cmd = supervisor.attach_command(inst.name)
-        with self.app.suspend():
-            try:
-                subprocess.run(cmd)
-            except FileNotFoundError:
-                pass
-        self.refresh_instances()
+        self._attach_instance(inst, automatic=False, refresh_after=True)
 
     def action_db_tool(self) -> None:
         inst = self._selected()

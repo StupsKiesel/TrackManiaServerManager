@@ -15,7 +15,9 @@ Chat command: `/hub` toggles the hub for the calling player.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import Any
 
 from pyplanet.apps.config import AppConfig
@@ -86,6 +88,8 @@ class HubApp(AppConfig):
         # loaded from dedicated_cfg.txt). Refreshed at on_start and whenever
         # someone opens the hub.
         self._server_name: str = "server"
+        self._server_name_refresh_task: asyncio.Task | None = None
+        self._server_name_last_refresh: float = 0.0
         # Track chat commands we've already wired so re-registration is a no-op.
         self._registered_commands: set[str] = set()
         # Set when the widgets app is available (resolved lazily).
@@ -407,12 +411,12 @@ class HubApp(AppConfig):
             return
         self._open_for.add(player.login)
         self._active_tab.setdefault(player.login, self._default_tab_for(player))
-        # Refresh on every open so a /set_server_name takes effect in the title.
-        await self._refresh_server_name()
         try:
             await self.hub.display(player_logins=[player.login])
         except Exception:
             logger.exception("hub: display failed for %s", player.login)
+        # Refresh server name out-of-band so button feedback is immediate.
+        self._schedule_server_name_refresh(player.login)
 
     async def _hide_for(self, player) -> None:
         if self.hub is None:
@@ -512,7 +516,30 @@ class HubApp(AppConfig):
             pass
         return None
 
-    async def _refresh_server_name(self) -> None:
+    def _schedule_server_name_refresh(self, login: str | None = None) -> None:
+        # Throttle refreshes and avoid piling up concurrent GBX requests.
+        if self._server_name_refresh_task is not None and not self._server_name_refresh_task.done():
+            return
+        if time.monotonic() - self._server_name_last_refresh < 5.0:
+            return
+
+        async def _runner() -> None:
+            try:
+                changed = await self._refresh_server_name()
+                if changed and self.hub is not None:
+                    if login and login in self._open_for:
+                        await self.hub.display(player_logins=[login])
+                    elif self._open_for:
+                        await self.hub.display(player_logins=list(self._open_for))
+            except Exception:
+                logger.exception("hub: async server-name refresh failed")
+            finally:
+                self._server_name_last_refresh = time.monotonic()
+                self._server_name_refresh_task = None
+
+        self._server_name_refresh_task = asyncio.create_task(_runner())
+
+    async def _refresh_server_name(self) -> bool:
         """Pull the dedicated server's current <server_options><name> via GBX.
 
         `GetServerOptions` returns the live value (initially loaded from
@@ -520,15 +547,20 @@ class HubApp(AppConfig):
         reliable cross-version way to get the configured server name.
         """
         try:
-            opts = await self.instance.gbx("GetServerOptions")
+            opts = await asyncio.wait_for(self.instance.gbx("GetServerOptions"), timeout=0.75)
+        except asyncio.TimeoutError:
+            # Keep UI responsive when GBX is slow/unreachable.
+            return False
         except Exception:
             logger.exception("hub: GetServerOptions failed")
-            return
+            return False
         if not isinstance(opts, dict):
-            return
+            return False
         name = opts.get("Name") or opts.get("CurrentName")
-        if name:
+        if name and str(name) != self._server_name:
             self._server_name = str(name)
+            return True
+        return False
 
     def _default_tab_for(self, player) -> str:
         # Always open on the Player tab — friendliest first impression.

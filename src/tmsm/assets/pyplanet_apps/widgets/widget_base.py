@@ -136,6 +136,49 @@ class WidgetView(BaseView):
     async def get_widget_data(self, login: str) -> dict[str, Any]:
         return {}
 
+    async def get_context_data(self):
+        # Global display paths may render without per-player data. Ensure all
+        # frame vars exist so templates using widget_w/widget_h don't explode.
+        ctx = await super().get_context_data()
+        if ctx is None:
+            ctx = {}
+        if "widget_w" not in ctx or "widget_h" not in ctx:
+            # Primary path for WidgetAppBase-based widgets.
+            if hasattr(self.widget_app, "build_entry"):
+                entry = self.widget_app.build_entry()
+                ctx.update({
+                    "widget_key": entry.key,
+                    "widget_x": entry.default_x,
+                    "widget_y": entry.default_y,
+                    "widget_w": entry.default_w,
+                    "widget_h": entry.default_h,
+                    "widget_kind": entry.kind.value,
+                    "widget_hide_clauses": _compile_hide_clauses(entry.hide_rule.named),
+                    "widget_hide_raw": entry.hide_rule.raw,
+                    "widget_anim_dir": entry.animation.direction,
+                    "widget_anim_duration_ms": entry.animation.duration_ms,
+                    "widget_anim_delay_ms": entry.animation.delay_ms,
+                    "widget_anim_off_x": _anim_offset(entry.animation.direction)[0],
+                    "widget_anim_off_y": _anim_offset(entry.animation.direction)[1],
+                    "widget_edit_mode": False,
+                    "widget_debug_mode": False,
+                    "widget_debug_status": "",
+                    "widget_view_id": self.id,
+                })
+            # Compatibility path for hub launcher and other non-WidgetAppBase
+            # users of WidgetView that still provide frame_context().
+            elif hasattr(self.widget_app, "frame_context"):
+                try:
+                    fallback = self.widget_app.frame_context("")
+                except Exception:
+                    fallback = {}
+                if fallback:
+                    fallback.setdefault("widget_debug_mode", False)
+                    fallback.setdefault("widget_debug_status", "")
+                    fallback.setdefault("widget_view_id", self.id)
+                    ctx.update(fallback)
+        return ctx
+
     async def get_per_player_data(self, login: str) -> dict[str, Any]:
         ctx = self.widget_app.frame_context(login)
         try:

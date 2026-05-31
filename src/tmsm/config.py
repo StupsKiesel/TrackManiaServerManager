@@ -38,8 +38,8 @@ class MariaDBCfg:
 
 @dataclass
 class DBToolCfg:
-    command: str = "lazysql"
-    # lazysql accepts a connection URL as positional arg; tmsm builds one per-launch.
+    command: str = "harlequin"
+    # tmsm supports Harlequin and lazysql and builds the connection args per-launch.
 
 
 @dataclass
@@ -49,7 +49,7 @@ class Config:
     db_tool: DBToolCfg = field(default_factory=DBToolCfg)
 
 
-_LEGACY_DB_TOOLS = {"gobang", "dblab"}
+_LEGACY_DB_TOOLS = {"gobang", "dblab", "lazysql"}
 _LEGACY_TM2020_URLS = {
     "http://files.v04.maniaplanet.com/server/TrackmaniaServer_Latest.zip",
     "https://files.v04.maniaplanet.com/server/TrackmaniaServer_Latest.zip",
@@ -63,7 +63,9 @@ def load() -> Config:
         data = tomllib.load(f)
     db_tool_data = dict(data.get("db_tool", {}))
     if db_tool_data.get("command") in _LEGACY_DB_TOOLS:
-        db_tool_data["command"] = "lazysql"
+        # Migrate old defaults/tool names to Harlequin.
+        # Users who explicitly want lazysql can still set a full executable path.
+        db_tool_data["command"] = "harlequin"
     downloads_data = dict(data.get("downloads", {}))
     if downloads_data.get("tm2020_url") in _LEGACY_TM2020_URLS:
         downloads_data["tm2020_url"] = DEFAULT_TM2020_URL

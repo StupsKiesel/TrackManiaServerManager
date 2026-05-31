@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import uuid
 from typing import Callable
 
 from pyplanet.views.template import TemplateView
@@ -68,11 +69,9 @@ class BaseView(TemplateView):
         return ctx
 
     def _make_id(self) -> str:
-        return (
-            self.__class__.__module__.replace(".", "_")
-            + "__"
-            + self.__class__.__name__.lower()
-        )
+        # PyPlanet's manialink callback dispatcher expects a UUID-like id.
+        # Non-UUID ids are treated as stale leaked view instances.
+        return str(uuid.uuid4())
 
     # ---- Qt-style signal API -------------------------------------------
 

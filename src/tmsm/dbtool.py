@@ -1,7 +1,8 @@
-"""Launch the external DB TUI (lazysql by default) against an instance."""
+"""Launch the external DB TUI (Harlequin by default) against an instance."""
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 from urllib.parse import quote
 
 from . import config
@@ -42,12 +43,13 @@ def launch(inst: Instance, app) -> str | None:
     Returns None on success, or an error message to surface in the UI.
     """
     cfg = config.load()
-    cmd_name = cfg.db_tool.command or "lazysql"
+    cmd_name = cfg.db_tool.command or "harlequin"
     exe = shutil.which(cmd_name)
     if not exe:
         return (
             f"`{cmd_name}` not found on PATH.\n"
-            "Install it from https://github.com/jorgerojas26/lazysql/releases\n"
+            "Install Harlequin from https://harlequin.sh/\n"
+            "or lazysql from https://github.com/jorgerojas26/lazysql/releases\n"
             "or set [db_tool].command in ~/.tmsm/config.toml"
         )
 
@@ -74,34 +76,46 @@ def launch(inst: Instance, app) -> str | None:
             "Start it from the main screen first (select 'mariadb', press Enter, then Start)."
         )
 
-    user_q = quote(conn["user"], safe="")
-    pass_q = quote(conn["password"], safe="")
-    # lazysql expects a plain URL: mysql://user:pass@host:port/db
-    # Do NOT use the Go DSN @tcp(...) form — that's only for the raw driver.
-    url = f"mysql://{user_q}:{pass_q}@{conn['host']}:{conn['port']}/{conn['database']}"
-    cmd = [exe, url]
+    exe_base = Path(exe).name.lower()
+    if exe_base.startswith("harlequin"):
+        # Harlequin CLI mode for MySQL mirrors the working manual command.
+        cmd = [
+            exe,
+            "--adapter",
+            "mysql",
+            "--host",
+            str(conn["host"]),
+            "--port",
+            str(conn["port"]),
+            "--database",
+            str(conn["database"]),
+            "--user",
+            str(conn["user"]),
+        ]
+        if conn["password"]:
+            cmd.extend(["--password", str(conn["password"])])
+    else:
+        user_q = quote(conn["user"], safe="")
+        pass_q = quote(conn["password"], safe="")
+        # lazysql expects a plain URL: mysql://user:pass@host:port/db
+        # Do NOT use the Go DSN @tcp(...) form — that's only for the raw driver.
+        url = f"mysql://{user_q}:{pass_q}@{conn['host']}:{conn['port']}/{conn['database']}"
+        cmd = [exe, url]
 
-    # Run lazysql and capture its output so we can see *why* it exits if it does.
+    # Run the DB tool directly in the user's terminal.
+    # Interactive TUIs like Harlequin require a real TTY and may misbehave if
+    # stdout/stderr are redirected.
     import subprocess
-    from . import paths
-    log_path = paths.LOGS_DIR / "dbtool-last.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
     with app.suspend():
-        with open(log_path, "wb") as fh:
-            fh.write(f"$ {' '.join(cmd)}\n".encode())
-            fh.flush()
-            try:
-                rc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT).returncode
-            except FileNotFoundError:
-                return f"Failed to launch {cmd_name}."
-    try:
-        tail = "\n".join(log_path.read_text(errors="replace").splitlines()[-15:])
-    except OSError:
-        tail = ""
+        try:
+            rc = subprocess.run(cmd).returncode
+        except FileNotFoundError:
+            return f"Failed to launch {cmd_name}."
+        except Exception as exc:
+            return f"Failed to launch {cmd_name}: {exc}"
     if rc != 0:
         return (
-            f"{cmd_name} exited immediately (rc={rc}).\n"
-            f"Output saved to {log_path}\n"
-            + (f"Last lines:\n{tail}" if tail else "")
+            f"{cmd_name} exited with code {rc}.\n"
+            "If this keeps happening, run the same command manually in a shell to inspect its output."
         )
     return None

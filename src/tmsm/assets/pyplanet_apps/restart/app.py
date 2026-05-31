@@ -907,12 +907,12 @@ class RestartApp(AppConfig):
 
     async def _watch_loop(self) -> None:
         try:
-            snapshot = self._snapshot_mtimes()
+            snapshot = await self._snapshot_mtimes_async()
             while True:
                 await asyncio.sleep(WATCH_POLL_INTERVAL)
                 if self._watch_triggered:
                     return
-                current = self._snapshot_mtimes()
+                current = await self._snapshot_mtimes_async()
                 if current != snapshot:
                     changed = self._first_diff(snapshot, current)
                     snapshot = current
@@ -934,12 +934,28 @@ class RestartApp(AppConfig):
         except Exception:
             logger.exception("restart: watcher crashed")
 
+    async def _snapshot_mtimes_async(self) -> dict[str, float]:
+        # File-tree scans can be heavy on large installs; keep them off the
+        # event loop so in-game UI callbacks stay responsive.
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._snapshot_mtimes)
+
     def _snapshot_mtimes(self) -> dict[str, float]:
         out: dict[str, float] = {}
         root = Path(self.watch_dir)
         if not root.exists():
             return out
-        for dirpath, _dirs, files in os.walk(root, followlinks=True):
+
+        # tmsm addons under pyplanet/apps/tmsm are typically symlinks into the
+        # workspace. We must follow links to see source edits, but guard against
+        # recursive link loops by tracking visited real directories.
+        visited: set[str] = set()
+        for dirpath, dirs, files in os.walk(root, followlinks=True):
+            real = os.path.realpath(dirpath)
+            if real in visited:
+                dirs[:] = []
+                continue
+            visited.add(real)
             for fn in files:
                 if not fn.endswith(WATCH_SUFFIXES):
                     continue

@@ -1,5 +1,8 @@
 {% import 'tmsm_widgets/frame.xml' as widgets with context %}
 
+{% set widget_w = widget_w|default(25.0) %}
+{% set widget_h = widget_h|default(8.0) %}
+
 {% set clock_init %}
   declare CMlLabel ClockLabel <=> (Page.GetFirstChild("clock_label") as CMlLabel);
 {% endset %}

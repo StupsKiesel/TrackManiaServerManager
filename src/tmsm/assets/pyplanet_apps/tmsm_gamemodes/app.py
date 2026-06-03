@@ -38,6 +38,7 @@ class TmsmGamemodesApp(AppConfig):
     game_dependencies = ["trackmania", "trackmania_next", "shootmania"]
 
     LEVEL_OPERATOR = 1
+    CONFIG_PAGE_SIZE = 6
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -59,6 +60,8 @@ class TmsmGamemodesApp(AppConfig):
         self._operator_selection: dict[str, str] = {}   # login -> mode key
         self._operator_drafts: dict[str, dict[str, dict[str, Any]]] = {}
         # ^ login -> mode_key -> draft config (live entry-field values)
+        self._operator_cfg_page: dict[str, dict[str, int]] = {}
+        # ^ login -> mode_key -> 0-based config page index
 
         # Status lines published by the active mode (mirror for the UI).
         self._mode_status_lines: list[str] = []
@@ -91,6 +94,10 @@ class TmsmGamemodesApp(AppConfig):
                                     self._on_map_begin)
         self.context.signals.listen("maniaplanet:map_end",
                                     self._on_map_end)
+        self.context.signals.listen("trackmania:finish",
+                        self._on_player_finish)
+        self.context.signals.listen("maniaplanet:player_chat",
+                        self._on_player_chat)
 
         # Views.
         try:
@@ -183,6 +190,199 @@ class TmsmGamemodesApp(AppConfig):
         persisted = dict(self._state.get("configs", {}).get(mode_key) or {})
         return {**defaults, **persisted}
 
+    @staticmethod
+    def _parse_csv_list(raw: Any) -> list[str]:
+        out: list[str] = []
+        for part in str(raw or "").split(","):
+            k = str(part or "").strip()
+            if not k or k in out:
+                continue
+            out.append(k)
+        return out
+
+    @staticmethod
+    def _join_csv_list(items: list[str]) -> str:
+        return ",".join([str(x).strip() for x in items if str(x).strip()])
+
+    def _known_widget_keys(self) -> list[str]:
+        try:
+            widgets_app = getattr(self.instance.apps, "apps", {}).get("tmsm_widgets")
+        except Exception:
+            widgets_app = None
+        if widgets_app is None:
+            return []
+        try:
+            return sorted(str(k) for k in getattr(widgets_app, "entries", {}).keys())
+        except Exception:
+            return []
+
+    def _mode_widget_sets(self, login: str, mode_key: str) -> tuple[list[str], list[str], bool]:
+        if mode_key not in REGISTRY:
+            return [], [], False
+        inst = REGISTRY[mode_key](GameModeContext(self, mode_key))
+        defaults = inst.default_config()
+        schema_keys = {str(f.get("key")) for f in inst.config_schema()}
+        editable = "required_widgets_csv" in schema_keys and "extra_widgets_csv" in schema_keys
+        if not editable:
+            return [], [], False
+        stored = self._config_for(mode_key, defaults)
+        draft = self._operator_drafts.get(login, {}).get(mode_key, {})
+        req_raw = draft.get("required_widgets_csv", stored.get("required_widgets_csv", ""))
+        ext_raw = draft.get("extra_widgets_csv", stored.get("extra_widgets_csv", ""))
+        req = self._parse_csv_list(req_raw)
+        ext = self._parse_csv_list(ext_raw)
+        ext = [k for k in ext if k not in req]
+        return req, ext, True
+
+    def _mode_layout_values(self, login: str, mode_key: str) -> tuple[dict[str, Any], bool]:
+        if mode_key not in REGISTRY:
+            return {}, False
+        inst = REGISTRY[mode_key](GameModeContext(self, mode_key))
+        schema_keys = {str(f.get("key")) for f in inst.config_schema()}
+        needed = {
+            "random_mx_points_x",
+            "random_mx_points_y",
+            "random_mx_points_w",
+            "random_mx_points_h",
+            "random_mx_points_drive_mode",
+            "random_mx_points_anim_dir",
+            "random_mx_points_anim_duration_ms",
+            "random_mx_points_anim_delay_ms",
+        }
+        if not needed.issubset(schema_keys):
+            return {}, False
+        defaults = inst.default_config()
+        stored = self._config_for(mode_key, defaults)
+        draft = self._operator_drafts.get(login, {}).get(mode_key, {})
+
+        def _num(key: str, fallback: int) -> int:
+            raw = draft.get(key, stored.get(key, fallback))
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return int(fallback)
+
+        anim_dir = str(
+            draft.get(
+                "random_mx_points_anim_dir",
+                stored.get("random_mx_points_anim_dir", "left"),
+            )
+            or "left"
+        ).strip().lower()
+        if anim_dir not in {"none", "left", "right", "up", "down"}:
+            anim_dir = "left"
+
+        drive_mode = str(
+            draft.get(
+                "random_mx_points_drive_mode",
+                stored.get("random_mx_points_drive_mode", "fixed"),
+            )
+            or "fixed"
+        ).strip().lower()
+        if drive_mode not in {"fixed", "hide_while_driving", "only_shown_while_driving"}:
+            drive_mode = "fixed"
+
+        return {
+            "x": _num("random_mx_points_x", -126),
+            "y": _num("random_mx_points_y", 70),
+            "w": _num("random_mx_points_w", 58),
+            "h": _num("random_mx_points_h", 22),
+            "drive_mode": drive_mode,
+            "anim_dir": anim_dir,
+            "anim_duration_ms": _num("random_mx_points_anim_duration_ms", 180),
+            "anim_delay_ms": _num("random_mx_points_anim_delay_ms", 0),
+        }, True
+
+    async def _on_widget_set_change(self, login: str, mode_key: str,
+                                    req: list[str], ext: list[str]) -> None:
+        ext = [k for k in ext if k not in req]
+        await self._on_cfg_change(login, mode_key, "required_widgets_csv", self._join_csv_list(req))
+        await self._on_cfg_change(login, mode_key, "extra_widgets_csv", self._join_csv_list(ext))
+
+    async def _on_mode_widgets_edit(self, login: str, op: str, key: str) -> None:
+        mode_key = self._operator_selection.get(login)
+        if not mode_key:
+            return
+        req, ext, editable = self._mode_widget_sets(login, mode_key)
+        if not editable:
+            return
+        if op == "addreq":
+            if key not in req:
+                req.append(key)
+            ext = [k for k in ext if k != key]
+        elif op == "addextra":
+            if key not in req and key not in ext:
+                ext.append(key)
+        elif op == "delreq":
+            await self._notify(
+                "Required widgets cannot be removed.",
+                "warning",
+                login=login,
+            )
+            return
+        elif op == "delextra":
+            ext = [k for k in ext if k != key]
+        else:
+            return
+        await self._on_widget_set_change(login, mode_key, req, ext)
+
+    async def _on_mode_layout_edit(self, login: str, op: str, val: str) -> None:
+        mode_key = self._operator_selection.get(login)
+        if not mode_key:
+            return
+        current, editable = self._mode_layout_values(login, mode_key)
+        if not editable:
+            return
+
+        mapping = {
+            "x": "random_mx_points_x",
+            "y": "random_mx_points_y",
+            "w": "random_mx_points_w",
+            "h": "random_mx_points_h",
+            "dur": "random_mx_points_anim_duration_ms",
+            "delay": "random_mx_points_anim_delay_ms",
+        }
+        if op in mapping:
+            try:
+                delta = int(val)
+            except (TypeError, ValueError):
+                return
+            key = mapping[op]
+            cur = int(current.get({
+                "x": "x",
+                "y": "y",
+                "w": "w",
+                "h": "h",
+                "dur": "anim_duration_ms",
+                "delay": "anim_delay_ms",
+            }[op], 0))
+            await self._on_cfg_change(login, mode_key, key, cur + delta)
+            return
+
+        if op == "anim":
+            direction = str(val or "").strip().lower()
+            if direction not in {"none", "left", "right", "up", "down"}:
+                return
+            await self._on_cfg_change(
+                login,
+                mode_key,
+                "random_mx_points_anim_dir",
+                direction,
+            )
+            return
+
+        if op == "drive":
+            mode = str(val or "").strip().lower()
+            if mode not in {"fixed", "hide_while_driving", "only_shown_while_driving"}:
+                return
+            await self._on_cfg_change(
+                login,
+                mode_key,
+                "random_mx_points_drive_mode",
+                mode,
+            )
+            return
+
     def _mode_meta(self, mode_key: str) -> dict[str, Any]:
         cls = REGISTRY[mode_key]
         return {
@@ -194,6 +394,17 @@ class TmsmGamemodesApp(AppConfig):
             "category":    cls.category,
             "is_active":   (self._active is not None and self._active.key == cls.key),
         }
+
+    def _cfg_page_for(self, login: str, mode_key: str, total_rows: int) -> tuple[int, int]:
+        pages = max(1, (max(0, int(total_rows)) + self.CONFIG_PAGE_SIZE - 1) // self.CONFIG_PAGE_SIZE)
+        store = self._operator_cfg_page.setdefault(login, {})
+        page = int(store.get(mode_key, 0) or 0)
+        if page < 0:
+            page = 0
+        if page >= pages:
+            page = pages - 1
+        store[mode_key] = page
+        return page, pages
 
     # ---- notification --------------------------------------------------
 
@@ -229,6 +440,16 @@ class TmsmGamemodesApp(AppConfig):
                 self._operator_selection[login] = selected
 
         cfg_rows: list[dict[str, Any]] = []
+        cfg_page = 1
+        cfg_pages_total = 1
+        cfg_has_prev = False
+        cfg_has_next = False
+        mode_widgets_editable = False
+        mode_required_widgets: list[str] = []
+        mode_extra_widgets: list[str] = []
+        mode_available_widgets: list[str] = []
+        mode_layout_editable = False
+        mode_layout: dict[str, Any] = {}
         if selected:
             cls = REGISTRY[selected]
             tmp_ctx = GameModeContext(self, selected)
@@ -236,9 +457,10 @@ class TmsmGamemodesApp(AppConfig):
             defaults = tmp_instance.default_config()
             stored = self._config_for(selected, defaults)
             draft = self._operator_drafts.get(login, {}).get(selected, {})
+            all_rows: list[dict[str, Any]] = []
             for f in tmp_instance.config_schema():
                 val = draft.get(f["key"], stored.get(f["key"], f.get("default")))
-                cfg_rows.append({
+                all_rows.append({
                     "key":     f["key"],
                     "label":   f["label"],
                     "type":    f["type"],
@@ -248,6 +470,20 @@ class TmsmGamemodesApp(AppConfig):
                     "max":     f.get("max"),
                     "choices": f.get("choices") or [],
                 })
+            page0, cfg_pages_total = self._cfg_page_for(login, selected, len(all_rows))
+            start = page0 * self.CONFIG_PAGE_SIZE
+            end = start + self.CONFIG_PAGE_SIZE
+            cfg_rows = all_rows[start:end]
+            cfg_page = page0 + 1
+            cfg_has_prev = page0 > 0
+            cfg_has_next = page0 < (cfg_pages_total - 1)
+
+            mode_required_widgets, mode_extra_widgets, mode_widgets_editable = self._mode_widget_sets(login, selected)
+            if mode_widgets_editable:
+                active = set(mode_required_widgets + mode_extra_widgets)
+                known = self._known_widget_keys()
+                mode_available_widgets = [k for k in known if k not in active]
+            mode_layout, mode_layout_editable = self._mode_layout_values(login, selected)
 
         return {
             "modes":                modes_meta,
@@ -255,6 +491,16 @@ class TmsmGamemodesApp(AppConfig):
             "active_name":          (self._active.name if self._active else ""),
             "active_status_lines":  list(self._mode_status_lines),
             "active_config":        cfg_rows,
+            "cfg_page":             cfg_page,
+            "cfg_pages_total":      cfg_pages_total,
+            "cfg_has_prev":         cfg_has_prev,
+            "cfg_has_next":         cfg_has_next,
+            "mode_widgets_editable": mode_widgets_editable,
+            "mode_required_widgets": mode_required_widgets,
+            "mode_extra_widgets":    mode_extra_widgets,
+            "mode_available_widgets": mode_available_widgets,
+            "mode_layout_editable": mode_layout_editable,
+            "mode_layout":          mode_layout,
             "selected_key":         selected,
             "editing_key":          selected,
             "vote_snapshot":        self.votes.snapshot(),
@@ -294,6 +540,10 @@ class TmsmGamemodesApp(AppConfig):
             await instance.on_enable(cfg)
         except Exception:
             logger.exception("gamemodes: %s on_enable failed", mode_key)
+            try:
+                await ctx.clear_widget_overrides()
+            except Exception:
+                logger.exception("gamemodes: %s clear_widget_overrides after failed enable", mode_key)
             await self._notify(f"Failed to start {cls.name}", "error")
             self._active = None
             self._active_ctx = None
@@ -310,10 +560,16 @@ class TmsmGamemodesApp(AppConfig):
         if self._active is None:
             return
         cls = type(self._active)
+        ctx = self._active_ctx
         try:
             await self._active.on_disable()
         except Exception:
             logger.exception("gamemodes: %s on_disable failed", cls.key)
+        if ctx is not None:
+            try:
+                await ctx.clear_widget_overrides()
+            except Exception:
+                logger.exception("gamemodes: %s clear_widget_overrides on disable failed", cls.key)
         self._active = None
         self._active_ctx = None
         self._mode_status_lines = []
@@ -354,6 +610,40 @@ class TmsmGamemodesApp(AppConfig):
             await self._active.on_podium_start()
         except Exception:
             logger.exception("gamemodes: %s on_podium_start failed",
+                             self._active.key)
+
+    async def _on_player_finish(self, *args, **kwargs) -> None:
+        if self._active is None:
+            return
+        try:
+            data = dict(kwargs)
+            player = data.pop("player", None)
+            await self._active.on_player_finish(player, **data)
+        except Exception:
+            logger.exception("gamemodes: %s on_player_finish failed",
+                             self._active.key)
+
+    async def _on_player_chat(self, *args, **kwargs) -> None:
+        if self._active is None:
+            return
+        try:
+            data = dict(kwargs)
+            player = data.pop("player", None)
+            text = data.get("text")
+            if text is None:
+                text = data.get("message")
+            if text is None:
+                text = data.get("msg")
+            data.pop("text", None)
+            data.pop("message", None)
+            data.pop("msg", None)
+            await self._active.on_player_chat(
+                player,
+                text=str(text or ""),
+                **data,
+            )
+        except Exception:
+            logger.exception("gamemodes: %s on_player_chat failed",
                              self._active.key)
 
     # ---- vote engine hooks --------------------------------------------
@@ -410,6 +700,19 @@ class TmsmGamemodesApp(AppConfig):
         if mode_key not in REGISTRY:
             return
         self._operator_selection[player.login] = mode_key
+        self._operator_cfg_page.setdefault(player.login, {}).setdefault(mode_key, 0)
+        await self._refresh_operator()
+
+    async def _on_cfg_page(self, login: str, mode_key: str, direction: str) -> None:
+        if mode_key not in REGISTRY:
+            return
+        total = len(REGISTRY[mode_key](GameModeContext(self, mode_key)).config_schema())
+        page0, pages = self._cfg_page_for(login, mode_key, total)
+        if direction == "prev":
+            page0 = max(0, page0 - 1)
+        elif direction == "next":
+            page0 = min(pages - 1, page0 + 1)
+        self._operator_cfg_page.setdefault(login, {})[mode_key] = page0
         await self._refresh_operator()
 
     async def _on_mode_start(self, player, mode_key: str) -> None:
@@ -508,6 +811,33 @@ class TmsmGamemodesApp(AppConfig):
                     cur = bool(draft.get(m.group(1), cfg.get(m.group(1), False)))
                     await self._on_cfg_change(login, selected, m.group(1), not cur)
                     return
+
+        m = re.match(r"^cfgpage__(prev|next)$", action)
+        if m:
+            selected = self._operator_selection.get(login)
+            if selected:
+                await self._on_cfg_page(login, selected, m.group(1))
+            return
+
+        m = re.match(r"^gmw__(addreq|addextra|delreq|delextra)__([0-9a-zA-Z_\-]+)$", action)
+        if m:
+            await self._on_mode_widgets_edit(login, m.group(1), m.group(2))
+            return
+
+        m = re.match(r"^gml__(x|y|w|h|dur|delay)__(-?\d+)$", action)
+        if m:
+            await self._on_mode_layout_edit(login, m.group(1), m.group(2))
+            return
+
+        m = re.match(r"^gml__anim__(none|left|right|up|down)$", action)
+        if m:
+            await self._on_mode_layout_edit(login, "anim", m.group(1))
+            return
+
+        m = re.match(r"^gml__drive__(fixed|hide_while_driving|only_shown_while_driving)$", action)
+        if m:
+            await self._on_mode_layout_edit(login, "drive", m.group(1))
+            return
 
         # vote ballot
         m = re.match(r"^vote__pick__(.+)$", action)

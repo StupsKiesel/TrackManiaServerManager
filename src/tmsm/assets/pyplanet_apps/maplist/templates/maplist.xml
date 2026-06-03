@@ -4,6 +4,7 @@
      query
      page, results, more, total
      jukebox_count, has_jukebox, current_uid
+  is_operator
      status, status_color
 #}
 
@@ -83,6 +84,12 @@
                           x=win_w - 28, y=ry, halign='right',
                           variant='primary', size='sm',
                           tooltip='Show map details') }}
+        {% if is_operator and not r.is_current %}
+          {{ ui.tool_button('remove__' ~ r.uid, 'trash',
+                            x=win_w - 34, y=ry, halign='right',
+                            variant='danger', size='sm',
+                            tooltip='Remove map from playlist (operator).') }}
+        {% endif %}
       {% endfor %}
     {% else %}
       {{ ui.label('no maps match the filter',

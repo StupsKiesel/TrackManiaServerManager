@@ -1,0 +1,29 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(58.0) %}
+{% set widget_h = widget_h|default(22.0) %}
+
+{% call widgets.frame() %}
+  <label pos="1.5 -1.4" z-index="42" text="$dddRANDOM MX POINTS" textsize="0.90" textfont="GameFontBlack" />
+  <label pos="39 -1.4" z-index="42" text="$aaa{{ time_left_text|default('--:--') }}" textsize="0.90" textfont="GameFontBlack" />
+
+  <label pos="2.0 -5.0" z-index="42" text="$aaaYou" textsize="0.80" textfont="GameFontBlack" />
+  <label pos="8.2 -5.0" z-index="42" text="$fff#{{ my_rank_text|default('--') }}" textsize="1.00" textfont="GameFontBlack" />
+  <label pos="15.8 -5.0" z-index="42" text="$aaaPts" textsize="0.80" textfont="GameFontBlack" />
+  <label pos="22.0 -5.0" z-index="42" text="$fff{{ my_points|default(0) }}" textsize="1.00" textfont="GameFontBlack" />
+
+  <label pos="2.0 -8.4" z-index="42" sizen="54 3" text="$aaaAT: $fff{{ at_delta_text|default('--') }}"
+         textsize="0.80" textfont="GameFontBlack" />
+
+  {% if rows %}
+    {% for r in rows[:3] %}
+      {% set y = -11.6 - loop.index0 * 3.3 %}
+      <label pos="2.0 {{ y }}" z-index="42" text="$aaa{{ r.rank }}." textsize="0.78" textfont="GameFontBlack" />
+      <label pos="5.1 {{ y }}" z-index="42" sizen="36 3" text="$fff{{ r.nickname }}" textsize="0.78" textfont="GameFontBlack" />
+      <label pos="47.0 {{ y }}" z-index="42" halign="right" text="$fc0{{ r.points }}" textsize="0.82" textfont="GameFontBlack" />
+    {% endfor %}
+  {% else %}
+    <label pos="2.0 -13.0" z-index="42" sizen="53 4" text="$777{{ status_text|default('No data') }}"
+           textsize="0.80" textfont="GameFontBlack" />
+  {% endif %}
+{% endcall %}

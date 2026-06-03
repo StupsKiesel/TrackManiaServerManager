@@ -1,0 +1,4 @@
+{
+  "description": "Per-player monitor calibration for widget edge fit. Uses translation-only offset (no scaling/stretching).",
+  "author": "tmsm"
+}

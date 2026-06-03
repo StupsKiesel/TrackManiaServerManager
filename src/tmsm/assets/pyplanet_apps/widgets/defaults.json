@@ -1,6 +1,171 @@
 {
-  "_comment": "Initial global widget positions seeded into tmsm_widget_config_global on first boot (when the table is empty). After seeding, the DB is the only source of truth. Edit this file to ship a different out-of-the-box layout. Each entry needs all four floats (x, y, w, h). Keys that don't match a registered widget are ignored.",
+  "_comment": "Snapshot of current widget DB config, written by the widgets editor. On first boot (empty table), seed_defaults consumes positions only. Other sections are preserved for backup/future use.",
   "positions": {
-    "hub_launcher": {"x": -158.0, "y": -58.0, "w": 6.0, "h": 6.0}
+    "best_cps": {
+      "x": -160.0,
+      "y": 54.0,
+      "w": 56.0,
+      "h": 22.0
+    },
+    "checkpoint_counter": {
+      "x": 14.0,
+      "y": 90.0,
+      "w": 22.0,
+      "h": 8.0
+    },
+    "clock": {
+      "x": -12.0,
+      "y": 90.0,
+      "w": 25.0,
+      "h": 8.0
+    },
+    "cp_ghost_strip": {
+      "x": 98.0,
+      "y": 14.0,
+      "w": 62.0,
+      "h": 9.0
+    },
+    "hub_launcher": {
+      "x": 153.0,
+      "y": -83.0,
+      "w": 6.0,
+      "h": 6.0
+    },
+    "karma_widget": {
+      "x": 114.0,
+      "y": 72.0,
+      "w": 46.0,
+      "h": 11.0
+    },
+    "live_rankings": {
+      "x": 98.0,
+      "y": 60.0,
+      "w": 62.0,
+      "h": 22.0
+    },
+    "local_rankings": {
+      "x": 98.0,
+      "y": 37.0,
+      "w": 62.0,
+      "h": 22.0
+    },
+    "map_info": {
+      "x": 110.0,
+      "y": 85.0,
+      "w": 50.0,
+      "h": 12.0
+    },
+    "queue_status": {
+      "x": -160.0,
+      "y": 60.0,
+      "w": 42.0,
+      "h": 11.0
+    },
+    "random_mx_points": {
+      "x": -160.0,
+      "y": 21.0,
+      "w": 58.0,
+      "h": 22.0
+    },
+    "sector_diff": {
+      "x": -160.0,
+      "y": 72.0,
+      "w": 40.0,
+      "h": 12.0
+    },
+    "server_info": {
+      "x": -160.0,
+      "y": 85.0,
+      "w": 58.0,
+      "h": 12.0
+    },
+    "status": {
+      "x": 80.0,
+      "y": 85.0,
+      "w": 80.0,
+      "h": 50.0
+    }
+  },
+  "behavior": {
+    "best_cps": {
+      "group_priority": 0,
+      "group_order": 0,
+      "anim_duration_ms": 250,
+      "anim_delay_ms": 0,
+      "widget_disabled": false
+    },
+    "checkpoint_counter": {
+      "widget_disabled": true
+    },
+    "clock": {
+      "group_priority": 0,
+      "group_order": 0,
+      "anim_dir": "up",
+      "anim_duration_ms": 1000,
+      "anim_delay_ms": 0,
+      "widget_disabled": false
+    },
+    "cp_ghost_strip": {
+      "widget_disabled": true
+    },
+    "hub_launcher": {
+      "widget_disabled": false
+    },
+    "karma_widget": {
+      "hide_while_driving": true,
+      "drive_mode": "hide_while_driving",
+      "group_priority": 0,
+      "group_order": 0,
+      "anim_duration_ms": 1000,
+      "anim_delay_ms": 50,
+      "widget_disabled": false
+    },
+    "live_rankings": {
+      "widget_disabled": false
+    },
+    "local_rankings": {
+      "group_priority": 0,
+      "group_order": 0,
+      "anim_duration_ms": 250,
+      "anim_delay_ms": 0,
+      "widget_disabled": false
+    },
+    "map_info": {
+      "hide_while_driving": true,
+      "drive_mode": "hide_while_driving",
+      "group_priority": 0,
+      "group_order": 0,
+      "anim_duration_ms": 1000,
+      "anim_delay_ms": 0,
+      "widget_disabled": false
+    },
+    "queue_status": {
+      "widget_disabled": true
+    },
+    "random_mx_points": {
+      "group_priority": 0,
+      "group_order": 0,
+      "anim_dir": "left",
+      "anim_duration_ms": 0,
+      "anim_delay_ms": 0,
+      "widget_disabled": true
+    },
+    "sector_diff": {
+      "widget_disabled": true
+    },
+    "server_info": {
+      "hide_while_driving": true,
+      "drive_mode": "hide_while_driving",
+      "group_priority": 0,
+      "group_order": 0,
+      "anim_duration_ms": 1000,
+      "anim_delay_ms": 0
+    }
+  },
+  "themes": {},
+  "frame": {
+    "strip_color": "",
+    "strip_thickness": "",
+    "bg_color": ""
   }
 }

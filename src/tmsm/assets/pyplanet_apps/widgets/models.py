@@ -38,6 +38,18 @@ class WidgetConfigGlobal(Model):
     # Behaviour (server-wide). Nullable so partially-seeded rows still
     # load; the storage layer substitutes class defaults when NULL.
     hide_while_driving = BooleanField(null=True)
+    drive_mode = CharField(max_length=32, null=True)
+    state_all = BooleanField(null=True)
+    state_loading_map = BooleanField(null=True)
+    state_warmup = BooleanField(null=True)
+    state_pre_race = BooleanField(null=True)
+    state_in_race = BooleanField(null=True)
+    state_in_podium = BooleanField(null=True)
+    state_post_race = BooleanField(null=True)
+    group_key = CharField(max_length=64, null=True)
+    group_member_enabled = BooleanField(null=True)
+    group_priority = IntegerField(null=True)
+    group_order = IntegerField(null=True)
     anim_dir = CharField(max_length=16, null=True)
     anim_duration_ms = IntegerField(null=True)
     anim_delay_ms = IntegerField(null=True)
@@ -45,6 +57,13 @@ class WidgetConfigGlobal(Model):
     # Personal scope option and the app rejects per-player overrides.
     # NULL falls back to the widget class default (WIDGET_ALLOW_PERSONAL).
     allow_personal = BooleanField(null=True)
+    # Per-widget master-admin override for the colored strip edge on
+    # horizontal slides. NULL = use widget class default WIDGET_STRIP_PREFER_TOP.
+    strip_prefer_top = BooleanField(null=True)
+    # Master-admin kill-switch. True = widget never renders / never popups /
+    # never counted in groups, even though its providing app is installed and
+    # registered. NULL/False = enabled (default).
+    widget_disabled = BooleanField(null=True)
     updated_at = DateTimeField(null=True)
 
     class Meta:
@@ -68,3 +87,36 @@ class WidgetConfigPersonal(Model):
     class Meta:
         db_table = "tmsm_widget_config_personal"
         primary_key = CompositeKey("widget_key", "login")
+
+
+class WidgetGroupConfig(Model):
+    group_key = CharField(max_length=64, primary_key=True)
+    label = CharField(max_length=64, null=True)
+    description = CharField(max_length=255, null=True)
+    order = IntegerField(null=True)
+    anchor_x = FloatField(null=True)
+    anchor_y = FloatField(null=True)
+    anchor_w = FloatField(null=True)
+    anchor_h = FloatField(null=True)
+    mode = CharField(max_length=32, null=True)
+    max_visible = IntegerField(null=True)
+    runtime_prev_enabled = BooleanField(null=True)
+    runtime_next_enabled = BooleanField(null=True)
+    runtime_auto_enabled = BooleanField(null=True)
+    runtime_pin_enabled = BooleanField(null=True)
+    fixed_widget_key = CharField(max_length=64, null=True)
+    updated_at = DateTimeField(null=True)
+
+    class Meta:
+        db_table = "tmsm_widget_group_config"
+
+
+class WidgetThemeOverride(Model):
+    theme_key = CharField(max_length=32)
+    token = CharField(max_length=48)
+    value = CharField(max_length=32)
+    updated_at = DateTimeField(null=True)
+
+    class Meta:
+        db_table = "tmsm_widget_theme_overrides"
+        primary_key = CompositeKey("theme_key", "token")

@@ -19,7 +19,29 @@
 <frame id="widget_root_{{ widget_key }}" pos="{{ widget_x }} {{ widget_y }}" z-index="40">
  <frame id="widget_anim_{{ widget_key }}" pos="0 0">
 
-  {{ caller() }}
+  <frame id="widget_body_{{ widget_key }}" pos="0 0">
+    {# ── base frame look (catalog): bg quad + accent strip on one edge ── #}
+    {% set _sy_inv = 1.0 / (widget_scale_y | default(1.0)) %}
+    {% set _strip_t = widget_strip_thickness | default(1.0) %}
+    {% set _strip_t_y = _strip_t * _sy_inv %}
+    <quad pos="0 0" z-index="1" size="{{ widget_w }} {{ widget_h }}"
+          bgcolor="{{ widget_bg_color | default('40404080') }}" halign="left" valign="top" />
+    {% if widget_strip_edge == 'left' %}
+      <quad pos="-{{ _strip_t }} 0" z-index="2" size="{{ _strip_t }} {{ widget_h }}"
+            bgcolor="{{ widget_strip_color | default('ffae00') }}" halign="left" valign="top" />
+    {% elif widget_strip_edge == 'right' %}
+      <quad pos="{{ widget_w }} 0" z-index="2" size="{{ _strip_t }} {{ widget_h }}"
+            bgcolor="{{ widget_strip_color | default('ffae00') }}" halign="left" valign="top" />
+    {% elif widget_strip_edge == 'top' %}
+      <quad pos="0 {{ _strip_t_y }}" z-index="2" size="{{ widget_w }} {{ _strip_t_y }}"
+            bgcolor="{{ widget_strip_color | default('ffae00') }}" halign="left" valign="top" />
+    {% elif widget_strip_edge == 'bottom' %}
+      <quad pos="0 -{{ widget_h }}" z-index="2" size="{{ widget_w }} {{ _strip_t_y }}"
+            bgcolor="{{ widget_strip_color | default('ffae00') }}" halign="left" valign="top" />
+    {% endif %}
+
+    {{ caller() }}
+  </frame>
 
   {# ── debug overlay (master-admin toggle) ─────────────────────────── #}
   {% if widget_debug_mode %}
@@ -56,16 +78,24 @@
 
     main() {
       declare CMlFrame Holder <=> (Page.GetFirstChild("widget_anim_{{ widget_key }}") as CMlFrame);
+      declare CMlFrame Body <=> (Page.GetFirstChild("widget_body_{{ widget_key }}") as CMlFrame);
       declare CMlLabel DbgLbl <=> (Page.GetFirstChild("widget_dbg_{{ widget_key }}") as CMlLabel);
       declare Boolean DebugOn = {{ 'True' if widget_debug_mode else 'False' }};
+      declare Text TweenBodyScaled = "<frame scale=\"1 {{ '%.6f' | format(widget_scale_y|default(1.0)) }}\"/>";
       // Universal debug formatter: "<R|H> <tick>ms | <status>". Widgets may
       // overwrite Persistent_DbgStatus from extra_tick to push a one-liner;
       // SetDbg() runs every loop and decorates with render/tick info.
       declare Text Persistent_DbgStatus = "{{ widget_debug_status|default('') }}";
       declare Integer LastTickAt = Now;
       if (Holder == Null) return;
+      if (Body != Null) {
+        // Apply content de-stretch on connect/re-render. Static frame attrs can
+        // be ignored by the game parser, so we force it through AnimMgr state.
+        AnimMgr.Add(Body, TweenBodyScaled, 0, CAnimManager::EAnimManagerEasing::Linear);
+      }
 
       declare Boolean EditorOn = {{ 'True' if widget_edit_mode else 'False' }};
+      declare Boolean ForceHidden = {{ 'True' if widget_force_hidden else 'False' }};
       declare Boolean IsConcealed = False;
       declare Text TweenHidden  = "<frame pos=\"{{ widget_anim_off_x }} {{ widget_anim_off_y }}\"/>";
       declare Text TweenVisible = "<frame pos=\"0 0\"/>";
@@ -87,6 +117,7 @@
         {% for expr in widget_hide_clauses -%}
         if ({{ expr }}) Concealing = True;
         {% endfor %}
+        if (ForceHidden) Concealing = True;
         if (EditorOn) Concealing = False;
         if (!AnimEnabled) Concealing = False;
         IsConcealed = Concealing;
@@ -114,6 +145,7 @@
         {% for expr in widget_hide_clauses -%}
         if ({{ expr }}) Concealing = True;
         {% endfor %}
+        if (ForceHidden) Concealing = True;
         if (EditorOn) Concealing = False;
         if (!AnimEnabled) Concealing = False;
 

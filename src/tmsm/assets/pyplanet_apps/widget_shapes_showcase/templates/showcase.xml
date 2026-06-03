@@ -1,0 +1,179 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{# Neutral palette — same for every shape so silhouette is the only variable. #}
+{% set BG_DARK  = '0a0a0aee' %}
+{% set BG_MID   = '1a1a1aee' %}
+{% set ACCENT   = 'ffae00'   %}
+{% set ACCENT_S = 'ffae0055' %}
+{% set BORDER   = 'ffffff33' %}
+
+{% set CW = 30 %}   {# card width  #}
+{% set CH = 20 %}   {# card height #}
+{% set GX = 4  %}   {# gap x       #}
+{% set GY = 6  %}   {# gap y (room for title under each card) #}
+
+{# Layout: 5 cards per row, 2 rows. Numbers below labels each card. #}
+{% set names = [
+  '01 rectangle', '02 rounded',     '03 pill',  '04 arrow',  '05 ribbon',
+  '06 hex',       '07 tabbed',      '08 L',     '09 frame',  '10 stripe',
+] %}
+
+{% call widgets.frame() %}
+
+  {# header strip across the whole showcase #}
+  <label pos="0 -1" z-index="60" halign="left" valign="top"
+         text="$fffWidget shape showcase"
+         textsize="1.4" textfont="GameFontBlack" />
+  <label pos="{{ widget_w }} -1" z-index="60" halign="right" valign="top"
+         text="$aaa10 silhouettes \u00b7 pick any to keep"
+         textsize="0.9" textfont="GameFont" />
+
+  {% for nm in names %}
+    {% set col = loop.index0 % 5 %}
+    {% set rowi = loop.index0 // 5 %}
+    {% set cx = col * (CW + GX) %}
+    {% set cy = -6 - rowi * (CH + GY) %}
+    {% set idx = loop.index %}
+
+    {# ───────── 01 rectangle ─────────────────────────────────────── #}
+    {% if idx == 1 %}
+      <quad pos="{{ cx }} {{ cy }}" z-index="40" size="{{ CW }} {{ CH }}"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="top" />
+      <quad pos="{{ cx }} {{ cy }}" z-index="41" size="{{ CW }} 0.6"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+
+    {# ───────── 02 rounded (Bgs1/BgWindow1) ──────────────────────── #}
+    {% elif idx == 2 %}
+      <quad pos="{{ cx }} {{ cy }}" z-index="40" size="{{ CW }} {{ CH }}"
+            style="Bgs1" substyle="BgWindow1"
+            halign="left" valign="top" />
+      <quad pos="{{ cx + 2 }} {{ cy - 0.8 }}" z-index="41" size="{{ CW - 4 }} 0.4"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+
+    {# ───────── 03 pill (Bgs1/BgPager) ───────────────────────────── #}
+    {% elif idx == 3 %}
+      <quad pos="{{ cx }} {{ cy - (CH - 8) / 2 }}" z-index="40" size="{{ CW }} 8"
+            style="Bgs1" substyle="BgPager"
+            halign="left" valign="top" />
+
+    {# ───────── 04 arrow (right-pointing chevron) ────────────────── #}
+    {% elif idx == 4 %}
+      {# body: full-width minus the point area #}
+      <quad pos="{{ cx }} {{ cy }}" z-index="40" size="{{ CW - 6 }} {{ CH }}"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="top" />
+      {# point: rotated squares forming a triangle silhouette #}
+      <quad pos="{{ cx + CW - 6 }} {{ cy - CH / 4 }}" z-index="40"
+            size="9 9" rot="45"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="top" />
+      <quad pos="{{ cx + CW - 6 }} {{ cy - 3 * CH / 4 }}" z-index="40"
+            size="9 9" rot="45"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="top" />
+      {# accent stripe along the flat side #}
+      <quad pos="{{ cx }} {{ cy }}" z-index="41" size="0.6 {{ CH }}"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+
+    {# ───────── 05 ribbon (long bar with darker leading tail) ─────── #}
+    {% elif idx == 5 %}
+      {% set rh = 7 %}
+      {% set ry = cy - (CH - rh) / 2 %}
+      <quad pos="{{ cx }} {{ ry }}" z-index="40" size="{{ CW }} {{ rh }}"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="top" />
+      <quad pos="{{ cx }} {{ ry }}" z-index="41" size="6 {{ rh }}"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+      {# notched tail on the right: small triangle cut via rotated quad #}
+      <quad pos="{{ cx + CW - 2 }} {{ ry - rh / 2 }}" z-index="42"
+            size="3 3" rot="45"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="center2" />
+
+    {# ───────── 06 hex (six-sided) ───────────────────────────────── #}
+    {% elif idx == 6 %}
+      {# center rectangle #}
+      <quad pos="{{ cx + 5 }} {{ cy }}" z-index="40" size="{{ CW - 10 }} {{ CH }}"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="top" />
+      {# left triangle: two stacked rotated quads #}
+      <quad pos="{{ cx + 5 }} {{ cy - CH / 4 }}" z-index="40"
+            size="9 9" rot="45"
+            bgcolor="{{ BG_DARK }}" halign="right" valign="center2" />
+      <quad pos="{{ cx + 5 }} {{ cy - 3 * CH / 4 }}" z-index="40"
+            size="9 9" rot="45"
+            bgcolor="{{ BG_DARK }}" halign="right" valign="center2" />
+      {# right triangle #}
+      <quad pos="{{ cx + CW - 5 }} {{ cy - CH / 4 }}" z-index="40"
+            size="9 9" rot="45"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="center2" />
+      <quad pos="{{ cx + CW - 5 }} {{ cy - 3 * CH / 4 }}" z-index="40"
+            size="9 9" rot="45"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="center2" />
+      <quad pos="{{ cx + 5 }} {{ cy }}" z-index="41" size="{{ CW - 10 }} 0.6"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+
+    {# ───────── 07 tabbed (header tab + body) ─────────────────────── #}
+    {% elif idx == 7 %}
+      {# tab on top-left #}
+      <quad pos="{{ cx }} {{ cy }}" z-index="40" size="14 3.5"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+      {# body sits below the tab #}
+      <quad pos="{{ cx }} {{ cy - 3.5 }}" z-index="40"
+            size="{{ CW }} {{ CH - 3.5 }}"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="top" />
+
+    {# ───────── 08 L-shape (two perpendicular bars) ───────────────── #}
+    {% elif idx == 8 %}
+      {# vertical bar on the left #}
+      <quad pos="{{ cx }} {{ cy }}" z-index="40" size="9 {{ CH }}"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="top" />
+      {# horizontal bar across the bottom #}
+      <quad pos="{{ cx }} {{ cy - CH + 7 }}" z-index="40"
+            size="{{ CW }} 7"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="top" />
+      <quad pos="{{ cx }} {{ cy }}" z-index="41" size="0.6 {{ CH }}"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+      <quad pos="{{ cx }} {{ cy - CH + 7 }}" z-index="41" size="{{ CW }} 0.6"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+
+    {# ───────── 09 frame-only (no fill, just borders) ─────────────── #}
+    {% elif idx == 9 %}
+      <quad pos="{{ cx }} {{ cy }}" z-index="40" size="{{ CW }} 0.4"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+      <quad pos="{{ cx }} {{ cy - CH }}" z-index="40" size="{{ CW }} 0.4"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+      <quad pos="{{ cx }} {{ cy }}" z-index="40" size="0.4 {{ CH }}"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+      <quad pos="{{ cx + CW - 0.4 }} {{ cy }}" z-index="40" size="0.4 {{ CH }}"
+            bgcolor="{{ ACCENT }}" halign="left" valign="top" />
+      {# faint inner fill so text reads #}
+      <quad pos="{{ cx + 0.4 }} {{ cy - 0.4 }}" z-index="39"
+            size="{{ CW - 0.8 }} {{ CH - 0.8 }}"
+            bgcolor="00000088" halign="left" valign="top" />
+
+    {# ───────── 10 diagonal stripe ────────────────────────────────── #}
+    {% elif idx == 10 %}
+      <quad pos="{{ cx }} {{ cy }}" z-index="40" size="{{ CW }} {{ CH }}"
+            bgcolor="{{ BG_DARK }}" halign="left" valign="top" />
+      {# diagonal accent: long thin rotated quad #}
+      <quad pos="{{ cx + CW / 2 }} {{ cy - CH / 2 }}" z-index="41"
+            size="40 2" rot="-25"
+            bgcolor="{{ ACCENT_S }}" halign="center" valign="center2" />
+      <quad pos="{{ cx + CW / 2 }} {{ cy - CH / 2 + 1 }}" z-index="42"
+            size="40 0.4" rot="-25"
+            bgcolor="{{ ACCENT }}" halign="center" valign="center2" />
+    {% endif %}
+
+    {# Sample content — same for every shape so silhouette is the variable #}
+    <label pos="{{ cx + CW / 2 }} {{ cy - 4 }}" z-index="50"
+           halign="center" valign="center2"
+           text="$fff42.351"
+           textsize="2.0" textfont="GameFontBlack" />
+    <label pos="{{ cx + CW / 2 }} {{ cy - 8.5 }}" z-index="50"
+           halign="center" valign="center2"
+           text="$aaaSAMPLE"
+           textsize="0.8" textfont="GameFont" />
+
+    {# Card caption below the shape #}
+    <label pos="{{ cx + CW / 2 }} {{ cy - CH - 1.5 }}" z-index="50"
+           halign="center" valign="top"
+           text="$fff{{ nm }}"
+           textsize="0.9" textfont="GameFontBlack" />
+  {% endfor %}
+
+{% endcall %}

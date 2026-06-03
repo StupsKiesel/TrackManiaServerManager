@@ -26,6 +26,8 @@ class MapInfoWidget(WidgetAppBase):
     WIDGET_ANIM_DURATION_MS = 250
     WIDGET_ANIM_DELAY_MS = 0
 
+    WIDGET_STRIP_COLOR = "33ff77ff"
+
     async def get_widget_data(self, login):
         """Get compact map info for the widget."""
         try:

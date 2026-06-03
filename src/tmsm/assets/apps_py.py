@@ -46,7 +46,7 @@ _HEADER_RE = re.compile(
 # Match an entry inside the block: optional leading "# " then a quoted module name then comma.
 # Accepts both single and double quotes.
 _ENTRY_RE = re.compile(
-    r"""^[ \t]*(\#[ \t]*)?["']([A-Za-z0-9_.]+)["'][ \t]*,?[ \t]*$""",
+    r"""^[ \t]*(\#[ \t]*)?["']([A-Za-z0-9_.]+)["'][ \t]*,?[ \t]*(?:\#.*)?$""",
 )
 
 # Legacy markers we may still find in pools created before headers replaced them.

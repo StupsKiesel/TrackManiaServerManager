@@ -6,6 +6,7 @@
      queue_pos        - int (1-based)
      queue_requester  - nickname (may include $-codes)
      is_current       - bool
+  is_operator      - bool
      status, status_color
 #}
 
@@ -85,6 +86,11 @@
       {{ ui.push_button('juke__' ~ m.uid, 'Add to jukebox',
                         x=left_x, y=ay, halign='left',
                         icon='plus', variant='success', size='sm') }}
+    {% endif %}
+    {% if is_operator and not is_current %}
+      {{ ui.push_button('remove__' ~ m.uid, 'Remove map',
+                        x=left_x + 38, y=ay, halign='left',
+                        icon='trash', variant='danger', size='sm') }}
     {% endif %}
   {% endif %}
 

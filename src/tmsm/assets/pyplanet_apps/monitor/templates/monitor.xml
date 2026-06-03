@@ -1,0 +1,28 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{% set win_w = 122 %}
+{% set win_h = 66 %}
+
+<frame pos="-61 34" z-index="310">
+  {{ ui.window('Monitor Calibration', icon='monitor', x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  <label pos="4 -11" textsize="0.85" text="$aaaAdjust edge fit for your screen (translation only)." />
+    <label pos="4 -16" textsize="0.75" text="$666Edge fit moves X; Unstretch (V) adjusts Y and height." />
+
+  <label pos="4 -23" textsize="0.85" text="$fffEdge fit" />
+    {{ ui.stepper('edgefit', value=edgefit|string, x=34, y=-23, w=34, size='md') }}
+
+    <label pos="4 -31" textsize="0.85" text="$fffUnstretch (V)" />
+    {{ ui.stepper('stretchfit', value=(stretchfit|string ~ '%'), x=34, y=-31, w=34, size='md') }}
+
+    {{ ui.push_button('calibration__reset', 'Reset',
+            x=win_w - 4, y=-31, halign='right',
+            icon='undo', variant='warning', size='sm') }}
+
+    <label pos="4 -42" textsize="0.72" sizen="112 10" autonewline="1"
+         text="$888{{ note }}" />
+    <label pos="4 -50" textsize="0.72" sizen="112 10" autonewline="1"
+      text="$888{{ note2 }}" />
+
+  {{ ui.hover_script() }}
+</frame>

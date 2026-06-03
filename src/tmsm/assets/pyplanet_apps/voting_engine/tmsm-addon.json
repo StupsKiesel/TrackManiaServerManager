@@ -1,0 +1,4 @@
+{
+  "description": "Generic voting backend service for tmsm apps. Manages vote lifecycle, ballots, and signal-based orchestration.",
+  "author": "tmsm"
+}

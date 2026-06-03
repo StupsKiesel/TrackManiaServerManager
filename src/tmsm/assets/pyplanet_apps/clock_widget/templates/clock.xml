@@ -14,10 +14,6 @@
 {% endset %}
 
 {% call widgets.frame(extra_init=clock_init, extra_tick=clock_tick) %}
-  <quad pos="0 0" z-index="40" size="{{ widget_w }} {{ widget_h }}"
-        bgcolor="111c" halign="left" valign="top" />
-  <quad pos="0 0" z-index="41" size="{{ widget_w }} 1.2"
-        bgcolor="15ff" halign="left" valign="top" />
   <label pos="{{ widget_w / 2 }} {{ -widget_h / 2 }}" z-index="42"
          id="clock_label"
          halign="center" valign="center2"

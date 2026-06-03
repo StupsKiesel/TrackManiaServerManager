@@ -6,6 +6,16 @@
      active_name         - display name
      active_status_lines - list[str] status text from the active mode
      active_config       - list[{key,label,type,value,help,min,max,choices}]
+  cfg_page            - 1-based current config page
+  cfg_pages_total     - total config pages
+  cfg_has_prev        - prev page exists
+  cfg_has_next        - next page exists
+  mode_widgets_editable - bool (mode exposes required/extra widget config)
+  mode_required_widgets - list[str]
+  mode_extra_widgets    - list[str]
+  mode_available_widgets - list[str]
+  mode_layout_editable  - bool (mode exposes temporary layout controls)
+  mode_layout           - {x,y,w,h,drive_mode,anim_dir,anim_duration_ms,anim_delay_ms}
      selected_key        - which mode is selected in the right panel (== active or operator pick)
      editing_key         - mode whose config is being edited (=selected_key)
      vote_snapshot       - optional dict for the live-vote summary
@@ -119,10 +129,21 @@
       {% if active_config %}
         {% call ui.group_box(title='Configuration',
                              x=right_x, y=cfg_y,
-                             w=right_w, h=(active_config|length) * 7 + 5,
+                             w=right_w, h=(active_config|length) * 7 + 12,
                              color='fff', border='fff5') %}
+          {{ ui.push_button('cfgpage__prev', 'Prev',
+                            x=right_x + 3, y=cfg_y - 3.8, halign='left',
+                            variant=('primary' if cfg_has_prev else 'ghost'),
+                            size='sm', width=14) }}
+          {{ ui.label('Page ' ~ cfg_page ~ '/' ~ cfg_pages_total,
+                      x=right_x + right_w / 2, y=cfg_y - 3.2,
+                      halign='center', size='sm', color='aaa') }}
+          {{ ui.push_button('cfgpage__next', 'Next',
+                            x=right_x + right_w - 3, y=cfg_y - 3.8, halign='right',
+                            variant=('primary' if cfg_has_next else 'ghost'),
+                            size='sm', width=14) }}
           {% for field in active_config %}
-            {% set fy = cfg_y - 5 - loop.index0 * 7 %}
+            {% set fy = cfg_y - 10 - loop.index0 * 7 %}
             {{ ui.label(field.label,
                         x=right_x + 3, y=fy, size='sm', color='ccc') }}
             {% if field.type == 'bool' %}
@@ -142,6 +163,164 @@
                               width=34, size='sm') }}
             {% endif %}
           {% endfor %}
+        {% endcall %}
+      {% endif %}
+
+      {% if mode_widgets_editable %}
+        {% set wy = cfg_y - ((active_config|length) * 7 + 17) %}
+        {% call ui.group_box(title='Mode widgets',
+                             x=right_x, y=wy,
+                             w=right_w, h=24,
+                             color='fff', border='fff5') %}
+          {{ ui.label('Required:', x=right_x + 3, y=wy - 5, size='sm', color='aaa') }}
+          {% for k in mode_required_widgets[:3] %}
+            {% set ry = wy - 8.8 - loop.index0 * 3.3 %}
+            {{ ui.label(k, x=right_x + 3, y=ry, size='sm', color='fff') }}
+            {{ ui.label('required',
+                        x=right_x + right_w - 3, y=ry,
+                        halign='right', size='sm', color='777') }}
+          {% endfor %}
+          {% if not mode_required_widgets %}
+            {{ ui.label('(none)', x=right_x + 3, y=wy - 8.8, size='sm', color='666') }}
+          {% endif %}
+
+          {{ ui.label('Extra:', x=right_x + 28, y=wy - 5, size='sm', color='aaa') }}
+          {% for k in mode_extra_widgets[:3] %}
+            {% set ey = wy - 8.8 - loop.index0 * 3.3 %}
+            {{ ui.label(k, x=right_x + 28, y=ey, size='sm', color='cff') }}
+            {{ ui.push_button('gmw__delextra__' ~ k, '-',
+                              x=right_x + right_w - 13, y=ey - 0.4,
+                              halign='right', variant='danger', size='sm', width=8) }}
+          {% endfor %}
+          {% if not mode_extra_widgets %}
+            {{ ui.label('(none)', x=right_x + 28, y=wy - 8.8, size='sm', color='666') }}
+          {% endif %}
+
+          {{ ui.label('Available:', x=right_x + 3, y=wy - 16.8, size='sm', color='aaa') }}
+          {% if mode_available_widgets %}
+            {% set ak = mode_available_widgets[0] %}
+            {{ ui.label(ak, x=right_x + 19, y=wy - 16.8, size='sm', color='fff') }}
+            {{ ui.push_button('gmw__addreq__' ~ ak, '+Req',
+                              x=right_x + right_w - 22, y=wy - 17.2,
+                              halign='right', variant='primary', size='sm', width=14) }}
+            {{ ui.push_button('gmw__addextra__' ~ ak, '+Extra',
+                              x=right_x + right_w - 3, y=wy - 17.2,
+                              halign='right', variant='success', size='sm', width=16) }}
+            {% if mode_available_widgets|length > 1 %}
+              {{ ui.label('(' ~ (mode_available_widgets|length - 1) ~ ' more; edit csv for precise picks)',
+                          x=right_x + 3, y=wy - 20.6, size='sm', color='777') }}
+            {% endif %}
+          {% else %}
+            {{ ui.label('(none)', x=right_x + 19, y=wy - 16.8, size='sm', color='666') }}
+          {% endif %}
+        {% endcall %}
+      {% endif %}
+
+      {% if mode_layout_editable %}
+        {% set ly = cfg_y - ((active_config|length) * 7 + (42 if mode_widgets_editable else 17)) %}
+        {% call ui.group_box(title='Temporary layout (points HUD)',
+                             x=right_x, y=ly,
+                 w=right_w, h=31,
+                             color='fff', border='fff5') %}
+          {{ ui.label('X: ' ~ mode_layout.x,
+                      x=right_x + 3, y=ly - 5, size='sm', color='ccc') }}
+          {{ ui.push_button('gml__x__-2', '-',
+                            x=right_x + 28, y=ly - 5.4,
+                            halign='left', variant='ghost', size='sm', width=8) }}
+          {{ ui.push_button('gml__x__2', '+',
+                            x=right_x + 37, y=ly - 5.4,
+                            halign='left', variant='ghost', size='sm', width=8) }}
+
+          {{ ui.label('Y: ' ~ mode_layout.y,
+                      x=right_x + 48, y=ly - 5, size='sm', color='ccc') }}
+          {{ ui.push_button('gml__y__-2', '-',
+                            x=right_x + 73, y=ly - 5.4,
+                            halign='left', variant='ghost', size='sm', width=8) }}
+          {{ ui.push_button('gml__y__2', '+',
+                            x=right_x + 82, y=ly - 5.4,
+                            halign='left', variant='ghost', size='sm', width=8) }}
+
+          {{ ui.label('W: ' ~ mode_layout.w,
+                      x=right_x + 3, y=ly - 10, size='sm', color='ccc') }}
+          {{ ui.push_button('gml__w__-2', '-',
+                            x=right_x + 28, y=ly - 10.4,
+                            halign='left', variant='ghost', size='sm', width=8) }}
+          {{ ui.push_button('gml__w__2', '+',
+                            x=right_x + 37, y=ly - 10.4,
+                            halign='left', variant='ghost', size='sm', width=8) }}
+
+          {{ ui.label('H: ' ~ mode_layout.h,
+                      x=right_x + 48, y=ly - 10, size='sm', color='ccc') }}
+          {{ ui.push_button('gml__h__-2', '-',
+                            x=right_x + 73, y=ly - 10.4,
+                            halign='left', variant='ghost', size='sm', width=8) }}
+          {{ ui.push_button('gml__h__2', '+',
+                            x=right_x + 82, y=ly - 10.4,
+                            halign='left', variant='ghost', size='sm', width=8) }}
+
+          {{ ui.label('Anim: ' ~ mode_layout.anim_dir,
+                      x=right_x + 3, y=ly - 15.4, size='sm', color='ccc') }}
+          {{ ui.push_button('gml__anim__none', 'None',
+                            x=right_x + 27, y=ly - 15.8,
+                            halign='left',
+                            variant=('primary' if mode_layout.anim_dir == 'none' else 'ghost'),
+                            size='sm', width=12) }}
+          {{ ui.push_button('gml__anim__left', 'Left',
+                            x=right_x + 40, y=ly - 15.8,
+                            halign='left',
+                            variant=('primary' if mode_layout.anim_dir == 'left' else 'ghost'),
+                            size='sm', width=12) }}
+          {{ ui.push_button('gml__anim__right', 'Right',
+                            x=right_x + 53, y=ly - 15.8,
+                            halign='left',
+                            variant=('primary' if mode_layout.anim_dir == 'right' else 'ghost'),
+                            size='sm', width=13) }}
+          {{ ui.push_button('gml__anim__up', 'Up',
+                            x=right_x + 67, y=ly - 15.8,
+                            halign='left',
+                            variant=('primary' if mode_layout.anim_dir == 'up' else 'ghost'),
+                            size='sm', width=10) }}
+          {{ ui.push_button('gml__anim__down', 'Down',
+                            x=right_x + 78, y=ly - 15.8,
+                            halign='left',
+                            variant=('primary' if mode_layout.anim_dir == 'down' else 'ghost'),
+                            size='sm', width=13) }}
+
+              {{ ui.label('Driving:',
+                  x=right_x + 3, y=ly - 20.6, size='sm', color='ccc') }}
+              {{ ui.push_button('gml__drive__fixed', 'Fixed',
+                    x=right_x + 20, y=ly - 21.0,
+                    halign='left',
+                    variant=('primary' if mode_layout.drive_mode == 'fixed' else 'ghost'),
+                    size='sm', width=13) }}
+              {{ ui.push_button('gml__drive__hide_while_driving', 'Hide while driving',
+                    x=right_x + 34, y=ly - 21.0,
+                    halign='left',
+                    variant=('primary' if mode_layout.drive_mode == 'hide_while_driving' else 'ghost'),
+                    size='sm', width=28) }}
+              {{ ui.push_button('gml__drive__only_shown_while_driving', 'Only while driving',
+                    x=right_x + 63, y=ly - 21.0,
+                    halign='left',
+                    variant=('primary' if mode_layout.drive_mode == 'only_shown_while_driving' else 'ghost'),
+                    size='sm', width=25) }}
+
+          {{ ui.label('Dur: ' ~ mode_layout.anim_duration_ms ~ 'ms',
+                  x=right_x + 3, y=ly - 26, size='sm', color='ccc') }}
+          {{ ui.push_button('gml__dur__-20', '-20',
+                    x=right_x + 30, y=ly - 26.4,
+                            halign='left', variant='ghost', size='sm', width=11) }}
+          {{ ui.push_button('gml__dur__20', '+20',
+                    x=right_x + 42, y=ly - 26.4,
+                            halign='left', variant='ghost', size='sm', width=11) }}
+
+          {{ ui.label('Delay: ' ~ mode_layout.anim_delay_ms ~ 'ms',
+                  x=right_x + 56, y=ly - 26, size='sm', color='ccc') }}
+          {{ ui.push_button('gml__delay__-20', '-20',
+                    x=right_x + 84, y=ly - 26.4,
+                            halign='left', variant='ghost', size='sm', width=11) }}
+          {{ ui.push_button('gml__delay__20', '+20',
+                    x=right_x + 96, y=ly - 26.4,
+                            halign='left', variant='ghost', size='sm', width=11) }}
         {% endcall %}
       {% endif %}
 

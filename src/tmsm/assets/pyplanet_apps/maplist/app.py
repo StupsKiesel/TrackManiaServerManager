@@ -233,6 +233,14 @@ class App_Maplist(AppConfig):
     async def view_context(self, login: str) -> dict[str, Any]:
         st = self._state.setdefault(login, self._default_state())
         rows = self._filter(self._all_rows(), st["query"])
+        is_operator = False
+        try:
+            from pyplanet.apps.core.maniaplanet.models import Player
+            from pyplanet.apps.tmsm.ui import perms as _perms
+            p = await Player.get_by_login(login)
+            is_operator = bool(_perms.is_operator(p)) if p is not None else False
+        except Exception:
+            is_operator = False
 
         total = len(rows)
         page = max(1, int(st["page"]))
@@ -262,6 +270,7 @@ class App_Maplist(AppConfig):
             "jukebox_count": len(queue_uids),
             "has_jukebox":   self._jukebox_app() is not None,
             "current_uid":   current_uid,
+            "is_operator":   is_operator,
             "status":        st["status"],
             "status_color":  st["status_color"],
         }
@@ -270,10 +279,18 @@ class App_Maplist(AppConfig):
         st = self._state.setdefault(login, self._default_state())
         uid = st.get("detail_uid") or ""
         row: dict[str, Any] = {}
+        is_operator = False
         in_queue = False
         queue_pos = 0
         requester = ""
         is_current = bool(uid) and uid == self._current_uid()
+        try:
+            from pyplanet.apps.core.maniaplanet.models import Player
+            from pyplanet.apps.tmsm.ui import perms as _perms
+            p = await Player.get_by_login(login)
+            is_operator = bool(_perms.is_operator(p)) if p is not None else False
+        except Exception:
+            is_operator = False
 
         for r in self._all_rows():
             if r["uid"] == uid:
@@ -298,6 +315,7 @@ class App_Maplist(AppConfig):
             "queue_pos":       queue_pos,
             "queue_requester": requester,
             "is_current":      is_current,
+            "is_operator":     is_operator,
             "status":          st["status"],
             "status_color":    st["status_color"],
         }
@@ -330,6 +348,11 @@ class App_Maplist(AppConfig):
         m = re.match(r"^drop__([0-9a-zA-Z_\-]+)$", action)
         if m:
             await self._on_drop(player, m.group(1))
+            return
+
+        m = re.match(r"^remove__([0-9a-zA-Z_\-]+)$", action)
+        if m:
+            await self._on_remove_map(player, m.group(1))
             return
 
         m = re.match(r"^details__([0-9a-zA-Z_\-]+)$", action)
@@ -505,4 +528,30 @@ class App_Maplist(AppConfig):
         except ValueError:
             pass
         self._set_status(login, "dropped from queue", "0f8")
+        await self._refresh_views()
+
+    async def _on_remove_map(self, player, uid: str) -> None:
+        login = player.login
+        from pyplanet.apps.tmsm.ui import perms as _perms
+        if not _perms.is_operator(player):
+            self._set_status(login, "only operators can remove maps", "fa0")
+            await self._refresh_views()
+            return
+        m = await self._resolve_map(uid)
+        if m is None:
+            self._set_status(login, "map not found in current playlist", "fa0")
+            await self._refresh_views()
+            return
+        if uid == self._current_uid():
+            self._set_status(login, "cannot remove the currently playing map", "fa0")
+            await self._refresh_views()
+            return
+        try:
+            await self.instance.map_manager.remove_map(m, delete_file=False)
+        except Exception as e:
+            logger.exception("maplist: remove map failed")
+            self._set_status(login, f"remove failed: {e}", "f44")
+            await self._refresh_views()
+            return
+        self._set_status(login, "map removed from playlist", "0f8")
         await self._refresh_views()

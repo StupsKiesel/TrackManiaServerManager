@@ -1,0 +1,18 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(58.0) %}
+{% set widget_h = widget_h|default(12.0) %}
+
+{% call widgets.frame() %}
+  <label pos="1.4 -1.4" z-index="42" text="$dddSERVER" textsize="0.95" textfont="GameFontBlack" />
+
+  <label pos="2.0 -5.0" z-index="42" text="$aaaPlayers" textsize="0.8" textfont="GameFontBlack" />
+  <label pos="17.0 -5.0" z-index="42" text="$fff{{ players_text|default('-') }}" textsize="1.0" textfont="GameFontBlack" />
+
+  <label pos="29.0 -5.0" z-index="42" text="$aaaSpecs" textsize="0.8" textfont="GameFontBlack" />
+  <label pos="39.5 -5.0" z-index="42" text="$fff{{ specs_text|default('-') }}" textsize="1.0" textfont="GameFontBlack" />
+
+  <label pos="2.0 -9.0" z-index="42" text="$aaaMode" textsize="0.8" textfont="GameFontBlack" />
+  <label pos="11.5 -9.0" z-index="42" sizen="45 3" text="$fff{{ mode_text|default('-') }}"
+         textsize="0.85" textfont="GameFontBlack" />
+{% endcall %}

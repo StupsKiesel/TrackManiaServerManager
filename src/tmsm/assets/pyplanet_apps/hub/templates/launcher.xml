@@ -6,10 +6,6 @@
    widgets.frame(). The widget's bounding box is widget_w x widget_h; we
    fill it with the launcher button. #}
 {% call widgets.frame() %}
-  <quad pos="0 0" z-index="0" size="{{ widget_w }} {{ widget_h }}"
-        bgcolor="000a" halign="left" valign="top" />
-  <quad pos="0 -{{ widget_h }}" z-index="1" size="{{ widget_w }} 0.3"
-        bgcolor="15dfa" halign="left" valign="top" />
   <quad pos="0 0" z-index="2" size="{{ widget_w }} {{ widget_h }}"
         bgcolor="0000" halign="left" valign="top"
         id="uibtn_ghost_{{ id }}__toggle"

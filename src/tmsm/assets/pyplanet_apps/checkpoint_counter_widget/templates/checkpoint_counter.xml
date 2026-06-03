@@ -1,0 +1,22 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(22.0) %}
+{% set widget_h = widget_h|default(8.0) %}
+
+{% call widgets.frame() %}
+  <label pos="1.0 -1.5" z-index="42"
+         halign="left" valign="top"
+         text="$dddCP" textsize="0.95" textfont="GameFontBlack" />
+
+  <label pos="{{ widget_w / 2 }} {{ -widget_h / 2 + 0.2 }}" z-index="42"
+         halign="center" valign="center2"
+         text="$fff{{ cp_ratio|default('0/0') }}"
+         textsize="2.0" textfont="GameFontBlack" />
+
+  <quad pos="0.8 -{{ widget_h - 1.1 }}" z-index="41"
+        size="{{ widget_w - 1.6 }} 0.5"
+        bgcolor="2228" />
+  <quad pos="0.8 -{{ widget_h - 1.1 }}" z-index="42"
+        size="{{ ((widget_w - 1.6) * (cp_progress|default(0)|int) / 100.0)|round(2) }} 0.5"
+        bgcolor="ffaa55ff" />
+{% endcall %}

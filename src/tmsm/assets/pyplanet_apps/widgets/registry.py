@@ -35,7 +35,7 @@ class HideRule:
 @dataclass
 class Animation:
     """Animation parameters applied when a widget shows / hides."""
-    direction: str = "fade"     # fade | up | down | left | right | none
+    direction: str = "right"   # up | down | left | right | none
     duration_ms: int = 300      # animation duration in milliseconds
     delay_ms: int = 0           # delay before animation starts
 
@@ -67,5 +67,12 @@ class WidgetEntry:
     # widgets where the position is structural (e.g. toast anchor) or
     # purely admin-controlled (e.g. hub launcher button).
     allow_personal: bool = True
+    # Optional group slot key. Widgets sharing the same non-empty key are
+    # resolved as one slot per player: only one winner is visible at runtime.
+    group_key: str = ""
+    # Higher priority wins inside a group.
+    group_priority: int = 0
+    # Stable tie-breaker inside a group (lower order wins when priority ties).
+    group_order: int = 0
     # optional callback invoked when an admin clicks "Show now" for a popup
     popup_trigger: Optional[Callable[[str], Awaitable[None]]] = None

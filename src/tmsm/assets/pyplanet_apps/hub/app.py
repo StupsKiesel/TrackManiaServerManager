@@ -69,7 +69,7 @@ class HubApp(AppConfig):
     # Always visible — the launcher must be reachable regardless of game state.
     WIDGET_HIDE_NAMED: list[str] = []
     WIDGET_HIDE_RAW = ""
-    WIDGET_ANIM_DIR = "fade"
+    WIDGET_ANIM_DIR = "none"
     WIDGET_ANIM_DURATION_MS = 200
 
     def __init__(self, *args, **kwargs):
@@ -201,7 +201,7 @@ class HubApp(AppConfig):
             "widget_anim_dir":        self.WIDGET_ANIM_DIR,
             "widget_anim_duration_ms": self.WIDGET_ANIM_DURATION_MS,
             "widget_anim_delay_ms":   0,
-            "widget_anim_off_x":      (-500.0 if self.WIDGET_ANIM_DIR == "left" else (500.0 if self.WIDGET_ANIM_DIR in ("right", "fade") else 0.0)),
+            "widget_anim_off_x":      (-500.0 if self.WIDGET_ANIM_DIR == "left" else (500.0 if self.WIDGET_ANIM_DIR == "right" else 0.0)),
             "widget_anim_off_y":      (500.0 if self.WIDGET_ANIM_DIR == "up" else (-500.0 if self.WIDGET_ANIM_DIR == "down" else 0.0)),
             "widget_edit_mode":       editing,
             "widget_view_id":         self.launcher.id if self.launcher else self.WIDGET_KEY,

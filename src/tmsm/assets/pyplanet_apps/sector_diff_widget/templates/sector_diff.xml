@@ -1,0 +1,17 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(40.0) %}
+{% set widget_h = widget_h|default(12.0) %}
+
+{% call widgets.frame() %}
+  <label pos="1.2 -1.5" z-index="42" text="$dddSECTOR" textsize="0.95" textfont="GameFontBlack" />
+  <label pos="{{ widget_w - 1.2 }} -1.5" z-index="42" halign="right"
+         text="$aaa{{ cp_text|default('CP --') }}" textsize="0.85" textfont="GameFontBlack" />
+
+  <label pos="2.0 -6.1" z-index="42" halign="left" text="$fff{{ sector_text|default('--:--.---') }}"
+         textsize="1.7" textfont="GameFontBlack" />
+
+  <label pos="{{ widget_w - 2.0 }} -6.1" z-index="42" halign="right"
+         text="${{ delta_color|default('aaa') }}{{ delta_text|default('--') }}"
+         textsize="1.5" textfont="GameFontBlack" />
+{% endcall %}

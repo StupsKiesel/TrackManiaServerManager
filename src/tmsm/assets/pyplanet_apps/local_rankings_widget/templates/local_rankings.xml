@@ -1,0 +1,57 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(62.0) %}
+{% set widget_h = widget_h|default(22.0) %}
+{% set row_h = 3.2 %}
+
+{% call widgets.frame() %}
+  <label pos="2.0 -0.9" z-index="42"
+         halign="left" valign="top"
+         textsize="1.3" textfont="GameFontBlack"
+         text="$fff{{ mode_label|default('LOCAL') }}" />
+
+  {% if rows|length == 0 %}
+    <label pos="{{ widget_w / 2 }} {{ -widget_h / 2 }}" z-index="42"
+           halign="center" valign="center2"
+           textsize="1.3" textfont="GameFontRegular"
+           text="$888{{ note|default('No data') }}" />
+  {% else %}
+    {% for row in rows %}
+      {% set y = -3.0 - (loop.index0 * row_h) %}
+      {% if row.is_me %}
+        <quad pos="1.0 {{ y + 0.2 }}" z-index="41.5" size="{{ widget_w - 2.0 }} 2.8"
+              bgcolor="2a82" halign="left" valign="top" />
+      {% endif %}
+      <label pos="2.0 {{ y }}" z-index="42"
+             halign="left" valign="top"
+             textsize="1.2" textfont="GameFontRegular"
+             text="$ddd{{ row.rank }}." />
+      <label pos="7.0 {{ y }}" z-index="42"
+             halign="left" valign="top"
+             sizen="34 2.6"
+             textsize="1.2" textfont="GameFontRegular"
+             text="$fff{{ row.nickname|default('Unknown') }}" />
+      <label pos="{{ widget_w - 2.0 }} {{ y }}" z-index="42"
+             halign="right" valign="top"
+             textsize="1.2" textfont="GameFontRegular"
+             text="$ff0{{ row.score|default('--:--.---') }}" />
+    {% endfor %}
+
+    {% if my_row %}
+      <quad pos="1.0 {{ -widget_h + 3.6 }}" z-index="41.5" size="{{ widget_w - 2.0 }} 2.8"
+            bgcolor="0a63" halign="left" valign="top" />
+      <label pos="2.0 {{ -widget_h + 3.0 }}" z-index="42"
+             halign="left" valign="top"
+             textsize="1.1" textfont="GameFontRegular"
+             text="$8f8You" />
+      <label pos="13.0 {{ -widget_h + 3.0 }}" z-index="42"
+             halign="left" valign="top"
+             textsize="1.1" textfont="GameFontRegular"
+             text="$8f8#{{ my_row.rank }}" />
+      <label pos="{{ widget_w - 2.0 }} {{ -widget_h + 3.0 }}" z-index="42"
+             halign="right" valign="top"
+             textsize="1.1" textfont="GameFontRegular"
+             text="$8f8{{ my_row.score }}" />
+    {% endif %}
+  {% endif %}
+{% endcall %}

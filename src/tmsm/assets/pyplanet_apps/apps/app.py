@@ -41,7 +41,7 @@ def _apps_py_path() -> Path:
 APPS_PY = _apps_py_path()
 
 _ENTRY_RE = re.compile(
-    r"""^[ \t]*(\#[ \t]*)?["']([A-Za-z0-9_.]+)["'][ \t]*,?[ \t]*$"""
+    r"""^[ \t]*(\#[ \t]*)?["']([A-Za-z0-9_.]+)["'][ \t]*,?[ \t]*(?:\#.*)?$"""
 )
 
 PAGE_SIZE = 21
@@ -114,6 +114,73 @@ def _read_active_modules() -> set[str]:
     return out
 
 
+def _inject_missing_enabled_lines(lines: list[str], enabled: set[str]) -> list[str]:
+    """Fallback inserter when external sync helper is unavailable.
+
+    App store deploys as a standalone PyPlanet addon and may not always be able
+    to import ``tmsm.assets.apps_py``. In that case we still need to ensure
+    newly enabled modules that are not already listed are added to apps.py.
+    """
+    existing: set[str] = set()
+    for line in lines:
+        m = _ENTRY_RE.match(line)
+        if m and m.group(2).startswith("pyplanet.apps."):
+            existing.add(m.group(2))
+
+    missing = sorted(m for m in enabled if m.startswith("pyplanet.apps.") and m not in existing)
+    if not missing:
+        return lines
+
+    def _last_index(pred) -> int:
+        for i in range(len(lines) - 1, -1, -1):
+            if pred(lines[i]):
+                return i
+        return -1
+
+    # Best-effort insertion points by namespace; fallback to before the
+    # closing list bracket.
+    idx_tmsm = _last_index(lambda ln: "pyplanet.apps.tmsm." in ln)
+    idx_contrib = _last_index(lambda ln: "pyplanet.apps.contrib." in ln)
+    idx_close = _last_index(lambda ln: ln.strip() == "]")
+    if idx_close < 0:
+        idx_close = len(lines)
+
+    def _indent_for(idx: int, default: str = "        ") -> str:
+        if idx < 0 or idx >= len(lines):
+            return default
+        m = re.match(r"^([ \t]*)", lines[idx])
+        return m.group(1) if m else default
+
+    # Insert namespace groups without disturbing relative order too much.
+    tmsm_missing = [m for m in missing if m.startswith("pyplanet.apps.tmsm.")]
+    contrib_missing = [m for m in missing if m.startswith("pyplanet.apps.contrib.")]
+    other_missing = [m for m in missing if m not in tmsm_missing and m not in contrib_missing]
+
+    out = list(lines)
+
+    def _insert_many(after_idx: int, mods: list[str]) -> int:
+        if not mods:
+            return after_idx
+        indent = _indent_for(after_idx if after_idx >= 0 else idx_close)
+        pos = (after_idx + 1) if after_idx >= 0 else idx_close
+        new_lines = [f"{indent}'{module}'," for module in mods]
+        out[pos:pos] = new_lines
+        return pos + len(new_lines) - 1
+
+    last_tmsm = _insert_many(idx_tmsm, tmsm_missing)
+    if last_tmsm >= 0 and idx_contrib > last_tmsm:
+        idx_contrib += len(tmsm_missing)
+    if idx_close > idx_tmsm >= 0:
+        idx_close += len(tmsm_missing)
+
+    last_contrib = _insert_many(idx_contrib, contrib_missing)
+    if idx_close > idx_contrib >= 0:
+        idx_close += len(contrib_missing)
+
+    _insert_many(-1 if (idx_tmsm >= 0 or idx_contrib >= 0 or last_contrib >= 0) else -1, other_missing)
+    return out
+
+
 def _write_apps_state(enabled: set[str]) -> None:
     try:
         from tmsm.assets import apps_py as apps_py_mod  # type: ignore
@@ -132,10 +199,22 @@ def _write_apps_state(enabled: set[str]) -> None:
             continue
         module = m.group(2)
         indent = re.match(r"^([ \t]*)", line).group(1)  # type: ignore[union-attr]
+        inline_comment = ""
+        line_after = re.sub(
+            r"""^[ \t]*(?:\#[ \t]*)?["'][A-Za-z0-9_.]+["'][ \t]*,?[ \t]*""",
+            "",
+            line,
+        )
+        if line_after.startswith("#"):
+            inline_comment = f"  {line_after}"
         if module in enabled:
-            out_lines.append(f"{indent}'{module}',")
+            out_lines.append(f"{indent}'{module}',{inline_comment}")
         else:
-            out_lines.append(f"{indent}# '{module}',")
+            out_lines.append(f"{indent}# '{module}',{inline_comment}")
+
+    if apps_py_mod is None:
+        out_lines = _inject_missing_enabled_lines(out_lines, enabled)
+
     APPS_PY.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
     _invalidate_caches()
 

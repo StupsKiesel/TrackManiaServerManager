@@ -1,0 +1,50 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{# Minimal catalog: only EDGE variants, no in-frame labels. #}
+{% set BG_FLAT = '0a0a0aee' %}
+{% set ACCENT = 'ffae00' %}
+
+{% set CARD_W = 33 %}
+{% set CARD_H = 18 %}
+{% set GAP_X = 2 %}
+{% set X0 = 18 %}
+{% set Y0 = -14 %}
+{% set dirs = ['left', 'right', 'top', 'bottom'] %}
+
+{# Base preview API mirrors the intended base widget:
+   - colorStripDirection
+   - stripHeight
+   - globalColorOverwrite
+   - bgColor (rgba)
+   Vertical strips use stripHeight as WIDTH and expand outward from frame. #}
+{% macro base_widget_preview(cx, cy, w, h, colorStripDirection='left', stripHeight=0.7, globalColorOverwrite='', bgColor='') %}
+  {% set frameColor = bgColor or BG_FLAT %}
+  <quad pos="{{ cx }} {{ cy }}" z-index="40" size="{{ w }} {{ h }}"
+      bgcolor="{{ frameColor }}" halign="left" valign="top" />
+
+  {% set stripColor = globalColorOverwrite or ACCENT %}
+  {# Compensate the body-frame Y scale so horizontal strips keep constant thickness. #}
+  {% set syinv = 1.0 / (widget_scale_y | default(1.0)) %}
+  {% set stripY = stripHeight * syinv %}
+
+  {% if colorStripDirection == 'left' %}
+    <quad pos="{{ cx - stripHeight }} {{ cy }}" z-index="42" size="{{ stripHeight }} {{ h }}"
+          bgcolor="{{ stripColor }}" halign="left" valign="top" />
+  {% elif colorStripDirection == 'right' %}
+    <quad pos="{{ cx + w }} {{ cy }}" z-index="42" size="{{ stripHeight }} {{ h }}"
+          bgcolor="{{ stripColor }}" halign="left" valign="top" />
+  {% elif colorStripDirection == 'top' %}
+    <quad pos="{{ cx }} {{ cy + stripY }}" z-index="42" size="{{ w }} {{ stripY }}"
+          bgcolor="{{ stripColor }}" halign="left" valign="top" />
+  {% elif colorStripDirection == 'bottom' %}
+    <quad pos="{{ cx }} {{ cy - h }}" z-index="42" size="{{ w }} {{ stripY }}"
+          bgcolor="{{ stripColor }}" halign="left" valign="top" />
+  {% endif %}
+{% endmacro %}
+
+{% call widgets.frame() %}
+  {% for d in dirs %}
+    {% set cx = X0 + loop.index0 * (CARD_W + GAP_X) %}
+    {{ base_widget_preview(cx, Y0, CARD_W, CARD_H, d, 0.9) }}
+  {% endfor %}
+{% endcall %}

@@ -28,5 +28,7 @@ class ClockWidget(WidgetAppBase):
     WIDGET_ANIM_DURATION_MS = 250
     WIDGET_ANIM_DELAY_MS = 0
 
+    WIDGET_STRIP_COLOR = "1155ffff"
+
     async def get_widget_data(self, login):
         return {}

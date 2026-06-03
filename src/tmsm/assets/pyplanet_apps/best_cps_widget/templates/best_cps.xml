@@ -1,0 +1,23 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(56.0) %}
+{% set widget_h = widget_h|default(22.0) %}
+{% set rows = rows|default([]) %}
+
+{% call widgets.frame() %}
+  <label pos="1.2 -1.2" z-index="42" text="{{ title_left|default('BEST CPs') }}"
+         textsize="0.95" textfont="GameFontBlack" textcolor="ddd" />
+  <label pos="{{ widget_w - 1.2 }} -1.2" z-index="42" halign="right"
+         text="{{ title_right|default('CP --') }}" textsize="0.85"
+         textfont="GameFontBlack" textcolor="aaa" />
+
+  {% for r in rows %}
+  {% set y = -3.6 - (loop.index0 * 3.2) %}
+  <label pos="1.4 {{ y }}" z-index="42" halign="left" text="$aaa#{{ r.cp }}"
+         textsize="0.9" textfont="GameFontBlack" />
+  <label pos="9.2 {{ y }}" z-index="42" halign="left" text="$fff{{ r.time }}"
+         textsize="0.9" textfont="GameFontBlack" />
+  <label pos="{{ widget_w - 1.2 }} {{ y }}" z-index="42" halign="right"
+         text="$ccc{{ r.nickname }}" textsize="0.85" textfont="GameFontBlack" />
+  {% endfor %}
+{% endcall %}

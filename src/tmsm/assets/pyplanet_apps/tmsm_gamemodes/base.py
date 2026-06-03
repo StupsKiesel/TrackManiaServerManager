@@ -93,6 +93,74 @@ class GameModeContext:
                      login: str | None = None, duration_ms: int = 4000) -> None:
         await self._app._notify(message, severity, login, duration_ms)
 
+    # ---- temporary widget overrides -----------------------------------
+
+    @property
+    def _widget_override_owner(self) -> str:
+        return f"gamemode:{self._mode_key}"
+
+    async def set_widget_override(self,
+                                  widget_key: str,
+                                  *,
+                                  login: str | None = None,
+                                  enabled: bool | None = None,
+                                  x: float | None = None,
+                                  y: float | None = None,
+                                  w: float | None = None,
+                                  h: float | None = None,
+                                  drive_mode: str | None = None,
+                                  anim_dir: str | None = None,
+                                  anim_duration_ms: int | None = None,
+                                  anim_delay_ms: int | None = None,
+                                  pos: dict[str, Any] | None = None) -> None:
+        """Set a temporary widget override for this mode owner.
+
+        Overrides are runtime-only and should be cleared by calling
+        :meth:`clear_widget_overrides` (typically on mode disable).
+        """
+        try:
+            sig = self._app.context.signals.get_signal("tmsm_widgets:runtime_override_set")
+        except Exception:
+            return
+        payload: dict[str, Any] = {
+            "owner": self._widget_override_owner,
+            "widget_key": str(widget_key),
+            "login": login,
+            "enabled": enabled,
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "drive_mode": drive_mode,
+            "anim_dir": anim_dir,
+            "anim_duration_ms": anim_duration_ms,
+            "anim_delay_ms": anim_delay_ms,
+            "pos": dict(pos or {}),
+        }
+        await sig.send_robust(payload, raw=True)
+
+    async def clear_widget_override(self,
+                                    widget_key: str,
+                                    *,
+                                    login: str | None = None) -> None:
+        try:
+            sig = self._app.context.signals.get_signal("tmsm_widgets:runtime_override_clear")
+        except Exception:
+            return
+        await sig.send_robust({
+            "owner": self._widget_override_owner,
+            "widget_key": str(widget_key),
+            "login": login,
+        }, raw=True)
+
+    async def clear_widget_overrides(self) -> None:
+        """Clear all runtime widget overrides owned by this mode."""
+        try:
+            sig = self._app.context.signals.get_signal("tmsm_widgets:runtime_override_clear_owner")
+        except Exception:
+            return
+        await sig.send_robust({"owner": self._widget_override_owner}, raw=True)
+
 
 class GameMode(ABC):
     """Subclass to add a new game mode.
@@ -136,6 +204,12 @@ class GameMode(ABC):
 
     async def on_podium_start(self) -> None:
         """Podium just appeared - typical hook for picking the next map."""
+
+    async def on_player_finish(self, player=None, **kwargs) -> None:
+        """Trackmania finish callback (is_end_race, lap_time, ...)."""
+
+    async def on_player_chat(self, player=None, text: str = "", **kwargs) -> None:
+        """Server chat callback for lightweight mode commands."""
 
     # ---- status reporting (operator panel + HUD) -----------------------
 

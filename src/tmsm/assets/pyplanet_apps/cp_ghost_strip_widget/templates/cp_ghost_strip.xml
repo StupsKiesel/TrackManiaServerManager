@@ -1,0 +1,31 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(62.0) %}
+{% set widget_h = widget_h|default(9.0) %}
+
+{% call widgets.frame() %}
+  <label pos="1.5 -0.8" z-index="42"
+         halign="left" valign="top"
+         textsize="1.0" textfont="GameFontBlack"
+         text="$fff{{ title_left|default('CP 0/0') }}" />
+
+  <label pos="{{ widget_w - 1.5 }} -0.8" z-index="42"
+         halign="right" valign="top"
+         textsize="1.0" textfont="GameFontBlack"
+         text="$fff{{ title_right|default('Δ --') }}" />
+
+  <label pos="1.5 -3.4" z-index="42"
+         halign="left" valign="top"
+         textsize="1.1" textfont="GameFontBlack"
+         text="$ddd{{ strip_bar|default(' .............. ') }}" />
+
+  <label pos="1.5 -4.9" z-index="42"
+         halign="left" valign="top"
+         textsize="0.9" textfont="GameFontRegular"
+         text="$fff{{ strip_marker|default(' ^') }}" />
+
+  <label pos="1.5 -7.1" z-index="42"
+         halign="left" valign="top"
+         textsize="0.8" textfont="GameFontRegular"
+         text="$888{{ legend|default('G ahead  R behind') }}" />
+{% endcall %}

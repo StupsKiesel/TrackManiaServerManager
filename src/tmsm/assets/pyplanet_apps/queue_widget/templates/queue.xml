@@ -1,0 +1,17 @@
+{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(42.0) %}
+{% set widget_h = widget_h|default(11.0) %}
+
+{% call widgets.frame() %}
+  <label pos="1.4 -1.3" z-index="42" text="$dddQUEUE" textsize="0.95" textfont="GameFontBlack" />
+
+  <label pos="2.0 -5.3" z-index="42" text="$aaaTotal" textsize="0.85" textfont="GameFontBlack" />
+  <label pos="12.5 -5.3" z-index="42" text="$fff{{ queue_total|default(0) }}" textsize="1.2" textfont="GameFontBlack" />
+
+  <label pos="20.0 -5.3" z-index="42" text="$aaaYou" textsize="0.85" textfont="GameFontBlack" />
+  <label pos="26.5 -5.3" z-index="42" text="$fff#{{ queue_position|default('--') }}" textsize="1.2" textfont="GameFontBlack" />
+
+  <label pos="2.0 -9.0" z-index="42" sizen="37 3" text="$ccc{{ status_text|default('Not in queue') }}"
+         textsize="0.85" textfont="GameFontBlack" />
+{% endcall %}

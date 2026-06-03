@@ -1,0 +1,4 @@
+{
+  "description": "Unbrand PyPlanet: hides the vanilla PyPlanet logo, the 'Report issue / suggestion' label and the hide-chat toggle button by overriding the pyplanet__controller manialink. F8/F9 visibility hotkeys keep working. Three per-element toggles available via /settings (or pyplanet settings UI).",
+  "author": "tmsm"
+}

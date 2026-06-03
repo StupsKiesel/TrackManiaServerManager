@@ -97,20 +97,34 @@ def _compile_hide_clauses(named: list[str]) -> list[str]:
 
 # Off-screen tween offset for each animation direction. `none` means the
 # widget never animates and stays in place (hide rules are ignored client-side).
-# `fade` falls back to a horizontal slide for now since proper opacity tween
-# on a CMlFrame doesn't propagate to children.
 _ANIM_OFFSETS: dict[str, tuple[float, float]] = {
     "none":  (0.0, 0.0),
     "left":  (-500.0, 0.0),
     "right": (500.0, 0.0),
     "up":    (0.0, 500.0),
     "down":  (0.0, -500.0),
-    "fade":  (500.0, 0.0),
 }
 
 
 def _anim_offset(direction: str) -> tuple[float, float]:
     return _ANIM_OFFSETS.get((direction or "right").lower(), (500.0, 0.0))
+
+
+# Strip edge derived from the (visible) animation direction. The strip lives
+# on the opposite edge from where the widget slides off-screen.
+_STRIP_EDGE_FROM_ANIM: dict[str, str] = {
+    "right": "left",
+    "left":  "right",
+    "up":    "bottom",
+    "down":  "top",
+}
+
+
+def _strip_edge(direction: str, prefer_top: bool) -> str:
+    d = (direction or "right").lower()
+    if prefer_top and d in ("left", "right"):
+        return "top"
+    return _STRIP_EDGE_FROM_ANIM.get(d, "")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -152,6 +166,7 @@ class WidgetView(BaseView):
                     "widget_y": entry.default_y,
                     "widget_w": entry.default_w,
                     "widget_h": entry.default_h,
+                    "widget_scale_y": 1.0,
                     "widget_kind": entry.kind.value,
                     "widget_hide_clauses": _compile_hide_clauses(entry.hide_rule.named),
                     "widget_hide_raw": entry.hide_rule.raw,
@@ -164,6 +179,13 @@ class WidgetView(BaseView):
                     "widget_debug_mode": False,
                     "widget_debug_status": "",
                     "widget_view_id": self.id,
+                    "widget_bg_color": self.widget_app.WIDGET_BG_COLOR,
+                    "widget_strip_color": self.widget_app.WIDGET_STRIP_COLOR,
+                    "widget_strip_edge": _strip_edge(
+                        entry.animation.direction,
+                        bool(self.widget_app.WIDGET_STRIP_PREFER_TOP),
+                    ) if self.widget_app.WIDGET_STRIP_ENABLED else "",
+                    "widget_strip_thickness": 1.0,
                 })
             # Compatibility path for hub launcher and other non-WidgetAppBase
             # users of WidgetView that still provide frame_context().
@@ -270,17 +292,34 @@ class WidgetAppBase(AppConfig):
     WIDGET_HIDE_WHILE_DRIVING: bool = True
 
     # ── animation ───────────────────────────────────────────────────────
-    # direction: none | left | right | up | down | fade
+    # direction: none | left | right | up | down
     # `none` disables the hide animation entirely (widget is fully static).
     # The four side directions slide the widget off-screen in that direction.
     WIDGET_ANIM_DIR: str = "right"
     WIDGET_ANIM_DURATION_MS: int = 300
     WIDGET_ANIM_DELAY_MS: int = 0
 
+    # ── frame look (catalog base) ───────────────────────────────────────
+    # Widget-chosen colors. The strip color may be globally overridden by a
+    # master admin (then the global value applies to every widget).
+    WIDGET_BG_COLOR: str = "40404080"
+    WIDGET_STRIP_COLOR: str = "ffae00"
+    WIDGET_STRIP_ENABLED: bool = True
+    # When True and anim is horizontal (left/right), put the strip on the
+    # TOP edge instead of the opposite horizontal edge.
+    WIDGET_STRIP_PREFER_TOP: bool = False
+
     # ── personalization ────────────────────────────────────────────────
     # When False, players cannot set a personal override for this widget;
     # only the admin-set global position applies.
-    WIDGET_ALLOW_PERSONAL: bool = True
+    WIDGET_ALLOW_PERSONAL: bool = False
+
+    # ── grouping ───────────────────────────────────────────────────────
+    # Widgets with the same non-empty group key share one slot per player.
+    # The widgets app picks one winner from the group by priority/order.
+    WIDGET_GROUP_KEY: str = ""
+    WIDGET_GROUP_PRIORITY: int = 0
+    WIDGET_GROUP_ORDER: int = 0
 
     # ── debug ──────────────────────────────────────────────────────────
     # One-line status shown in the master-admin debug overlay. Static by
@@ -330,6 +369,9 @@ class WidgetAppBase(AppConfig):
             author=self.WIDGET_AUTHOR,
             version=self.WIDGET_VERSION,
             allow_personal=self.WIDGET_ALLOW_PERSONAL,
+            group_key=self.WIDGET_GROUP_KEY,
+            group_priority=int(self.WIDGET_GROUP_PRIORITY),
+            group_order=int(self.WIDGET_GROUP_ORDER),
             popup_trigger=self._trigger_popup if self.WIDGET_KIND == WidgetKind.POPUP else None,
         )
 
@@ -407,35 +449,100 @@ class WidgetAppBase(AppConfig):
     def frame_context(self, login: str) -> dict[str, Any]:
         entry = self.build_entry()
         pos = self.widgets_app.resolve_position(self.WIDGET_KEY, login) if self.widgets_app else {}
+        default_mode = "fixed"
+        if any(str(n or "").strip().startswith("speed_below:") for n in entry.hide_rule.named):
+            default_mode = "only_shown_while_driving"
+        elif any(str(n or "").strip().startswith("speed_above:") for n in entry.hide_rule.named):
+            default_mode = "hide_while_driving"
         behavior = self.widgets_app.resolve_behavior(self.WIDGET_KEY, login=login) if self.widgets_app else {
-            "hide_while_driving": True,
+            "hide_while_driving": default_mode == "hide_while_driving",
+            "drive_mode": default_mode,
+            "state_visible": True,
+            "group_visible": True,
             "anim_dir": entry.animation.direction,
             "anim_duration_ms": entry.animation.duration_ms,
             "anim_delay_ms": entry.animation.delay_ms,
         }
-        # Rebuild hide-clause list from the DB-resolved hide_while_driving flag
-        # so the editor can toggle it live (without restarting the app).
-        named = [n for n in entry.hide_rule.named if not n.strip().startswith("speed_above:")]
-        if behavior.get("hide_while_driving", True):
+        # Rebuild speed-related hide clauses from the resolved drive mode so
+        # the editor can toggle it live without restarting the app.
+        named = [
+            n for n in entry.hide_rule.named
+            if not n.strip().startswith("speed_above:")
+            and not n.strip().startswith("speed_below:")
+        ]
+        drive_mode = str(behavior.get("drive_mode", default_mode))
+        if drive_mode == "hide_while_driving":
             named.append("speed_above:50")
-        off_x, off_y = _anim_offset(behavior.get("anim_dir", entry.animation.direction))
+        elif drive_mode == "only_shown_while_driving":
+            named.append("speed_below:50")
+        anim_dir = behavior.get("anim_dir", entry.animation.direction)
+        off_x, off_y = _anim_offset(anim_dir)
+        scale_y = 1.0
+        if self.widgets_app is not None:
+            try:
+                scale_y = float(self.widgets_app.get_ui_scale_y(login))
+            except Exception:
+                scale_y = 1.0
+        # Global strip overrides (master-admin set).
+        strip_color_override = ""
+        strip_thickness = 1.0
+        bg_color_override = ""
+        if self.widgets_app is not None:
+            try:
+                strip_color_override = str(self.widgets_app.get_global_strip_color_override() or "")
+            except Exception:
+                strip_color_override = ""
+            try:
+                strip_thickness = float(self.widgets_app.get_global_strip_thickness())
+            except Exception:
+                strip_thickness = 1.0
+            try:
+                bg_color_override = str(self.widgets_app.get_global_bg_color_override() or "")
+            except Exception:
+                bg_color_override = ""
+        strip_color = strip_color_override or self.WIDGET_STRIP_COLOR
+        bg_color = bg_color_override or self.WIDGET_BG_COLOR
+        prefer_top = bool(self.WIDGET_STRIP_PREFER_TOP)
+        if self.widgets_app is not None:
+            try:
+                ov = self.widgets_app.get_strip_prefer_top(entry.key)
+                if ov is not None:
+                    prefer_top = bool(ov)
+            except Exception:
+                pass
+        strip_edge = _strip_edge(anim_dir, prefer_top) if self.WIDGET_STRIP_ENABLED else ""
         return {
             "widget_key": entry.key,
             "widget_x": pos.get("x", entry.default_x),
             "widget_y": pos.get("y", entry.default_y),
             "widget_w": pos.get("w", entry.default_w),
             "widget_h": pos.get("h", entry.default_h),
+            "widget_scale_y": scale_y,
             "widget_kind": entry.kind.value,
             "widget_hide_clauses": _compile_hide_clauses(named),
             "widget_hide_raw": entry.hide_rule.raw,
-            "widget_anim_dir": behavior.get("anim_dir", entry.animation.direction),
+            "widget_force_hidden": not (
+                bool(behavior.get("runtime_enabled", True))
+                and
+                bool(behavior.get("state_visible", True))
+                and bool(behavior.get("group_visible", True))
+            ) or bool(behavior.get("widget_disabled", False)),
+            "widget_anim_dir": anim_dir,
             "widget_anim_duration_ms": int(behavior.get("anim_duration_ms", entry.animation.duration_ms)),
             "widget_anim_delay_ms": int(behavior.get("anim_delay_ms", entry.animation.delay_ms)),
             "widget_anim_off_x": off_x,
             "widget_anim_off_y": off_y,
-            "widget_edit_mode": bool(self.widgets_app and self.widgets_app.is_editing(login)),
+            "widget_edit_mode": bool(
+                self.widgets_app
+                and self.widgets_app.is_editing(login)
+                and self.widgets_app.can_edit_widget(self.WIDGET_KEY, login)
+            ),
             "widget_debug_mode": bool(self.widgets_app and self.widgets_app.is_debug(login, entry.key)),
             "widget_view_id": self.view.id if self.view else entry.key,
+            "widget_bg_color": bg_color,
+            "widget_strip_color": strip_color,
+            "widget_strip_edge": strip_edge,
+            "widget_strip_thickness": strip_thickness,
         }
 
     # ---- popup ---------------------------------------------------------
@@ -495,3 +602,4 @@ class WidgetAppBase(AppConfig):
                     logger.exception("widget '%s': periodic refresh failed", self.WIDGET_KEY)
         except asyncio.CancelledError:
             pass
+

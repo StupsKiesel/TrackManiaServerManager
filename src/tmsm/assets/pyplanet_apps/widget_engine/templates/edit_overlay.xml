@@ -1,0 +1,6 @@
+{% if overlay_enabled %}
+<frame pos="{{ overlay_x }} {{ overlay_y }}" z-index="390">
+  <quad pos="0 0" z-index="391" size="{{ overlay_w }} {{ overlay_h }}"
+        bgcolor="33cc3380" halign="left" valign="top" />
+</frame>
+{% endif %}

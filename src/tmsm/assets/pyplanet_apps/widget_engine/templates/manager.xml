@@ -1,0 +1,637 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# Widget Engine — Manager window (slice 8, read-only scaffold).
+
+   Two-column master/detail:
+     - Left rail   : 6 lifecycle phases as selectable rows with widget counts
+     - Right pane  : header (phase name + count + Add btn) + paginated list
+
+   Per-row actions (En / Dbg / Edit / ×) currently toast 'not wired yet'.
+   All dynamic ids are routed through WidgetEngineManagerView.handle_catch_all.
+#}
+
+{% set WIN_W = 150 %}
+{% set WIN_H = 92 %}
+{% set HEADER_H = 8 %}
+{% set BODY_TOP = -HEADER_H %}
+{% set BODY_H = WIN_H - HEADER_H %}
+
+{% set RAIL_X = 2 %}
+{% set RAIL_W = 32 %}
+{% set RAIL_ROW_H = 6 %}
+
+{% set DETAIL_X = RAIL_X + RAIL_W + 2 %}
+{% set DETAIL_W = WIN_W - DETAIL_X - 2 %}
+
+{% set DETAIL_HDR_Y = BODY_TOP - 2 %}
+{% set DETAIL_HDR_H = 6 %}
+
+{% set LIST_Y = DETAIL_HDR_Y - DETAIL_HDR_H - 1 %}
+{% set ROW_H = 5 %}
+{% set ROW_GAP = 0.4 %}
+{% set LIST_H = 10 * (ROW_H + ROW_GAP) %}
+
+{% set PAG_Y = LIST_Y - LIST_H - 3 %}
+
+<frame pos="-{{ WIN_W / 2 }} {{ WIN_H / 2 }}" z-index="120">
+{% if not picker_open and not editor_open and not settings_open and not replacements_open %}
+
+  {{ ui.window('Widget Engine · manager', icon='cog',
+               x=0, y=0, w=WIN_W, h=WIN_H) }}
+
+  {# ── left rail: phase list ───────────────────────────────────────── #}
+  <frame pos="{{ RAIL_X }} {{ BODY_TOP - 2 }}" z-index="130">
+    {% for p in phases %}
+      {% set ry = -(loop.index0 * (RAIL_ROW_H + 0.3)) %}
+      <quad pos="0 {{ ry }}" size="{{ RAIL_W }} {{ RAIL_ROW_H }}"
+            valign="top" halign="left"
+            bgcolor="{{ '0d4ac0' if p.selected else '11111188' }}"
+            id="uibtn_ghost_{{ id }}__phase__select__{{ p.key }}"
+            action="{{ id }}__phase__select__{{ p.key }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+      {% if p.selected %}
+        <quad pos="0 {{ ry }}" size="0.6 {{ RAIL_ROW_H }}"
+              valign="top" halign="left" bgcolor="15dfa" />
+      {% endif %}
+      <label pos="2 {{ ry - RAIL_ROW_H/2 }}" z-index="131"
+             halign="left" valign="center2"
+             text="${{ 'fff' if p.selected else 'ccc' }}{{ p.label }}"
+             textsize="1.0"
+             textfont="{{ 'GameFontBlack' if p.selected else 'GameFont' }}" />
+      <label pos="{{ RAIL_W - 1.5 }} {{ ry - RAIL_ROW_H/2 }}" z-index="131"
+             halign="right" valign="center2"
+             text="${{ 'cdf' if p.selected else '777' }}{{ p.count }}"
+             textsize="0.9" textfont="GameFont" />
+    {% endfor %}
+  </frame>
+
+  {# vertical divider between rail and detail #}
+  <quad pos="{{ RAIL_X + RAIL_W + 0.6 }} {{ BODY_TOP - 1 }}"
+        size="0.2 {{ BODY_H - 4 }}"
+        bgcolor="ffffff22" halign="left" valign="top" z-index="129" />
+
+  {# ── detail header ──────────────────────────────────────────────── #}
+  <label pos="{{ DETAIL_X }} {{ DETAIL_HDR_Y - DETAIL_HDR_H/2 }}" z-index="135"
+         halign="left" valign="center2"
+         text="$fff{{ selected_phase_label }}  $888· {{ total_widgets }} widget{{ '' if total_widgets == 1 else 's' }}"
+         textsize="1.2" textfont="GameFontBlack" />
+
+  {# Add button + engine-phase indicator share the header line. The button
+     sits at the far right; the indicator dims to its left. #}
+  {{ ui.push_button('add__open', '+ Add widget',
+                    x=DETAIL_X + DETAIL_W, y=DETAIL_HDR_Y - DETAIL_HDR_H/2,
+                    halign='right', size='sm', variant='primary') }}
+  {{ ui.push_button('settings__open', 'Settings', icon='sliders-h',
+                    x=DETAIL_X + DETAIL_W - 22, y=DETAIL_HDR_Y - DETAIL_HDR_H/2,
+                    halign='right', size='sm', variant='ghost') }}
+  {{ ui.push_button('replacements__open', 'Replacements', icon='exchange-alt',
+                    x=DETAIL_X + DETAIL_W - 40, y=DETAIL_HDR_Y - DETAIL_HDR_H/2,
+                    halign='right', size='sm', variant='ghost') }}
+  <label pos="{{ DETAIL_X + DETAIL_W - 62 }} {{ DETAIL_HDR_Y - DETAIL_HDR_H/2 }}"
+         z-index="135"
+         halign="right" valign="center2"
+         text="$666engine: $aaa{{ engine_phase }}"
+         textsize="0.9" textfont="GameFont" />
+
+  {# ── widget list ────────────────────────────────────────────────── #}
+  {% if rows|length == 0 %}
+    <label pos="{{ DETAIL_X + DETAIL_W/2 }} {{ LIST_Y - LIST_H/2 }}"
+           z-index="138"
+           halign="center" valign="center2"
+           text="$666No widgets in this phase."
+           textsize="1.1" textfont="GameFont" />
+  {% else %}
+    <frame pos="{{ DETAIL_X }} {{ LIST_Y }}" z-index="138">
+      {% for r in rows %}
+        {% set ry = -(loop.index0 * (ROW_H + ROW_GAP)) %}
+        {# row background #}
+        <quad pos="0 {{ ry }}" size="{{ DETAIL_W }} {{ ROW_H }}"
+              valign="top" halign="left"
+              bgcolor="{{ '15151588' if loop.index0 % 2 == 0 else '0a0a0a88' }}" />
+        {# name #}
+        <label pos="1.5 {{ ry - ROW_H/2 }}" z-index="139"
+               halign="left" valign="center2"
+               text="${{ 'fff' if r.enabled else '888' }}{{ r.name }}  $555{{ r.key }}"
+               textsize="1.0"
+               textfont="{{ 'GameFontBlack' if r.enabled else 'GameFont' }}" />
+
+        {# right-aligned icon buttons + enable checkbox.
+           Walk right→left; each icon button is a square quad with a
+           GameFontBlack glyph (FA icons render as squares in GameFont). #}
+        {% set bw = ROW_H - 0.6 %}
+        {% set cx = namespace(v=DETAIL_W - 1.0) %}
+
+        {# remove (trash) #}
+        <quad pos="{{ cx.v - bw }} {{ ry - 0.3 }}" size="{{ bw }} {{ bw }}"
+              valign="top" halign="left" bgcolor="c33b"
+              id="uibtn_danger_{{ id }}__row__{{ r.key }}__remove"
+              action="{{ id }}__row__{{ r.key }}__remove" scriptevents="1"
+              class="ui-btn ui-btn-danger" />
+        <label pos="{{ cx.v - bw/2 }} {{ ry - ROW_H/2 }}" z-index="140"
+               halign="center" valign="center2"
+               text="$fff{{ '&#xf1f8;'|safe }}"
+               textsize="1.0" textfont="GameFontBlack" />
+        {% set cx.v = cx.v - bw - 0.4 %}
+
+        {# edit (pencil) #}
+        <quad pos="{{ cx.v - bw }} {{ ry - 0.3 }}" size="{{ bw }} {{ bw }}"
+              valign="top" halign="left" bgcolor="0a6"
+              id="uibtn_primary_{{ id }}__row__{{ r.key }}__edit"
+              action="{{ id }}__row__{{ r.key }}__edit" scriptevents="1"
+              class="ui-btn ui-btn-primary" />
+        <label pos="{{ cx.v - bw/2 }} {{ ry - ROW_H/2 }}" z-index="140"
+               halign="center" valign="center2"
+               text="$fff{{ '&#xf044;'|safe }}"
+               textsize="1.0" textfont="GameFontBlack" />
+        {% set cx.v = cx.v - bw - 0.4 %}
+
+        {# debug toggle (bug) #}
+        <quad pos="{{ cx.v - bw }} {{ ry - 0.3 }}" size="{{ bw }} {{ bw }}"
+              valign="top" halign="left"
+              bgcolor="{{ 'f93a' if r.debug else '333a' }}"
+              id="uibtn_ghost_{{ id }}__row__{{ r.key }}__debug"
+              action="{{ id }}__row__{{ r.key }}__debug" scriptevents="1"
+              class="ui-btn ui-btn-ghost" />
+        <label pos="{{ cx.v - bw/2 }} {{ ry - ROW_H/2 }}" z-index="140"
+               halign="center" valign="center2"
+               text="${{ 'fff' if r.debug else 'aaa' }}{{ '&#xf188;'|safe }}"
+               textsize="1.0" textfont="GameFontBlack" />
+        {% set cx.v = cx.v - bw - 0.4 %}
+
+        {# extra gap before the enable checkbox #}
+        {% set cx.v = cx.v - 0.8 %}
+
+        {# enable check_box (right-anchored at cx.v) #}
+        {{ ui.check_box('row__' ~ r.key ~ '__enable',
+                        checked=r.enabled,
+                        x=cx.v, y=ry - ROW_H/2, size='sm') }}
+      {% endfor %}
+    </frame>
+  {% endif %}
+
+  {# ── pagination strip (centered under list) ─────────────────────── #}
+  {% if total_pages > 1 %}
+    {% set max_visible = 5 %}
+    {% set btn_w = 5 %}
+    {% set gap = 0.5 %}
+    {% set half = (max_visible // 2) %}
+    {% set start = page - half %}
+    {% set end = page + half %}
+    {% if start < 1 %}{% set end = end + (1 - start) %}{% set start = 1 %}{% endif %}
+    {% if end > total_pages %}{% set start = start - (end - total_pages) %}{% set end = total_pages %}{% endif %}
+    {% if start < 1 %}{% set start = 1 %}{% endif %}
+    {% set visible = end - start + 1 %}
+    {% set cells = 4 + visible %}
+    {% if start > 1 %}{% set cells = cells + 1 %}{% if start > 2 %}{% set cells = cells + 1 %}{% endif %}{% endif %}
+    {% if end < total_pages %}{% set cells = cells + 1 %}{% if end < total_pages - 1 %}{% set cells = cells + 1 %}{% endif %}{% endif %}
+    {% set total_w = cells * (btn_w + gap) - gap %}
+    {% set pag_x = DETAIL_X + (DETAIL_W - total_w) / 2 %}
+    {{ ui.pagination('pag', page=page, total_pages=total_pages,
+                     x=pag_x, y=PAG_Y, max_visible=max_visible,
+                     btn_w=btn_w, btn_h=5, gap=gap) }}
+  {% endif %}
+
+{% endif %}{# /not picker_open #}
+
+{# ── Add-widget subwindow (replaces manager body — design rule:
+       one window at a time) ────────────────────────────────────── #}
+{% if picker_open %}
+  {% set PK_W = WIN_W %}
+  {% set PK_H = WIN_H %}
+  {% set PK_HDR_H = 8 %}
+  {% set PK_ROW_H = 6 %}
+  {% set PK_LIST_Y = -PK_HDR_H - 2 %}
+  {% set PK_LIST_H = 10 * (PK_ROW_H + 0.4) %}
+  {% set PK_PAG_Y = PK_LIST_Y - PK_LIST_H - 3 %}
+
+  {{ ui.window('Add widget', icon='plus', x=0, y=0, w=PK_W, h=PK_H,
+               crumbs=[
+                 {'key': 'hub',           'label': 'Hub'},
+                 {'key': 'widget_engine', 'label': 'Widget Engine'},
+               ]) }}
+
+  {% if picker_rows|length == 0 %}
+    <label pos="{{ PK_W/2 }} {{ PK_LIST_Y - PK_LIST_H/2 }}" z-index="135"
+           halign="center" valign="center2"
+           text="$888No widgets available to install."
+           textsize="1.1" textfont="GameFont" />
+  {% else %}
+    <label pos="2 {{ PK_LIST_Y + 1 }}" z-index="135"
+           halign="left" valign="bottom2"
+           text="$888{{ picker_total }} available widget{{ '' if picker_total == 1 else 's' }}"
+           textsize="0.9" textfont="GameFont" />
+    <frame pos="2 {{ PK_LIST_Y }}" z-index="135">
+      {% for r in picker_rows %}
+        {% set ry = -(loop.index0 * (PK_ROW_H + 0.4)) %}
+        {% set RW = PK_W - 4 %}
+        <quad pos="0 {{ ry }}" size="{{ RW }} {{ PK_ROW_H }}"
+              valign="top" halign="left"
+              bgcolor="{{ '15151588' if loop.index0 % 2 == 0 else '0a0a0a88' }}" />
+        <label pos="1.5 {{ ry - PK_ROW_H/2 }}" z-index="136"
+               halign="left" valign="center2"
+               text="$fff{{ r.name }}  $555{{ r.key }}  $666· {{ r.kind }}"
+               textsize="1.0" textfont="GameFontBlack" />
+        {{ ui.push_button('picker__install__' ~ r.key, 'Install', icon='plus',
+                          x=RW - 1, y=ry - PK_ROW_H/2,
+                          halign='right', size='sm', variant='primary',
+                          z=136) }}
+      {% endfor %}
+    </frame>
+  {% endif %}
+
+  {% if picker_total_pages > 1 %}
+    {% set pmax = 5 %}
+    {% set pbw = 5 %}
+    {% set pgap = 0.5 %}
+    {% set phalf = (pmax // 2) %}
+    {% set pstart = picker_page - phalf %}
+    {% set pend = picker_page + phalf %}
+    {% if pstart < 1 %}{% set pend = pend + (1 - pstart) %}{% set pstart = 1 %}{% endif %}
+    {% if pend > picker_total_pages %}{% set pstart = pstart - (pend - picker_total_pages) %}{% set pend = picker_total_pages %}{% endif %}
+    {% if pstart < 1 %}{% set pstart = 1 %}{% endif %}
+    {% set pvis = pend - pstart + 1 %}
+    {% set pcells = 4 + pvis %}
+    {% if pstart > 1 %}{% set pcells = pcells + 1 %}{% if pstart > 2 %}{% set pcells = pcells + 1 %}{% endif %}{% endif %}
+    {% if pend < picker_total_pages %}{% set pcells = pcells + 1 %}{% if pend < picker_total_pages - 1 %}{% set pcells = pcells + 1 %}{% endif %}{% endif %}
+    {% set ptotal_w = pcells * (pbw + pgap) - pgap %}
+    {% set ppag_x = (PK_W - ptotal_w) / 2 %}
+    {{ ui.pagination('picker__pag', page=picker_page, total_pages=picker_total_pages,
+                     x=ppag_x, y=PK_PAG_Y, max_visible=pmax,
+                     btn_w=pbw, btn_h=5, gap=pgap) }}
+  {% endif %}
+{% endif %}
+
+{# ── Edit-widget subwindow (replaces manager body — design rule:
+       one window at a time) ────────────────────────────────────── #}
+{% if editor_open %}
+  {% set ED_W = WIN_W %}
+  {% set ED_H = 118 %}
+  {% set ED_HDR_H = 8 %}
+  {% set ED_BODY_Y = -ED_HDR_H - 3 %}
+
+  {{ ui.window('Edit · ' ~ editor.name ~ ' (' ~ editor.phase_label ~ ')',
+               icon='cog', x=0, y=0, w=ED_W, h=ED_H,
+               crumbs=[
+                 {'key': 'hub',           'label': 'Hub'},
+                 {'key': 'widget_engine', 'label': 'Widget Engine'},
+               ]) }}
+
+  {# Subtitle / scope hint #}
+  <label pos="3 {{ ED_BODY_Y }}" z-index="135"
+         halign="left" valign="center2"
+         text="$888Scope: $aaa{{ editor.phase_label }}$888 · key $aaa{{ editor.key }}"
+         textsize="1.0" textfont="GameFont" />
+
+  {% if not editor.engine_matches %}
+    <quad pos="3 {{ ED_BODY_Y - 3 }}" size="{{ ED_W - 6 }} 5"
+          bgcolor="f90a" halign="left" valign="top" z-index="135" />
+    <label pos="5 {{ ED_BODY_Y - 5.5 }}" z-index="136"
+           halign="left" valign="center2"
+           text="$000Engine phase is '{{ engine_phase }}'. Preview reflects your draft regardless."
+           textsize="0.9" textfont="GameFont" />
+    {% set ED_FORM_Y0 = ED_BODY_Y - 10 %}
+  {% else %}
+    {% set ED_FORM_Y0 = ED_BODY_Y - 4 %}
+  {% endif %}
+
+  {# Scope-badge label rendered to the right of every control. #}
+  {% macro scope_badge(field_meta, x, y) %}
+    {% if field_meta.overridden %}
+      <label pos="{{ x }} {{ y }}" z-index="135"
+             halign="left" valign="center2"
+             text="$15f● $aaaoverride $666(base: {{ field_meta.base_display }})"
+             textsize="0.85" textfont="GameFont" />
+    {% else %}
+      <label pos="{{ x }} {{ y }}" z-index="135"
+             halign="left" valign="center2"
+             text="$666○ inherit (base: {{ field_meta.base_display }})"
+             textsize="0.85" textfont="GameFont" />
+    {% endif %}
+  {% endmacro %}
+
+  {# ──── Layout columns ──────────────────────────────────────────── #}
+  {% set COL_GAP = 3 %}
+  {% set LCOL_W = 80 %}
+  {% set RCOL_W = ED_W - 6 - LCOL_W - COL_GAP %}
+  {% set LX = 3 %}
+  {% set RX = LX + LCOL_W + COL_GAP %}
+
+  {# ──── LEFT: Position & size  ──────────────────────────────────── #}
+  {% set PS_H = 38 %}
+  {% set PS_Y = ED_FORM_Y0 %}
+  {% call ui.group_box('Position & size', x=LX, y=PS_Y, w=LCOL_W, h=PS_H, color='aaa') %}
+    {# Position dpad on the left side of the group. #}
+    {% set TILE_W = 6 %}
+    {% set TILE_H = 5.5 %}
+    {% set DPAD_CX = LX + 12 %}
+    {% set DPAD_CY = PS_Y - 14 %}
+    {% set pos_dpad = [
+      ('up',    'arrow_up',    DPAD_CX,                  DPAD_CY + TILE_H + 0.5),
+      ('left',  'arrow_left',  DPAD_CX - TILE_W - 0.5,   DPAD_CY),
+      ('right', 'arrow_right', DPAD_CX + TILE_W + 0.5,   DPAD_CY),
+      ('down',  'arrow_down',  DPAD_CX,                  DPAD_CY - TILE_H - 0.5),
+    ] %}
+    {% for dval, dicon, bx, by in pos_dpad %}
+      <quad pos="{{ bx }} {{ by }}" size="{{ TILE_W }} {{ TILE_H }}"
+            halign="center" valign="center2" z-index="152"
+            bgcolor="ffffff14"
+            id="uibtn_ghost_{{ id }}__editor__pos__{{ dval }}"
+            action="{{ id }}__editor__pos__{{ dval }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+      {{ ui.icon(dicon, x=bx, y=by, color='aaa', font=1.7, z=153) }}
+    {% endfor %}
+    {# Center reset button. #}
+    <quad pos="{{ DPAD_CX }} {{ DPAD_CY }}" size="{{ TILE_W }} {{ TILE_H }}"
+          halign="center" valign="center2" z-index="152"
+          bgcolor="f55a"
+          id="uibtn_danger_{{ id }}__editor__pos__reset"
+          action="{{ id }}__editor__pos__reset" scriptevents="1"
+          class="ui-btn ui-btn-danger" />
+    {{ ui.icon('undo', x=DPAD_CX, y=DPAD_CY, color='fff', font=1.6, z=153) }}
+
+    {# X/Y read-out below the dpad. #}
+    {% set xmeta = editor.fields.x %}
+    {% set ymeta = editor.fields.y %}
+    <label pos="{{ DPAD_CX }} {{ DPAD_CY - TILE_H * 2 - 1 }}"
+           halign="center" valign="center2" z-index="153"
+           text="$aaaX $fff{{ xmeta.display }}  $aaaY $fff{{ ymeta.display }}"
+           textsize="0.85" textfont="GameFont" />
+    {# Inherited/override badges for X then Y. #}
+    {{ scope_badge(xmeta, DPAD_CX - 14, DPAD_CY - TILE_H * 2 - 4.5) }}
+    {{ scope_badge(ymeta, DPAD_CX - 14, DPAD_CY - TILE_H * 2 - 7) }}
+
+    {# Right side: W / H steppers + step-size stepper. #}
+    {% set wh_label_w = 5 %}
+    {% set wh_step_w = 22 %}
+    {% set wh_x = LX + 28 %}
+    {% set wh_ctrl_x = wh_x + wh_label_w + 1 %}
+    {% set wh_badge_x = wh_ctrl_x + wh_step_w + 2 %}
+    {% set wh_y0 = PS_Y - 6 %}
+    {% for fname in ['w', 'h'] %}
+      {% set fmeta = editor.fields[fname] %}
+      {% set ry = wh_y0 - loop.index0 * 7 %}
+      <label pos="{{ wh_x }} {{ ry }}" z-index="151"
+             halign="left" valign="center2"
+             text="$fff{{ fmeta.label }}"
+             textsize="1.0" textfont="GameFontBlack" />
+      {{ ui.stepper('editor__nudge__' ~ fname,
+                    value=fmeta.display,
+                    x=wh_ctrl_x, y=ry,
+                    w=wh_step_w, size='sm', z=152) }}
+      {{ scope_badge(fmeta, wh_badge_x, ry) }}
+    {% endfor %}
+
+    {# Step-size stepper (applies to dpad + W/H nudges). #}
+    {% set step_ry = wh_y0 - 2 * 7 - 4 %}
+    <label pos="{{ wh_x }} {{ step_ry }}" z-index="151"
+           halign="left" valign="center2"
+           text="$09fStep"
+           textsize="1.0" textfont="GameFontBlack" />
+    {{ ui.stepper('editor__posstep',
+                  value=editor.pos_step_display,
+                  x=wh_ctrl_x, y=step_ry,
+                  w=wh_step_w, size='sm', z=152) }}
+    <label pos="{{ wh_badge_x }} {{ step_ry }}" z-index="151"
+           halign="left" valign="center2"
+           text="$666nudge size"
+           textsize="0.85" textfont="GameFont" />
+  {% endcall %}
+
+  {# ──── LEFT: Behaviour  ─────────────────────────────────────────── #}
+  {% set BH_Y = PS_Y - PS_H - 3 %}
+  {% set BH_H = 22 %}
+  {% call ui.group_box('Behaviour', x=LX, y=BH_Y, w=LCOL_W, h=BH_H, color='aaa') %}
+    {% set bh_label_w = 14 %}
+    {% set bh_ctrl_x = LX + bh_label_w + 2 %}
+    {% set bh_ctrl_w = 24 %}
+    {% set bh_badge_x = bh_ctrl_x + bh_ctrl_w + 2 %}
+
+    {# Disabled toggle #}
+    {% set dmeta = editor.fields.disabled %}
+    {% set dy = BH_Y - 6 %}
+    <label pos="{{ LX + 2 }} {{ dy }}" z-index="151"
+           halign="left" valign="center2"
+           text="$fff{{ dmeta.label }}"
+           textsize="1.0" textfont="GameFontBlack" />
+    {{ ui.push_button('editor__toggle__disabled',
+                      ('ON' if dmeta.value else 'OFF'),
+                      icon=('toggle-on' if dmeta.value else 'toggle-off'),
+                      x=bh_ctrl_x, y=dy,
+                      width=bh_ctrl_w, halign='left',
+                      variant=('danger' if dmeta.value else 'ghost'),
+                      size='sm', z=152) }}
+    {{ scope_badge(dmeta, bh_badge_x, dy) }}
+
+    {# Drive mode combo (z bumped above stepper rows so the dropdown
+       overlays everything below it). #}
+    {% set dmm = editor.fields.drive_mode %}
+    {% set dmy = dy - 7 %}
+    <label pos="{{ LX + 2 }} {{ dmy }}" z-index="151"
+           halign="left" valign="center2"
+           text="$fff{{ dmm.label }}"
+           textsize="1.0" textfont="GameFontBlack" />
+    {{ ui.combo_box('editor__drive_mode',
+                    editor.drive_options,
+                    selected=dmm.value,
+                    open=editor.drive_combo_open,
+                    x=bh_ctrl_x, y=dmy,
+                    w=bh_ctrl_w + 14, size='sm', z=400) }}
+    {{ scope_badge(dmm, bh_ctrl_x + bh_ctrl_w + 16, dmy) }}
+  {% endcall %}
+
+  {# ──── RIGHT: Animation  ────────────────────────────────────────── #}
+  {% set AN_H = PS_H + BH_H + 3 %}
+  {% set AN_Y = ED_FORM_Y0 %}
+  {% call ui.group_box('Animation', x=RX, y=AN_Y, w=RCOL_W, h=AN_H, color='aaa') %}
+    {# Direction dpad (5 tiles, mirrors widgets/editor.xml) #}
+    {% set amd = editor.fields.anim_dir %}
+    {% set TILE_W = 6 %}
+    {% set TILE_H = 5.5 %}
+    {% set DPAD_CX = RX + 14 %}
+    {% set DPAD_CY = AN_Y - 14 %}
+    {% set dpad = [
+      ('up',    'arrow_up',    None, DPAD_CX,             DPAD_CY + TILE_H + 0.5),
+      ('left',  'arrow_left',  None, DPAD_CX - TILE_W - 0.5, DPAD_CY),
+      ('none',  None,          'X',  DPAD_CX,             DPAD_CY),
+      ('right', 'arrow_right', None, DPAD_CX + TILE_W + 0.5, DPAD_CY),
+      ('down',  'arrow_down',  None, DPAD_CX,             DPAD_CY - TILE_H - 0.5),
+    ] %}
+    {% for dval, dicon, dtext, bx, by in dpad %}
+      {% set is_sel = amd.value == dval %}
+      <quad pos="{{ bx }} {{ by }}" size="{{ TILE_W }} {{ TILE_H }}"
+            halign="center" valign="center2" z-index="152"
+            bgcolor="{{ '15dfa66' if is_sel else 'ffffff14' }}"
+            id="uibtn_ghost_{{ id }}__editor__setdir__{{ dval }}"
+            action="{{ id }}__editor__setdir__{{ dval }}" scriptevents="1"
+            class="ui-btn ui-btn-ghost" />
+      {% if dicon %}
+        {{ ui.icon(dicon, x=bx, y=by,
+                   color='fff' if is_sel else 'aaa',
+                   font=1.7, z=153) }}
+      {% else %}
+        <label pos="{{ bx }} {{ by }}" halign="center" valign="center2"
+               z-index="153" textsize="0.85" textfont="GameFontBlack"
+               text="${{ 'fff' if is_sel else 'aaa' }}{{ dtext }}" />
+      {% endif %}
+    {% endfor %}
+    {# Direction label + scope badge below the dpad #}
+    <label pos="{{ DPAD_CX }} {{ DPAD_CY - TILE_H * 2 - 0.5 }}"
+           halign="center" valign="center2" z-index="153"
+           text="$aaa{{ amd.display }}"
+           textsize="0.9" textfont="GameFont" />
+    {{ scope_badge(amd, DPAD_CX - 14, DPAD_CY - TILE_H * 2 - 4) }}
+
+    {# Timing steppers stacked to the right of the dpad. #}
+    {% set tim_x = DPAD_CX + TILE_W + 6 %}
+    {% set tim_step_w = 22 %}
+    {% set tim_step_x = tim_x + 14 %}
+    {% set tim_badge_x = tim_step_x + tim_step_w + 2 %}
+    {% set tim_y0 = AN_Y - 6 %}
+    {% set tim_step = 7 %}
+    {% set ms_fields = [('anim_duration_ms', 'Dur'),
+                        ('anim_in_delay_ms',  'In'),
+                        ('anim_out_delay_ms', 'Out')] %}
+    {% for fname, flabel in ms_fields %}
+      {% set fmeta = editor.fields[fname] %}
+      {% set ry = tim_y0 - loop.index0 * tim_step %}
+      <label pos="{{ tim_x }} {{ ry }}" z-index="151"
+             halign="left" valign="center2"
+             text="$fff{{ flabel }}"
+             textsize="1.0" textfont="GameFontBlack" />
+      {{ ui.stepper('editor__nudge__' ~ fname,
+                    value=fmeta.display,
+                    x=tim_step_x, y=ry,
+                    w=tim_step_w, size='sm', z=152) }}
+      {{ scope_badge(fmeta, tim_badge_x, ry) }}
+    {% endfor %}
+  {% endcall %}
+
+  {# ── action row: Copy effective · Reset · Cancel · Apply ─────── #}
+  {% set ACT_Y = -ED_H + 6 %}
+  <label pos="4 {{ ACT_Y + 5 }}" z-index="151"
+         halign="left" valign="center2"
+         text="$888Copy effective →"
+         textsize="0.85" textfont="GameFont" />
+  {{ ui.combo_box('editor__copy', editor.copy_options,
+                  selected=None, open=editor.copy_combo_open,
+                  x=4, y=ACT_Y + 1, w=42, size='sm', z=410) }}
+  {{ ui.push_button('editor__reset',  'Reset preview', icon='undo',
+                    x=ED_W - 70, y=ACT_Y, halign='right', variant='ghost', size='sm', z=136) }}
+  {{ ui.push_button('editor__cancel', 'Cancel', icon='times',
+                    x=ED_W - 30, y=ACT_Y, halign='right', variant='ghost', size='md', z=136) }}
+  {{ ui.push_button('editor__apply',  'Apply', icon='check',
+                    x=ED_W - 3, y=ACT_Y, halign='right',
+                    variant=('primary' if editor.dirty else 'ghost'),
+                    size='md', z=136) }}
+{% endif %}
+
+{# ── engine-wide settings sub-view ─────────────────────────────────── #}
+{% if settings_open %}
+  {% set ST_W = WIN_W %}
+  {% set ST_H = 60 %}
+  {{ ui.window('Widget Engine · settings',
+               icon='sliders', x=0, y=0, w=ST_W, h=ST_H,
+               crumbs=[{'key':'hub','label':'Hub'},
+                       {'key':'widget_engine','label':'Widget Engine'},
+                       {'key':'settings','label':'Settings'}]) }}
+
+  {% call ui.group_box(title='Strip rendering', x=4, y=-12, w=ST_W - 8, h=36) %}
+    <label pos="3 -4" z-index="151"
+           halign="left" valign="center2"
+           text="$fffStrip placement"
+           textsize="1.0" textfont="GameFontBlack" />
+    <label pos="3 -8" z-index="151"
+           halign="left" valign="center2"
+           text="$888When ON, the engine prefers the top edge of the screen for status strips."
+           textsize="0.8" textfont="GameFont" />
+    {{ ui.check_box('settings__strip_top__toggle',
+                    label='Prefer top edge',
+                    checked=engine_settings.strip_prefer_top,
+                    x=ST_W - 50, y=-6, size='sm', z=152) }}
+
+    <label pos="3 -18" z-index="151"
+           halign="left" valign="center2"
+           text="$fffStrip thickness"
+           textsize="1.0" textfont="GameFontBlack" />
+    <label pos="3 -22" z-index="151"
+           halign="left" valign="center2"
+           text="$888Vertical thickness of status strips (manialink units, 0.1 – 5.0)."
+           textsize="0.8" textfont="GameFont" />
+    {{ ui.stepper('settings__strip_thickness',
+                  value=engine_settings.strip_thickness_display,
+                  x=ST_W - 36, y=-20, w=26, size='sm', z=152) }}
+  {% endcall %}
+{% endif %}
+
+{# ── GBX replacements sub-view ─────────────────────────────────────── #}
+{% if replacements_open %}
+  {% set RP_W = WIN_W %}
+  {% set RP_H = WIN_H %}
+  {% set RP_HDR_H = 8 %}
+  {% set RP_ROW_H = 7 %}
+  {% set RP_LIST_Y = -RP_HDR_H - 4 %}
+
+  {{ ui.window('Widget Engine · GBX replacements',
+               icon='exchange-alt', x=0, y=0, w=RP_W, h=RP_H,
+               crumbs=[{'key':'hub','label':'Hub'},
+                       {'key':'widget_engine','label':'Widget Engine'},
+                       {'key':'replacements','label':'Replacements'}]) }}
+
+  <label pos="3 {{ RP_LIST_Y + 1 }}" z-index="135"
+         halign="left" valign="bottom2"
+         text="$888Widgets that override a default GBX manialink. Toggle per-player."
+         textsize="0.9" textfont="GameFont" />
+
+  {% if replacements_rows|length == 0 %}
+    <label pos="{{ RP_W/2 }} {{ RP_LIST_Y - 10 }}" z-index="135"
+           halign="center" valign="center2"
+           text="$666No replacement widgets installed."
+           textsize="1.1" textfont="GameFont" />
+  {% else %}
+    <frame pos="3 {{ RP_LIST_Y - 2 }}" z-index="135">
+      {% for r in replacements_rows %}
+        {% set ry = -(loop.index0 * (RP_ROW_H + 0.6)) %}
+        {% set RW = RP_W - 6 %}
+        <quad pos="0 {{ ry }}" size="{{ RW }} {{ RP_ROW_H }}"
+              valign="top" halign="left"
+              bgcolor="{{ '15151588' if loop.index0 % 2 == 0 else '0a0a0a88' }}" />
+        <label pos="1.5 {{ ry - 2 }}" z-index="136"
+               halign="left" valign="center2"
+               text="${{ 'fff' if r.enabled else '888' }}{{ r.name }}  $555{{ r.key }}"
+               textsize="1.0" textfont="GameFontBlack" />
+        <label pos="1.5 {{ ry - 5 }}" z-index="136"
+               halign="left" valign="center2"
+               text="$888manialink: $aaa{{ r.manialink_id }}{% if r.hide_ui_modules %}  $888· hides $aaa{{ r.hide_ui_modules|join(', ') }}{% endif %}"
+               textsize="0.85" textfont="GameFont" />
+        {{ ui.push_button('replacements__row__' ~ r.key ~ '__toggle',
+                          ('ON' if r.enabled else 'OFF'),
+                          icon=('toggle-on' if r.enabled else 'toggle-off'),
+                          x=RW - 1, y=ry - RP_ROW_H/2,
+                          width=14, halign='right',
+                          variant=('primary' if r.enabled else 'ghost'),
+                          size='sm', z=136) }}
+        {{ ui.push_button('replacements__row__' ~ r.key ~ '__edit',
+                          'EDIT', icon='cog',
+                          x=RW - 16, y=ry - RP_ROW_H/2,
+                          width=14, halign='right',
+                          variant='ghost', size='sm', z=136) }}
+      {% endfor %}
+    </frame>
+  {% endif %}
+{% endif %}
+
+</frame>
+
+{# ── confirm-remove dialog (overlay) ───────────────────────────────── #}
+{% if confirm_remove_key %}
+  {{ ui.confirm_dialog('confirm_remove',
+                       title='Remove widget',
+           message='Remove "' ~ confirm_remove_name ~
+             '" from this phase only? ' ~
+             'The widget stays installed for other phases.',
+                       open=True, danger=True,
+                       ok_label='Remove', ok_icon='trash',
+                       cancel_label='Cancel') }}
+{% endif %}
+
+{{ ui.hover_script() }}

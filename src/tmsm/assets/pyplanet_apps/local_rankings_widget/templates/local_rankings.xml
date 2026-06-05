@@ -1,4 +1,4 @@
-{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+{% import 'widget_engine/frame.xml' as widgets with context %}
 
 {% set widget_w = widget_w|default(62.0) %}
 {% set widget_h = widget_h|default(22.0) %}
@@ -8,7 +8,7 @@
   <label pos="2.0 -0.9" z-index="42"
          halign="left" valign="top"
          textsize="1.3" textfont="GameFontBlack"
-         text="$fff{{ mode_label|default('LOCAL') }}" />
+                             text="$fffLocal Records" />
 
   {% if rows|length == 0 %}
     <label pos="{{ widget_w / 2 }} {{ -widget_h / 2 }}" z-index="42"

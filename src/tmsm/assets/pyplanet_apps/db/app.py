@@ -249,8 +249,16 @@ class App_Db(AppConfig):
         st = self._gstate(player.login)
         st["status"] = msg
         st["status_color"] = self._SEV_COLOR.get(severity, "888")
+        sig = None
+        for code in ("notification_engine:notify", "tmsm_status:notify"):
+            try:
+                sig = self.context.signals.get_signal(code)
+                break
+            except KeyError:
+                continue
+        if sig is None:
+            return
         try:
-            sig = self.context.signals.get_signal("tmsm_status:notify")
             await sig.send_robust({
                 "message": msg, "severity": severity,
                 "login": player.login, "source": "db",

@@ -1,20 +1,32 @@
 """Hub views: the launcher widget and the main hub window."""
 from __future__ import annotations
 
+from typing import Any
+
 from pyplanet.apps.tmsm.ui.views import BaseView
-from pyplanet.apps.tmsm.widgets.widget_base import WidgetView
 
 
-class HubLauncherView(WidgetView):
-    """The hub launcher button — rendered through the tmsm_widgets frame so
-    its position is configurable per-player and globally via the widgets
-    editor."""
+class HubLauncherView(BaseView):
+    """The hub launcher button — rendered through the widget_engine frame
+    so its position (per-player and global override) is configurable from
+    the widget_engine manager. Only created when widget_engine is loaded;
+    otherwise the hub is reachable only via the `/hub` chat command.
+    """
 
     template_name = "tmsm_hub/launcher.xml"
 
     def __init__(self, app):
-        # WidgetView expects (app, widget_app). The hub app plays both roles.
-        super().__init__(app, app)
+        super().__init__(app)
+        self.hub_app = app
+
+    async def get_per_player_data(self, login: str) -> dict[str, Any]:
+        return self.hub_app.frame_context(login)
+
+    async def get_context_data(self) -> dict[str, Any]:
+        ctx = await super().get_context_data() or {}
+        # Fallback frame context so a global render (login="") still works.
+        ctx.update(self.hub_app.frame_context(""))
+        return ctx
 
 
 class HubView(BaseView):

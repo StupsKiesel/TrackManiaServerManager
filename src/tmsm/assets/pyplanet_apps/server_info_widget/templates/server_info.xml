@@ -1,4 +1,4 @@
-{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+{% import 'widget_engine/frame.xml' as widgets with context %}
 
 {% set widget_w = widget_w|default(58.0) %}
 {% set widget_h = widget_h|default(12.0) %}

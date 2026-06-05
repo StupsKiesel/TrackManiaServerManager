@@ -9,7 +9,8 @@ import asyncio
 import logging
 from typing import Any
 
-from pyplanet.apps.tmsm.widgets.widget_base import WidgetAppBase
+from pyplanet.apps.tmsm.widget_engine import AnimDir, DriveMode
+from pyplanet.apps.tmsm.widget_engine.widget_base import WidgetAppBase
 from pyplanet.utils import times
 
 
@@ -21,7 +22,7 @@ class LocalRankingsWidget(WidgetAppBase):
     label = "local_rankings_widget"
 
     WIDGET_KEY = "local_rankings"
-    WIDGET_NAME = "Local Rankings"
+    WIDGET_NAME = "Local Records"
     WIDGET_DESCRIPTION = "Top local records for the current map."
     WIDGET_ICON = "trophy"
     WIDGET_TEMPLATE = "local_rankings_widget/local_rankings.xml"
@@ -35,14 +36,17 @@ class LocalRankingsWidget(WidgetAppBase):
     # script and can cause repeated hide/show animation flicker.
     WIDGET_REFRESH_SECONDS = 0.0
     WIDGET_HIDE_NAMED = ["in_menu"]
-    WIDGET_HIDE_WHILE_DRIVING = False
-    WIDGET_ANIM_DIR = "right"
+    WIDGET_DRIVE_MODE = DriveMode.FIXED
+    WIDGET_ANIM_DIR = AnimDir.RIGHT
     WIDGET_ANIM_DURATION_MS = 250
-    WIDGET_ANIM_DELAY_MS = 0
+    WIDGET_ANIM_IN_DELAY_MS = 0
+    WIDGET_ANIM_OUT_DELAY_MS = 0
 
     WIDGET_STRIP_COLOR = "22ccaaff"
 
     ROW_LIMIT = 5
+    _ROW_PITCH = 3.2
+    _HEADER_RESERVED = 4.6
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -131,13 +135,14 @@ class LocalRankingsWidget(WidgetAppBase):
         if changed:
             self._queue_refresh()
 
-    async def _on_finish(self, player=None, lap_time=None, is_end_race=None, **kwargs) -> None:
-        if not bool(is_end_race):
+    async def _on_finish(self, player=None, lap_time=None, race_time=None, is_end_race=None, **kwargs) -> None:
+        # Some modes/signals omit is_end_race; only reject explicit False.
+        if is_end_race is False:
             return
         login = str(getattr(player, "login", "") or "")
         nickname = str(getattr(player, "nickname", login) or login)
         try:
-            score = int(lap_time or 0)
+            score = int(lap_time or race_time or 0)
         except (TypeError, ValueError):
             score = 0
         if self._upsert_record(login, nickname, score):
@@ -163,15 +168,49 @@ class LocalRankingsWidget(WidgetAppBase):
             logger.exception("local_rankings: failed loading local_records rows")
             return []
 
+    def _visible_row_capacity(self, login: str) -> int:
+        """Compute visible row count from resolved widget height."""
+        h = float(self.WIDGET_DEFAULT_H)
+        try:
+            host = self.instance.apps.apps.get("widget_engine")
+            if host is not None:
+                resolved = host.engine.resolve(self.WIDGET_KEY, login)
+                if resolved is not None:
+                    h = float(getattr(resolved, "h", h) or h)
+        except Exception:
+            pass
+        usable = max(0.0, h - self._HEADER_RESERVED)
+        fit = int(usable // self._ROW_PITCH)
+        return max(1, min(self.ROW_LIMIT * 4, fit))
+
     def _load_contrib_current_records(self) -> list[dict[str, Any]]:
         """Use contrib local_records in-memory cache when available.
 
         This is the most up-to-date source right after map restart/map_begin.
         """
         try:
-            app = getattr(self.instance.apps, "apps", {}).get("local_records")
+            apps = getattr(self.instance.apps, "apps", {}) or {}
         except Exception:
-            app = None
+            apps = {}
+
+        app = None
+        for key in (
+            "local_records",
+            "pyplanet.apps.contrib.local_records",
+            "pyplanet.apps.contrib.local_records.app",
+        ):
+            app = apps.get(key)
+            if app is not None:
+                break
+
+        if app is None:
+            for key, candidate in apps.items():
+                module = str(getattr(candidate.__class__, "__module__", "") or "")
+                key_str = str(key or "")
+                if "contrib.local_records" in module or key_str.endswith("local_records"):
+                    app = candidate
+                    break
+
         if app is None:
             return []
         out: list[dict[str, Any]] = []
@@ -190,6 +229,7 @@ class LocalRankingsWidget(WidgetAppBase):
         return out
 
     async def get_widget_data(self, login: str) -> dict[str, Any]:
+        visible_rows = self._visible_row_capacity(login)
         db_records = await self._load_current_records()
         rows: list[dict[str, Any]] = []
         my_row = None
@@ -221,12 +261,12 @@ class LocalRankingsWidget(WidgetAppBase):
                 "score": times.format_time(raw_score),
                 "is_me": bool(player_login and player_login == login),
             }
-            if index <= self.ROW_LIMIT:
+            if index <= visible_rows:
                 rows.append(row)
             if row["is_me"]:
                 my_row = row
 
-        if my_row is not None and int(my_row["rank"]) <= self.ROW_LIMIT:
+        if my_row is not None and int(my_row["rank"]) <= visible_rows:
             my_row = None
 
         note = ""
@@ -236,6 +276,6 @@ class LocalRankingsWidget(WidgetAppBase):
         return {
             "rows": rows,
             "my_row": my_row,
-            "mode_label": "LOCAL",
+            "mode_label": "Local Records",
             "note": note,
         }

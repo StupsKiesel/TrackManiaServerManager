@@ -47,8 +47,6 @@ class StatusApp(AppConfig):
     app_dependencies = ["core.maniaplanet", "tmsm_ui"]
     game_dependencies = ["trackmania", "trackmania_next"]
 
-    app_dependencies = ["core.maniaplanet", "tmsm_ui", "tmsm_widgets"]
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.view: Optional[StatusView] = None

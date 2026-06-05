@@ -7,8 +7,8 @@ so our XML replaces it client-side. Hidden F8/F9 hotkey labels are kept so
 PyPlanet's visibility toggles keep working.
 
 Also suppresses PyPlanet's startup chat banner and the "new version
-available" chat notice, routing those to the tmsm_status toast widget for
-admin-level players (and master) only.
+available" chat notice, routing those to the notification_engine toast
+widget for admin-level players (and master) only.
 """
 from __future__ import annotations
 
@@ -76,6 +76,15 @@ class UnbrandPyPlanet(AppConfig):
         self._cached_hide_report: bool = True
         self._cached_hide_chat_btn: bool = True
         self._settings_ready: bool = False
+
+    def _status_messages_available(self) -> bool:
+        try:
+            if self.instance.apps.apps.get("notification_engine") is None:
+                return False
+            self.context.signals.get_signal("notification_engine:notify")
+            return True
+        except Exception:
+            return False
 
     async def on_init(self):
         # Patch instance.print_header BEFORE apps.start runs (and therefore
@@ -394,12 +403,14 @@ class UnbrandPyPlanet(AppConfig):
     async def _toast(self, message: str, severity: str, logins: list[str]) -> None:
         if not logins:
             return
+        if not self._status_messages_available():
+            return
         try:
-            sig = self.context.signals.get_signal("tmsm_status:notify")
+            sig = self.context.signals.get_signal("notification_engine:notify")
             await sig.send_robust({
                 "message": message,
                 "severity": severity,
                 "login": logins,
             })
         except Exception:
-            logger.exception("unbrand_pyplanet: failed to send tmsm_status:notify")
+            logger.exception("unbrand_pyplanet: failed to send notification_engine:notify")

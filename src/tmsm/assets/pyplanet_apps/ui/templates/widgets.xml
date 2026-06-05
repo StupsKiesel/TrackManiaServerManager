@@ -39,6 +39,7 @@
   'error': '&#xf057;', 'question': '&#xf059;',
   'terminal': '&#xf120;', 'monitor': '&#xf108;',
   'disc': '&#xf51f;', 'circle': '&#xf111;', 'circle-o': '&#xf10c;',
+  'bug': '&#xf188;',
 } %}
 
 {% set _SIZES = {

@@ -30,15 +30,17 @@ from .views import HubLauncherView, HubView
 from pyplanet.apps.tmsm.ui import perms as _perms
 
 try:
-    from pyplanet.apps.tmsm.widgets.registry import (
-        Animation as _WidgetAnim,
-        HideRule as _WidgetHide,
-        WidgetEntry,
-        WidgetKind,
+    from pyplanet.apps.tmsm.widget_engine.registry import (
+        AnimDir as _WeAnimDir,
+        Animation as _WeAnim,
+        DriveMode as _WeDriveMode,
+        HideRule as _WeHide,
+        WidgetEntry as _WeWidgetEntry,
+        WidgetKind as _WeWidgetKind,
     )
-    _HAS_WIDGETS = True
+    _HAS_WE = True
 except Exception:
-    _HAS_WIDGETS = False
+    _HAS_WE = False
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +58,9 @@ class HubApp(AppConfig):
     app_dependencies = ["core.maniaplanet", "tmsm_ui"]
     game_dependencies = ["trackmania", "trackmania_next"]
 
-    # ── tmsm_widgets contract (the launcher is registered as a widget) ──
+    # ── widget_engine contract (the launcher is registered as a widget) ─
     WIDGET_KEY = "hub_launcher"
     WIDGET_NAME = "Hub Launcher"
-    WIDGET_ALLOW_PERSONAL = False
     WIDGET_DESCRIPTION = "Button that opens the tmsm hub window."
     WIDGET_ICON = "th-large"
     WIDGET_DEFAULT_X = -158.0
@@ -92,9 +93,11 @@ class HubApp(AppConfig):
         self._server_name_last_refresh: float = 0.0
         # Track chat commands we've already wired so re-registration is a no-op.
         self._registered_commands: set[str] = set()
-        # Set when the widgets app is available (resolved lazily).
-        self.widgets_app = None
-        self._widgets_listeners_wired: bool = False
+        # Resolved on_start: reference to the widget_engine app, or None.
+        # When None, the launcher widget is disabled and /hub is the only
+        # way to open the hub.
+        self.widget_engine_app = None
+        self._widget_engine_listeners_wired: bool = False
 
     # ---- lifecycle -----------------------------------------------------
 
@@ -109,14 +112,21 @@ class HubApp(AppConfig):
                 logger.exception("hub: failed to register signal tmsm_hub:%s", code)
 
     async def on_start(self) -> None:
-        # Resolve the widgets app (optional dependency).
+        # Resolve the widget_engine app (optional). When missing the hub
+        # is reachable only through the `/hub` chat command \u2014 no launcher.
         try:
-            self.widgets_app = self.instance.apps.apps.get("tmsm_widgets")
+            self.widget_engine_app = self.instance.apps.apps.get("widget_engine")
         except Exception:
-            self.widgets_app = None
-
-        self.launcher = HubLauncherView(self)
-        self.launcher.connect("toggle", self._on_launcher_toggle)
+            self.widget_engine_app = None
+        if not _HAS_WE or self.widget_engine_app is None:
+            logger.warning(
+                "hub: widget_engine not available \u2014 launcher disabled; "
+                "use /hub to open the hub.",
+            )
+            self.launcher = None
+        else:
+            self.launcher = HubLauncherView(self)
+            self.launcher.connect("toggle", self._on_launcher_toggle)
 
         self.hub = HubView(self)
         # We replace the default catch-all to route open__<key> / tab__<key>.
@@ -139,11 +149,16 @@ class HubApp(AppConfig):
         self.context.signals.listen("tmsm_hub:notify", self._on_notify)
         self.context.signals.listen("maniaplanet:player_connect", self._on_player_connect)
 
-        # Show the launcher to everyone (global manialink).
-        await self.launcher.show()
-        await self._register_launcher_widget()
+        # Show the launcher to everyone (global manialink) \u2014 only when the
+        # widget_engine is available.
+        if self.launcher is not None:
+            await self.launcher.show()
+            await self._register_launcher_widget()
         await self._refresh_server_name()
-        logger.info("hub: started; launcher visible")
+        logger.info(
+            "hub: started; launcher %s",
+            "visible" if self.launcher is not None else "disabled (no widget_engine)",
+        )
 
     async def on_stop(self) -> None:
         for view in (self.launcher, self.hub):
@@ -154,152 +169,165 @@ class HubApp(AppConfig):
             except Exception:
                 logger.exception("hub: destroy failed")
 
-    # ---- tmsm_widgets contract -----------------------------------------
+    # ---- widget_engine contract ---------------------------------------
 
     @property
     def view(self):
-        """Used by the widgets editor (`_find_widget_app`) to refresh the
-        launcher after a position change."""
+        """Used by the widget_engine to refresh the launcher after a
+        position change (engine looks up ``app.view`` to call display)."""
         return self.launcher
 
-    async def get_widget_data(self, login: str) -> dict[str, Any]:
-        return {}
+    def _anim_offsets(self, anim_dir: str) -> tuple[float, float]:
+        if anim_dir == "left":
+            return (-500.0, 0.0)
+        if anim_dir == "right":
+            return (500.0, 0.0)
+        if anim_dir == "up":
+            return (0.0, 500.0)
+        if anim_dir == "down":
+            return (0.0, -500.0)
+        return (0.0, 0.0)
 
-    def frame_context(self, login: str) -> dict[str, Any]:
-        """Per-player position + edit-mode flags consumed by the
-        ``tmsm_widgets/frame.xml`` macro inside ``launcher.xml``.
-
-        Mirrors :meth:`WidgetAppBase.frame_context`. Falls back to the
-        hard-coded defaults if the widgets app is not loaded.
-        """
-        if self.widgets_app is None:
-            try:
-                self.widgets_app = self.instance.apps.apps.get("tmsm_widgets")
-            except Exception:
-                self.widgets_app = None
-        pos = {}
-        if self.widgets_app is not None:
-            try:
-                pos = self.widgets_app.resolve_position(self.WIDGET_KEY, login)
-            except Exception:
-                pos = {}
-        editing = False
-        if self.widgets_app is not None:
-            try:
-                editing = bool(self.widgets_app.is_editing(login))
-            except Exception:
-                editing = False
+    def _default_frame_context(self, view_id: str) -> dict[str, Any]:
+        anim_off = self._anim_offsets(self.WIDGET_ANIM_DIR)
         return {
-            "widget_key":             self.WIDGET_KEY,
-            "widget_x":               pos.get("x", self.WIDGET_DEFAULT_X),
-            "widget_y":               pos.get("y", self.WIDGET_DEFAULT_Y),
-            "widget_w":               pos.get("w", self.WIDGET_DEFAULT_W),
-            "widget_h":               pos.get("h", self.WIDGET_DEFAULT_H),
-            "widget_kind":            "persistent",
-            "widget_hide_clauses":    [],
-            "widget_hide_raw":        "",
-            "widget_anim_dir":        self.WIDGET_ANIM_DIR,
+            "widget_key":              self.WIDGET_KEY,
+            "widget_view_id":          view_id,
+            "widget_kind":             "persistent",
+            "widget_x":                self.WIDGET_DEFAULT_X,
+            "widget_y":                self.WIDGET_DEFAULT_Y,
+            "widget_w":                self.WIDGET_DEFAULT_W,
+            "widget_h":                self.WIDGET_DEFAULT_H,
+            "widget_hide_clauses":     [],
+            "widget_hide_raw":         "",
+            "widget_anim_dir":         self.WIDGET_ANIM_DIR,
             "widget_anim_duration_ms": self.WIDGET_ANIM_DURATION_MS,
-            "widget_anim_delay_ms":   0,
-            "widget_anim_off_x":      (-500.0 if self.WIDGET_ANIM_DIR == "left" else (500.0 if self.WIDGET_ANIM_DIR == "right" else 0.0)),
-            "widget_anim_off_y":      (500.0 if self.WIDGET_ANIM_DIR == "up" else (-500.0 if self.WIDGET_ANIM_DIR == "down" else 0.0)),
-            "widget_edit_mode":       editing,
-            "widget_view_id":         self.launcher.id if self.launcher else self.WIDGET_KEY,
+            "widget_anim_in_delay_ms": 0,
+            "widget_anim_out_delay_ms": 0,
+            "widget_anim_off_x":       anim_off[0],
+            "widget_anim_off_y":       anim_off[1],
+            "widget_bg_color":         "40404080",
+            "widget_strip_color":      "ffae00",
+            "widget_strip_edge":       "",
+            "widget_strip_thickness":  1.0,
+            "widget_edit_mode":        False,
+            "widget_debug_mode":       False,
+            "widget_debug_status":     "",
+            "widget_debug_lines":      [],
+            "widget_force_hidden":     False,
+            "widget_scale_y":          1.0,
         }
 
-    async def _register_launcher_widget(self) -> None:
-        """Tell the widgets app about the launcher so it shows up in the
-        position editor and reacts to position changes.
-
-        Safe to call multiple times \u2014 widget signal listeners are wired
-        exactly once via :attr:`_widgets_listeners_wired`.
+    def frame_context(self, login: str) -> dict[str, Any]:
+        """Per-player frame context consumed by ``widget_engine/frame.xml``
+        inside ``launcher.xml``. Falls back to defaults if the widget
+        engine is not available.
         """
-        if not _HAS_WIDGETS:
-            logger.info("hub: tmsm_widgets not available; launcher position not configurable")
+        view_id = self.launcher.id if self.launcher is not None else self.WIDGET_KEY
+        ctx = self._default_frame_context(view_id)
+        engine = getattr(self.widget_engine_app, "engine", None) if self.widget_engine_app else None
+        if engine is None:
+            return ctx
+        try:
+            resolved = engine.resolve(self.WIDGET_KEY, login)
+        except Exception:
+            resolved = None
+        if resolved is None:
+            return ctx
+        anim_dir = getattr(resolved.anim_dir, "value", resolved.anim_dir)
+        anim_off = self._anim_offsets(str(anim_dir))
+        try:
+            edit_mode = bool(engine.is_editing(login, self.WIDGET_KEY))
+        except Exception:
+            edit_mode = False
+        try:
+            debug_mode = bool(engine.is_debug(login, self.WIDGET_KEY))
+        except Exception:
+            debug_mode = False
+        if edit_mode:
+            debug_mode = False
+        debug_status = ""
+        debug_lines: list[Any] = []
+        if debug_mode:
+            try:
+                debug_status = engine.debug_status(login, self.WIDGET_KEY) or ""
+                debug_lines = engine.debug_lines(login, self.WIDGET_KEY) or []
+            except Exception:
+                pass
+        ctx.update({
+            "widget_x":                 resolved.x,
+            "widget_y":                 resolved.y,
+            "widget_w":                 resolved.w,
+            "widget_h":                 resolved.h,
+            "widget_anim_dir":          str(anim_dir),
+            "widget_anim_duration_ms":  getattr(resolved, "anim_duration_ms", self.WIDGET_ANIM_DURATION_MS),
+            "widget_anim_in_delay_ms":  getattr(resolved, "anim_in_delay_ms", 0),
+            "widget_anim_out_delay_ms": getattr(resolved, "anim_out_delay_ms", 0),
+            "widget_anim_off_x":        anim_off[0],
+            "widget_anim_off_y":        anim_off[1],
+            "widget_bg_color":          getattr(resolved, "bg_color", "0000"),
+            "widget_strip_color":       getattr(resolved, "strip_color", "fff8"),
+            "widget_strip_edge":        getattr(resolved, "strip_edge", "none"),
+            "widget_strip_thickness":   getattr(resolved, "strip_thickness", 0.0),
+            "widget_edit_mode":         edit_mode,
+            "widget_debug_mode":        debug_mode,
+            "widget_debug_status":      debug_status,
+            "widget_debug_lines":       debug_lines,
+        })
+        return ctx
+
+    async def _register_launcher_widget(self) -> None:
+        """Tell widget_engine about the launcher so it shows up in the
+        manager and reacts to position changes. Safe to call multiple
+        times \u2014 the signal listeners are wired exactly once via
+        :attr:`_widget_engine_listeners_wired`.
+        """
+        if not _HAS_WE or self.widget_engine_app is None or self.launcher is None:
             return
-        entry = WidgetEntry(
+        entry = _WeWidgetEntry(
             key=self.WIDGET_KEY,
             name=self.WIDGET_NAME,
             description=self.WIDGET_DESCRIPTION,
             icon=self.WIDGET_ICON,
+            kind=_WeWidgetKind.PERSISTENT,
+            drive_mode=_WeDriveMode.FIXED,
             default_x=self.WIDGET_DEFAULT_X,
             default_y=self.WIDGET_DEFAULT_Y,
             default_w=self.WIDGET_DEFAULT_W,
             default_h=self.WIDGET_DEFAULT_H,
-            kind=WidgetKind.PERSISTENT,
-            hide_rule=_WidgetHide(named=[], raw=""),
-            animation=_WidgetAnim(
-                direction=self.WIDGET_ANIM_DIR,
+            hide_rule=_WeHide(),
+            animation=_WeAnim(
+                direction=_WeAnimDir.NONE,
                 duration_ms=self.WIDGET_ANIM_DURATION_MS,
             ),
             author="tmsm",
             version="0.1",
-            allow_personal=self.WIDGET_ALLOW_PERSONAL,
         )
         try:
-            sig = self.context.signals.get_signal("tmsm_widgets:register")
-            await sig.send_robust({"entry": entry}, raw=True)
-            logger.info("hub: launcher widget registered with tmsm_widgets")
+            sig = self.context.signals.get_signal("widget_engine:register")
+            await sig.send_robust({"entry": entry, "app": self}, raw=True)
+            logger.info("hub: launcher widget registered with widget_engine")
         except KeyError:
-            logger.info("hub: tmsm_widgets:register signal not available yet")
+            logger.info("hub: widget_engine:register signal not available yet")
         except Exception:
             logger.exception("hub: launcher widget registration failed")
-        # Wire signal listeners exactly once.
-        if self._widgets_listeners_wired:
+        if self._widget_engine_listeners_wired:
             return
         try:
             self.context.signals.listen(
-                "tmsm_widgets:position_changed", self._on_launcher_pos_changed,
+                "widget_engine:request_register", self._on_widget_engine_request_register,
             )
-            self.context.signals.listen(
-                "tmsm_widgets:edit_mode", self._on_widgets_edit_mode,
-            )
-            self.context.signals.listen(
-                "tmsm_widgets:request_register", self._on_widgets_request_register,
-            )
-            self._widgets_listeners_wired = True
+            self._widget_engine_listeners_wired = True
         except Exception:
-            logger.exception("hub: failed to subscribe to widgets signals")
+            logger.exception("hub: failed to subscribe to widget_engine signals")
 
-    async def _on_widgets_request_register(self, **kwargs) -> None:
+    async def _on_widget_engine_request_register(self, **kwargs) -> None:
         await self._register_launcher_widget()
-        # The widgets app only becomes available after hub.on_start() has
-        # already shown the launcher with default positions. Now that
-        # widgets is live, re-render so resolve_position() picks up any
-        # stored per-player / global override and the launcher snaps to
-        # its real location instead of jumping when the editor opens.
         if self.launcher is not None:
             try:
-                self.widgets_app = self.instance.apps.apps.get("tmsm_widgets")
-            except Exception:
-                pass
-            try:
                 await self.launcher.refresh()
             except Exception:
-                logger.exception("hub: launcher refresh after widgets ready failed")
-
-    async def _on_launcher_pos_changed(self, key: str | None = None,
-                                       scope: str | None = None,
-                                       login: str | None = None,
-                                       **kwargs) -> None:
-        if key != self.WIDGET_KEY or self.launcher is None:
-            return
-        try:
-            if scope == "player" and login:
-                await self.launcher.display(player_logins=[login])
-            else:
-                await self.launcher.refresh()
-        except Exception:
-            logger.exception("hub: launcher re-display after move failed")
-
-    async def _on_widgets_edit_mode(self, login: str | None = None,
-                                    active: bool | None = None, **kwargs) -> None:
-        if not login or self.launcher is None:
-            return
-        try:
-            await self.launcher.display(player_logins=[login])
-        except Exception:
-            logger.exception("hub: launcher re-display on edit-mode toggle failed")
+                logger.exception("hub: launcher refresh after widget_engine ready failed")
 
     # ---- registry ------------------------------------------------------
 
@@ -449,11 +477,14 @@ class HubApp(AppConfig):
         if player.login not in self._welcomed:
             self._welcomed.add(player.login)
             try:
-                await self.instance.chat(
-                    "$z$0afWelcome! Click the $fffHub$0af button (bottom-right) "
-                    "or type $fff/hub$0af to open the launcher.",
-                    player,
-                )
+                if self.launcher is not None:
+                    msg = (
+                        "$z$0afWelcome! Click the $fffHub$0af button "
+                        "or type $fff/hub$0af to open the launcher."
+                    )
+                else:
+                    msg = "$z$0afWelcome! Type $fff/hub$0af to open the launcher."
+                await self.instance.chat(msg, player)
             except Exception:
                 logger.exception("hub: welcome chat failed")
 

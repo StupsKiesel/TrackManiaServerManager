@@ -1,0 +1,218 @@
+{# widget_engine/frame.xml — shared wrapper macro for every registered widget.
+
+   Usage in a widget template:
+
+       {% import 'widget_engine/frame.xml' as widgets with context %}
+       {% call widgets.frame() %}
+           <label text="hello" />
+       {% endcall %}
+
+   Context variables consumed (all injected by WidgetView.get_per_player_data):
+
+       widget_key, widget_view_id, widget_kind, widget_x, widget_y, widget_w,
+       widget_h, widget_hide_clauses, widget_hide_raw, widget_anim_dir,
+       widget_anim_duration_ms, widget_anim_in_delay_ms, widget_anim_out_delay_ms,
+       widget_edit_mode
+#}
+
+{% macro frame(extra_tick="", extra_init="") %}
+{# â”€â”€ outer absolute-position frame â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #}
+<frame id="widget_root_{{ widget_key }}" pos="{{ widget_x }} {{ widget_y }}" z-index="40">
+ <frame id="widget_anim_{{ widget_key }}" pos="0 0">
+
+  <frame id="widget_body_{{ widget_key }}" pos="0 0">
+    {# ── base frame look (catalog): bg quad + accent strip on one edge ── #}
+    {% set _sy_inv = 1.0 / (widget_scale_y | default(1.0)) %}
+    {% set _strip_t = widget_strip_thickness | default(1.0) %}
+    {% set _strip_t_y = _strip_t * _sy_inv %}
+    <quad pos="0 0" z-index="1" size="{{ widget_w }} {{ widget_h }}"
+          bgcolor="{{ widget_bg_color | default('40404080') }}" halign="left" valign="top" />
+    {% if widget_strip_edge == 'left' %}
+      <quad pos="-{{ _strip_t }} 0" z-index="2" size="{{ _strip_t }} {{ widget_h }}"
+            bgcolor="{{ widget_strip_color | default('ffae00') }}" halign="left" valign="top" />
+    {% elif widget_strip_edge == 'right' %}
+      <quad pos="{{ widget_w }} 0" z-index="2" size="{{ _strip_t }} {{ widget_h }}"
+            bgcolor="{{ widget_strip_color | default('ffae00') }}" halign="left" valign="top" />
+    {% elif widget_strip_edge == 'top' %}
+      <quad pos="0 {{ _strip_t_y }}" z-index="2" size="{{ widget_w }} {{ _strip_t_y }}"
+            bgcolor="{{ widget_strip_color | default('ffae00') }}" halign="left" valign="top" />
+    {% elif widget_strip_edge == 'bottom' %}
+      <quad pos="0 -{{ widget_h }}" z-index="2" size="{{ widget_w }} {{ _strip_t_y }}"
+            bgcolor="{{ widget_strip_color | default('ffae00') }}" halign="left" valign="top" />
+    {% endif %}
+
+    {{ caller() }}
+
+    {% if widget_edit_mode %}
+      {# Edit visibility aid: tint the currently edited widget so even
+         sparse/signal-driven widgets are visually locatable. #}
+      <quad pos="0 0" z-index="97" size="{{ widget_w }} {{ widget_h }}"
+            bgcolor="33cc3380" halign="left" valign="top" />
+    {% endif %}
+  </frame>
+
+  {# ── debug overlay (master-admin toggle) ─────────────────────────── #}
+  {% if widget_debug_mode %}
+    {# bounding-box outline (yellow when editing, cyan otherwise) #}
+    {% set _box = 'ff0f' if widget_edit_mode else 'f0ff' %}
+    <quad pos="0 0"               z-index="98" size="{{ widget_w }} 0.2" halign="left" valign="top"    bgcolor="{{ _box }}" />
+    <quad pos="0 -{{ widget_h }}" z-index="98" size="{{ widget_w }} 0.2" halign="left" valign="top"    bgcolor="{{ _box }}" />
+    <quad pos="0 0"               z-index="98" size="0.2 {{ widget_h }}" halign="left" valign="top"    bgcolor="{{ _box }}" />
+    <quad pos="{{ widget_w }} 0"  z-index="98" size="0.2 {{ widget_h }}" halign="right" valign="top"   bgcolor="{{ _box }}" />
+
+    {# Sizing constants for the debug panel. GameFontBlack at textsize 0.8
+       averages ~0.72u per character; rows breathe at 3.2u tall with 0.7u
+       horizontal padding on each side. #}
+    {% set _row_h = 3.2 %}
+    {% set _char_w = 0.72 %}
+    {% set _pad_x = 0.7 %}
+
+    {# header chip across the top of the widget with key + dims #}
+    {% set _hdr_plain = widget_key ~ '  ' ~ ('%.0f' | format(widget_w)) ~ 'x' ~ ('%.0f' | format(widget_h)) ~ ' @ ' ~ ('%.1f' | format(widget_x)) ~ ',' ~ ('%.1f' | format(widget_y)) %}
+    {% set _hdr_w = (_hdr_plain | length) * _char_w + 2 * _pad_x %}
+    <quad  pos="0 0.4"      z-index="100" size="{{ _hdr_w }} 3.0" halign="left" valign="bottom" bgcolor="000000cc" />
+    <label pos="{{ _pad_x }} 0.7" z-index="101" halign="left" valign="bottom" textsize="0.8" textfont="GameFontBlack"
+           text="$f0f{{ widget_key }}  $aaa{{ '%.0f' | format(widget_w) }}×{{ '%.0f' | format(widget_h) }} @ {{ '%.1f' | format(widget_x) }},{{ '%.1f' | format(widget_y) }}" />
+
+    {# multi-row provenance panel stacked beneath the widget. Each row's
+       backdrop is sized to its own plain-text length so backgrounds hug
+       the actual content instead of using one fixed slab. #}
+    {% set _panel_top = -(widget_h + 0.4) %}
+    {% for row in widget_debug_lines %}
+      {% set _row_y = _panel_top - (loop.index0 * _row_h) %}
+      {% set _row_w = (row.plain | length) * _char_w + 2 * _pad_x %}
+      <quad  pos="0 {{ _row_y }}"     z-index="99"  size="{{ _row_w }} {{ _row_h }}" halign="left" valign="top" bgcolor="000000bb" />
+      <label pos="{{ _pad_x }} {{ _row_y - 0.45 }}" z-index="100" size="{{ _row_w - 2 * _pad_x }} {{ _row_h }}"
+             halign="left" valign="top" textsize="0.8" textfont="GameFontBlack" text="{{ row.text }}" />
+    {% endfor %}
+
+    {# live tick row underneath the static lines — ManiaScript SetText()
+       writes here every loop. Fixed width so the bg is visible before the
+       script has had a chance to fill the label. #}
+    {% set _live_y = _panel_top - (widget_debug_lines | length) * _row_h %}
+    {% set _live_w = (widget_w if widget_w > 24 else 24) %}
+    <quad  id="widget_dbg_bg_{{ widget_key }}" pos="0 {{ _live_y }}" z-index="99" size="{{ _live_w }} {{ _row_h }}" halign="left" valign="top" bgcolor="000000bb" />
+    <label id="widget_dbg_{{ widget_key }}"    pos="{{ _pad_x }} {{ _live_y - 0.45 }}" z-index="100" size="{{ _live_w - 2 * _pad_x }} {{ _row_h }}"
+           halign="left" valign="top" textsize="0.8" textfont="GameFontBlack" text="$f0fdbg" />
+  {% else %}
+    {# Always keep the live label so ManiaScript can SetText() it without
+       null-checking — just hidden off-screen when debug mode is off. #}
+    <label id="widget_dbg_{{ widget_key }}" pos="0 0" z-index="-1"
+           text="" textsize="0.01" halign="left" valign="top" hidden="1" />
+  {% endif %}
+
+ </frame>
+</frame>
+
+{# â”€â”€ client-side hide / animation script (MUST be at manialink top level,
+      not nested inside <frame>, or the engine silently drops it).
+      Autoescape disabled â€” Jinja XML escape mangles `>`/`&` and breaks
+      ManiaScript compile silently. #}
+{% autoescape false %}
+  <script><!--
+    #Include "MathLib" as M
+    #Include "TextLib" as TL
+
+    main() {
+      declare CMlFrame Holder <=> (Page.GetFirstChild("widget_anim_{{ widget_key }}") as CMlFrame);
+      declare CMlFrame Body <=> (Page.GetFirstChild("widget_body_{{ widget_key }}") as CMlFrame);
+      declare CMlLabel DbgLbl <=> (Page.GetFirstChild("widget_dbg_{{ widget_key }}") as CMlLabel);
+      declare Boolean DebugOn = {{ 'True' if widget_debug_mode else 'False' }};
+      declare Text TweenBodyScaled = "<frame scale=\"1 {{ '%.6f' | format(widget_scale_y|default(1.0)) }}\"/>";
+      // Universal debug formatter: "<R|H> <tick>ms | <status>". Widgets may
+      // overwrite Persistent_DbgStatus from extra_tick to push a one-liner;
+      // SetDbg() runs every loop and decorates with render/tick info.
+      declare Text Persistent_DbgStatus = "{{ widget_debug_status|default('') }}";
+      declare Integer LastTickAt = Now;
+      if (Holder == Null) return;
+      if (Body != Null) {
+        // Apply content de-stretch on connect/re-render. Static frame attrs can
+        // be ignored by the game parser, so we force it through AnimMgr state.
+        AnimMgr.Add(Body, TweenBodyScaled, 0, CAnimManager::EAnimManagerEasing::Linear);
+      }
+
+      declare Boolean EditorOn = {{ 'True' if widget_edit_mode else 'False' }};
+      declare Boolean ForceHidden = {{ 'True' if widget_force_hidden else 'False' }};
+      declare Boolean IsConcealed = False;
+      declare Text TweenHidden  = "<frame pos=\"{{ widget_anim_off_x }} {{ widget_anim_off_y }}\"/>";
+      declare Text TweenVisible = "<frame pos=\"0 0\"/>";
+      declare Boolean AnimEnabled = {{ 'False' if widget_anim_dir == 'none' else 'True' }};
+      declare Integer InDelay = {{ widget_anim_in_delay_ms|default(0) }};
+      declare Integer OutDelay = {{ widget_anim_out_delay_ms|default(0) }};
+
+      {{ extra_init }}
+
+      // ----- initial snap so a re-render doesn't briefly show a hidden widget -----
+      {
+        declare Real KmH = 0.0;
+        declare Boolean MenuOpen = False;
+        declare Boolean Racing = True;
+        declare Boolean Watching = False;
+        declare Boolean TabHeld = False;
+        declare Boolean Concealing = False;
+        if (GUIPlayer != Null) {
+          KmH = M::Abs(GUIPlayer.DisplaySpeed * 1.0);
+        }
+        {% for expr in widget_hide_clauses -%}
+        if ({{ expr }}) Concealing = True;
+        {% endfor %}
+        if (ForceHidden) Concealing = True;
+        if (EditorOn) Concealing = False;
+        if (!AnimEnabled) Concealing = False;
+        IsConcealed = Concealing;
+        if (Concealing) AnimMgr.Add(Holder, TweenHidden, 0, CAnimManager::EAnimManagerEasing::Linear);
+      }
+
+      while (True) {
+        yield;
+        sleep(50);
+
+        declare Real KmH = 0.0;
+        declare Boolean MenuOpen = False;
+        declare Boolean Racing = True;
+        declare Boolean Watching = False;
+        declare Boolean TabHeld = False;
+        declare Boolean Concealing = False;
+        declare Text Tween;
+
+        { {{ extra_tick }} }
+
+        if (GUIPlayer != Null) {
+          KmH = M::Abs(GUIPlayer.DisplaySpeed * 1.0);
+        }
+
+        {% for expr in widget_hide_clauses -%}
+        if ({{ expr }}) Concealing = True;
+        {% endfor %}
+        if (ForceHidden) Concealing = True;
+        if (EditorOn) Concealing = False;
+        if (!AnimEnabled) Concealing = False;
+
+        if (Concealing != IsConcealed) {
+          IsConcealed = Concealing;
+          if (IsConcealed) {
+            Tween = TweenHidden;
+            if (OutDelay > 0) sleep(OutDelay);
+          } else {
+            Tween = TweenVisible;
+            if (InDelay > 0) sleep(InDelay);
+          }
+          AnimMgr.Add(Holder, Tween, {{ widget_anim_duration_ms }}, CAnimManager::EAnimManagerEasing::QuadInOut);
+        }
+
+        // Debug overlay: refresh the status label every tick when on.
+        if (DebugOn && DbgLbl != Null) {
+          declare Text RenderTag;
+          if (IsConcealed) RenderTag = "$f80H";
+          else             RenderTag = "$0f0R";
+          declare Integer TickAge = Now - LastTickAt;
+          LastTickAt = Now;
+          declare Text Suffix = "";
+          if (Persistent_DbgStatus != "") Suffix = " $aaa| $fff" ^ Persistent_DbgStatus;
+          DbgLbl.SetText(RenderTag ^ " $888" ^ TickAge ^ "ms" ^ Suffix);
+        }
+      }
+    }
+  --></script>
+{% endautoescape %}
+{% endmacro %}

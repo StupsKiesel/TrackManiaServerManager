@@ -1,0 +1,22 @@
+{% import 'widget_engine/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(25.0) %}
+{% set widget_h = widget_h|default(8.0) %}
+
+{% set clock_init %}
+  declare CMlLabel ClockLabel <=> (Page.GetFirstChild("clock_label") as CMlLabel);
+{% endset %}
+
+{% set clock_tick %}
+  if (ClockLabel != Null) {
+    ClockLabel.SetText("$fff" ^ TL::SubString(CurrentLocalDateText, 11, 8));
+  }
+{% endset %}
+
+{% call widgets.frame(extra_init=clock_init, extra_tick=clock_tick) %}
+  <label pos="{{ widget_w / 2 }} {{ -widget_h / 2 }}" z-index="42"
+         id="clock_label"
+         halign="center" valign="center2"
+         text="$fff--:--:--"
+         textsize="1.8" textfont="GameFontBlack" />
+{% endcall %}

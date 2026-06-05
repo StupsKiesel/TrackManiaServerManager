@@ -411,9 +411,14 @@ class TmsmGamemodesApp(AppConfig):
     async def _notify(self, message: str, severity: str = "info",
                       login: str | None = None,
                       duration_ms: int = 4000) -> None:
-        try:
-            sig = self.context.signals.get_signal("tmsm_status:notify")
-        except KeyError:
+        sig = None
+        for code in ("notification_engine:notify", "tmsm_status:notify"):
+            try:
+                sig = self.context.signals.get_signal(code)
+                break
+            except KeyError:
+                continue
+        if sig is None:
             return
         try:
             await sig.send_robust({

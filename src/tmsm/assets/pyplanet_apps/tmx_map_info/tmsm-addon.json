@@ -1,4 +1,0 @@
-{
-    "description": "Compact in-game overlay with TMX metadata (difficulty, length, style, mod) for the current map. Caches lookups in the pool DB.",
-    "author": "tmsm"
-}

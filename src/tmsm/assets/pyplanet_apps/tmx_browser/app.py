@@ -18,6 +18,7 @@ The ``Add`` action downloads the GBX bytes from TMX and hands them to
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import re
 from typing import Any
@@ -177,6 +178,7 @@ class TmxBrowserApp(AppConfig):
         self._tags_cache: list[dict[str, Any]] = []
         self._policy: dict[str, Any] = _policy.default_policy()
         self._lock = asyncio.Lock()
+        self._meta_table_ready: bool = False
         self._visible_logins: dict[str, set[str]] = {
             "main": set(),
             "detail": set(),
@@ -195,6 +197,9 @@ class TmxBrowserApp(AppConfig):
         except Exception:
             logger.exception("tmx_browser: policy load failed")
             self._policy = _policy.default_policy()
+
+        # Ensure our app-owned metadata table exists before first writes.
+        await self._ensure_meta_table()
 
         # PyPlanet permissions (admin-level by default).
         try:
@@ -265,6 +270,33 @@ class TmxBrowserApp(AppConfig):
         except Exception:
             logger.exception("tmx_browser: tag cache warm failed")
             self._tags_cache = []
+
+    async def _ensure_meta_table(self) -> bool:
+        if self._meta_table_ready:
+            return True
+        try:
+            from .models import TmxMapMeta
+        except Exception:
+            logger.exception("tmx_browser: meta model import failed")
+            return False
+        try:
+            with self.instance.db.allow_sync():
+                if not TmxMapMeta.table_exists():
+                    TmxMapMeta.create_table(safe=True)
+                self._meta_table_ready = bool(TmxMapMeta.table_exists())
+        except Exception:
+            logger.exception("tmx_browser: ensure meta table failed")
+            self._meta_table_ready = False
+        return self._meta_table_ready
+
+    @staticmethod
+    def _trim(value: Any, max_len: int) -> str | None:
+        s = str(value or "")
+        if not s:
+            return None
+        if len(s) <= max_len:
+            return s
+        return s[:max_len]
 
     # ---- hub -----------------------------------------------------------
 
@@ -550,12 +582,146 @@ class TmxBrowserApp(AppConfig):
         st["status"] = text
         st["status_color"] = color
 
+    async def _persist_meta_row(self, row: dict[str, Any], server_map_id: int | None = None) -> None:
+        """Upsert one TMX metadata row into our local cache table."""
+        if not await self._ensure_meta_table():
+            return
+        try:
+            from .models import TmxMapMeta
+        except Exception:
+            return
+
+        try:
+            track_id = int(row.get("track_id") or 0)
+        except (TypeError, ValueError):
+            return
+        if track_id <= 0:
+            return
+
+        created = False
+        try:
+            rec = await TmxMapMeta.get(track_id=track_id)
+        except Exception:
+            rec = TmxMapMeta(track_id=track_id)
+            created = True
+
+        tags = row.get("tags")
+        if isinstance(tags, list):
+            tags_csv = ",".join(str(t).strip() for t in tags if str(t).strip())
+        else:
+            tags_csv = str(tags or "").strip()
+
+        rec.uid = self._trim(row.get("uid"), 64)
+        rec.name = self._trim(row.get("name"), 255)
+        rec.author = self._trim(row.get("author"), 150)
+        rec.length = self._trim(row.get("length"), 32)
+        rec.difficulty = self._trim(row.get("difficulty"), 64)
+        rec.awards = int(row.get("awards") or 0)
+        rec.style = self._trim(row.get("style"), 64)
+        rec.uploaded = self._trim(row.get("uploaded"), 64)
+        rec.filename = self._trim(row.get("filename"), 255)
+        rec.map_type = self._trim(row.get("map_type"), 96)
+        rec.title_pack = self._trim(row.get("title_pack"), 128)
+        rec.environment = self._trim(row.get("environment"), 64)
+        rec.vehicle = self._trim(row.get("vehicle"), 64)
+        rec.mood = self._trim(row.get("mood"), 64)
+        rec.route = self._trim(row.get("route"), 64)
+        rec.tags_csv = tags_csv or None
+        rec.comment_count = int(row.get("comment_count") or 0)
+        rec.replay_count = int(row.get("replay_count") or 0)
+        rec.track_value = int(row.get("track_value") or 0)
+        rec.display_cost = int(row.get("display_cost") or 0)
+        rec.laps = int(row.get("laps") or 0)
+        rec.has_thumbnail = bool(row.get("has_thumbnail", False))
+        rec.downloadable = bool(row.get("downloadable", True))
+        rec.author_time = int(row.get("author_time") or 0)
+        rec.comments = str(row.get("comments") or "") or None
+        if server_map_id is not None and server_map_id > 0:
+            rec.server_map_id = int(server_map_id)
+        rec.updated_at = datetime.datetime.utcnow()
+        await rec.save(force_insert=created)
+
+    async def _persist_meta_batch(self, rows: list[dict[str, Any]]) -> None:
+        for row in list(rows or []):
+            if not isinstance(row, dict):
+                continue
+            try:
+                await self._persist_meta_row(row)
+            except Exception:
+                logger.exception("tmx_browser: persist meta row failed")
+
+    async def _bind_meta_to_server_map(
+        self,
+        track_id: int,
+        uploaded: Any,
+        *,
+        fallback_name: str = "",
+        fallback_filename: str = "",
+        fallback_author: str = "",
+    ) -> None:
+        """Attach TMX metadata row to a core server map id.
+
+        Creates the row if it doesn't exist yet (for direct add flows where no
+        search result snapshot was persisted before).
+        """
+        try:
+            from .models import TmxMapMeta
+            tid = int(track_id)
+        except Exception:
+            return
+        if not await self._ensure_meta_table():
+            return
+        if tid <= 0:
+            return
+        created = False
+        try:
+            rec = await TmxMapMeta.get(track_id=tid)
+        except Exception:
+            rec = TmxMapMeta(track_id=tid)
+            created = True
+
+        # Fill minimal descriptive fields when this is a brand-new row.
+        if not rec.name:
+            rec.name = self._trim(
+                fallback_name or str(getattr(uploaded, "name", "") or ""),
+                255,
+            )
+        if not rec.filename:
+            rec.filename = self._trim(
+                fallback_filename or str(getattr(uploaded, "file", "") or ""),
+                255,
+            )
+        if not rec.author:
+            rec.author = self._trim(
+                fallback_author
+                or str(getattr(uploaded, "author_nickname", "") or "")
+                or str(getattr(uploaded, "author_login", "") or ""),
+                150,
+            )
+        if not rec.uid:
+            rec.uid = self._trim(getattr(uploaded, "uid", ""), 64)
+
+        try:
+            rec.server_map_id = int(getattr(uploaded, "id", None) or uploaded.get_id())
+        except Exception:
+            rec.server_map_id = None
+        rec.updated_at = datetime.datetime.utcnow()
+        try:
+            await rec.save(force_insert=created)
+        except Exception:
+            logger.exception("tmx_browser: bind meta to server map failed")
+
     async def _notify(self, login: str, message: str,
                       severity: str = "info", duration_ms: int = 4000) -> None:
         """Fire a transient toast via tmsm_status (no-op if not loaded)."""
-        try:
-            sig = self.context.signals.get_signal("tmsm_status:notify")
-        except KeyError:
+        sig = None
+        for code in ("notification_engine:notify", "tmsm_status:notify"):
+            try:
+                sig = self.context.signals.get_signal(code)
+                break
+            except KeyError:
+                continue
+        if sig is None:
             return
         try:
             await sig.send_robust({
@@ -1312,6 +1478,10 @@ class TmxBrowserApp(AppConfig):
             return
 
         st["results"] = data["results"]
+        try:
+            await self._persist_meta_batch(st["results"])
+        except Exception:
+            logger.exception("tmx_browser: persist batch failed")
         st["more"] = data["more"]
         st["busy"] = False
         st["loaded"] = True
@@ -1337,6 +1507,17 @@ class TmxBrowserApp(AppConfig):
             (r for r in st["results"] if int(r.get("track_id", 0)) == track_id),
             None,
         )
+        logger.warning(
+            "tmx_browser: add start track_id=%s has_row=%s",
+            track_id,
+            bool(row),
+        )
+        if row is not None:
+            try:
+                await self._persist_meta_row(row)
+                logger.warning("tmx_browser: pre-add meta upsert ok track_id=%s", track_id)
+            except Exception:
+                logger.exception("tmx_browser: pre-add persist failed")
         name = (row or {}).get("name", f"tmx_{track_id}")
 
         try:
@@ -1374,6 +1555,7 @@ class TmxBrowserApp(AppConfig):
             await self.instance.map_manager.add_map(
                 filename, insert=True, save_matchsettings=False,
             )
+            logger.warning("tmx_browser: add_map ok track_id=%s file=%s", track_id, filename)
         except Exception as e:
             if "already added" not in str(e).lower():
                 logger.exception("tmx_browser: upload_map failed")
@@ -1422,10 +1604,52 @@ class TmxBrowserApp(AppConfig):
         except Exception:
             logger.exception("tmx_browser: GetMapInfo/get_or_create failed")
 
+        try:
+            payload = dict(row or {})
+            payload.setdefault("track_id", int(track_id))
+            payload.setdefault("name", str(name or ""))
+            payload.setdefault("filename", str(filename or ""))
+            if uploaded is not None:
+                payload.setdefault("uid", str(getattr(uploaded, "uid", "") or ""))
+                payload.setdefault(
+                    "author",
+                    str(getattr(uploaded, "author_nickname", "") or getattr(uploaded, "author_login", "") or ""),
+                )
+                payload.setdefault("map_type", str(getattr(uploaded, "map_type", "") or ""))
+                payload.setdefault("environment", str(getattr(uploaded, "environment", "") or ""))
+                payload.setdefault("author_time", int(getattr(uploaded, "time_author", 0) or 0))
+
+            sid = 0
+            if uploaded is not None:
+                try:
+                    sid = int(getattr(uploaded, "id", None) or uploaded.get_id() or 0)
+                except Exception:
+                    sid = 0
+
+            await self._persist_meta_row(payload, server_map_id=(sid if sid > 0 else None))
+            logger.warning(
+                "tmx_browser: post-add meta upsert ok track_id=%s server_map_id=%s",
+                track_id,
+                sid if sid > 0 else None,
+            )
+        except Exception:
+            logger.exception("tmx_browser: post-add meta upsert failed")
+
         if uploaded is None:
-            await self._notify(login, "Added but could not locate map object",
+            await self._notify(login, "Added and metadata cached, but map object lookup failed",
                                "warning", 5000)
             return
+
+        try:
+            await self._bind_meta_to_server_map(
+                track_id,
+                uploaded,
+                fallback_name=str(name or ""),
+                fallback_filename=str(filename or ""),
+                fallback_author=str((row or {}).get("author") or ""),
+            )
+        except Exception:
+            logger.exception("tmx_browser: bind uploaded map failed")
 
         if st["juke_after"]:
             try:

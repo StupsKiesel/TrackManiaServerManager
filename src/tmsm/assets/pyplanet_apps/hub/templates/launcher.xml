@@ -1,8 +1,8 @@
 {% import 'tmsm_ui/widgets.xml' as ui with context %}
-{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+{% import 'widget_engine/frame.xml' as widgets with context %}
 
 {# Hub launcher rendered as a movable widget. Position (per-player and
-   global override) is resolved by the tmsm_widgets app and injected by
+   global override) is resolved by widget_engine and injected by
    widgets.frame(). The widget's bounding box is widget_w x widget_h; we
    fill it with the launcher button. #}
 {% call widgets.frame() %}

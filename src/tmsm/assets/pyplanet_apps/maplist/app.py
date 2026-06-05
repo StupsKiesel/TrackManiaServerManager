@@ -530,6 +530,56 @@ class App_Maplist(AppConfig):
         self._set_status(login, "dropped from queue", "0f8")
         await self._refresh_views()
 
+    async def _delete_tmx_meta_for_map(self, m: Any) -> int:
+        """Best-effort cleanup of TMX metadata for a removed server map."""
+        try:
+            from pyplanet.apps.tmsm.tmx_browser.models import TmxMapMeta
+        except Exception:
+            return 0
+
+        deleted = 0
+        map_id = int(getattr(m, "id", 0) or 0)
+        uid = str(getattr(m, "uid", "") or "").strip()
+        mx_id = int(getattr(m, "mx_id", 0) or 0)
+
+        try:
+            if map_id > 0:
+                deleted = int(
+                    await TmxMapMeta.objects.execute(
+                        TmxMapMeta.delete().where(
+                            TmxMapMeta.server_map_id == map_id,
+                        ),
+                    ),
+                )
+        except Exception:
+            logger.exception("maplist: tmx meta delete by server_map_id failed")
+
+        if deleted <= 0 and uid:
+            try:
+                deleted = int(
+                    await TmxMapMeta.objects.execute(
+                        TmxMapMeta.delete().where(
+                            TmxMapMeta.uid == uid,
+                        ),
+                    ),
+                )
+            except Exception:
+                logger.exception("maplist: tmx meta delete by uid failed")
+
+        if deleted <= 0 and mx_id > 0:
+            try:
+                deleted = int(
+                    await TmxMapMeta.objects.execute(
+                        TmxMapMeta.delete().where(
+                            TmxMapMeta.track_id == mx_id,
+                        ),
+                    ),
+                )
+            except Exception:
+                logger.exception("maplist: tmx meta delete by track_id failed")
+
+        return max(0, deleted)
+
     async def _on_remove_map(self, player, uid: str) -> None:
         login = player.login
         from pyplanet.apps.tmsm.ui import perms as _perms
@@ -553,5 +603,10 @@ class App_Maplist(AppConfig):
             self._set_status(login, f"remove failed: {e}", "f44")
             await self._refresh_views()
             return
-        self._set_status(login, "map removed from playlist", "0f8")
+
+        deleted_meta = await self._delete_tmx_meta_for_map(m)
+        if deleted_meta > 0:
+            self._set_status(login, "map removed from playlist (TMX metadata cleaned)", "0f8")
+        else:
+            self._set_status(login, "map removed from playlist", "0f8")
         await self._refresh_views()

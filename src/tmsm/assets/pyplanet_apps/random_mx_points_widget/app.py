@@ -8,7 +8,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from pyplanet.apps.tmsm.widgets.widget_base import WidgetAppBase
+from pyplanet.apps.tmsm.widget_engine import AnimDir, DriveMode
+from pyplanet.apps.tmsm.widget_engine.widget_base import WidgetAppBase
 
 
 class RandomMxPointsWidget(WidgetAppBase):
@@ -29,11 +30,12 @@ class RandomMxPointsWidget(WidgetAppBase):
     # Needs a ticking refresh for the mode-end countdown.
     WIDGET_REFRESH_SECONDS = 1.0
     WIDGET_HIDE_NAMED = ["in_menu"]
-    WIDGET_HIDE_WHILE_DRIVING = False
+    WIDGET_DRIVE_MODE = DriveMode.FIXED
     # Periodic renders + no animation avoids pop-in artifacts.
-    WIDGET_ANIM_DIR = "none"
+    WIDGET_ANIM_DIR = AnimDir.NONE
     WIDGET_ANIM_DURATION_MS = 0
-    WIDGET_ANIM_DELAY_MS = 0
+    WIDGET_ANIM_IN_DELAY_MS = 0
+    WIDGET_ANIM_OUT_DELAY_MS = 0
 
     WIDGET_STRIP_COLOR = "f0bb33ff"
 

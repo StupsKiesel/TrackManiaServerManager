@@ -2340,9 +2340,14 @@ class WidgetsApp(AppConfig):
 
     async def _toast(self, login: str, msg: str, severity: str = "info",
                      source: str = "widgets") -> None:
-        try:
-            sig = self.context.signals.get_signal("tmsm_status:notify")
-        except Exception:
+        sig = None
+        for code in ("notification_engine:notify", "tmsm_status:notify"):
+            try:
+                sig = self.context.signals.get_signal(code)
+                break
+            except KeyError:
+                continue
+        if sig is None:
             return
         try:
             await sig.send_robust({

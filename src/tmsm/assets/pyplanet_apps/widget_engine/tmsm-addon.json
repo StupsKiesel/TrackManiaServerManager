@@ -1,0 +1,4 @@
+{
+  "description": "widget_engine (sandbox rebuild): minimal phase-aware widget framework. Tables we_* (added in later slice), signal namespace widget_engine:*.",
+  "author": "tmsm"
+}

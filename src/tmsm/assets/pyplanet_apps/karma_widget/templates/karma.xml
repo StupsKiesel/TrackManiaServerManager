@@ -1,23 +1,54 @@
-{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+{% import 'widget_engine/frame.xml' as widgets with context %}
 
 {% set widget_w = widget_w|default(46.0) %}
 {% set widget_h = widget_h|default(11.0) %}
 
 {% call widgets.frame() %}
-  <label pos="1.2 -1.3" z-index="42" text="$dddKARMA" textsize="0.95" textfont="GameFontBlack" />
-  <label pos="{{ widget_w - 1.2 }} -1.3" z-index="42" halign="right"
-         text="$aaa{{ source|default('N/A') }}" textsize="0.8" textfont="GameFontBlack" />
+  {% set pad = 1.0 %}
+  {% set row_gap = 0.5 %}
+  {% set available_h = widget_h - (pad * 2) - row_gap %}
+  {% set row2_h = available_h / 3.0 %}
+  {% set row1_h = row2_h * 2.0 %}
+  {% set y1 = pad %}
+  {% set y2 = pad + row1_h + row_gap %}
 
-  <quad pos="1.2 -4.3" z-index="41" size="{{ widget_w - 2.4 }} 0.8" bgcolor="2228" />
-  <quad pos="1.2 -4.3" z-index="42" size="{{ ((widget_w - 2.4) * (bar_pct|default(0)|float) / 100.0)|round(2) }} 0.8"
+  {# row 1: left icon button | info column | right icon button #}
+  {% set btn_size = row1_h - 0.4 %}
+  {% set btn_y = y1 + ((row1_h - btn_size) * 0.5) %}
+  {% set left_btn_x = pad %}
+  {% set right_btn_x = widget_w - pad - btn_size %}
+       {% set info_inset = 1.5 %}
+       {% set info_left = left_btn_x + btn_size + info_inset %}
+       {% set info_right = right_btn_x - info_inset %}
+
+       <quad pos="{{ left_btn_x }} -{{ btn_y }}" z-index="41" size="{{ btn_size }} {{ btn_size }}" bgcolor="2f8f4488" />
+  <label pos="{{ left_btn_x + (btn_size * 0.5) }} -{{ btn_y + (btn_size * 0.5) }}" z-index="42" halign="center" valign="center2"
+         text="$fff&#xf164;" textsize="1.1" textfont="GameFont" />
+  <quad pos="{{ left_btn_x }} -{{ btn_y }}" z-index="43" size="{{ btn_size }} {{ btn_size }}"
+         bgcolor="0000" bgcolorfocus="8ff2"
+         focusareacolor1="8ff2" focusareacolor2="4cf2"
+         action="{{ id }}__vote_up" />
+
+  <label pos="{{ info_left }} -{{ y1 + (row1_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+         text="$dddKARMA" textsize="1.0" textfont="GameFontBlack" />
+  <label pos="{{ info_right }} -{{ y1 + (row1_h * 0.5) }}" z-index="42" halign="right" valign="center2"
+         text="$fff{{ percent_text|default('+0.0%') }}" textsize="1.08" textfont="GameFontBlack" />
+
+       <quad pos="{{ right_btn_x }} -{{ btn_y }}" z-index="41" size="{{ btn_size }} {{ btn_size }}" bgcolor="c7444488" />
+  <label pos="{{ right_btn_x + (btn_size * 0.5) }} -{{ btn_y + (btn_size * 0.5) }}" z-index="42" halign="center" valign="center2"
+         text="$fff&#xf165;" textsize="1.1" textfont="GameFont" />
+  <quad pos="{{ right_btn_x }} -{{ btn_y }}" z-index="43" size="{{ btn_size }} {{ btn_size }}"
+         bgcolor="0000" bgcolorfocus="f882"
+         focusareacolor1="f882" focusareacolor2="f442"
+         action="{{ id }}__vote_down" />
+
+  {# row 2: full-width progress bar #}
+  {% set bar_x = pad %}
+  {% set bar_w = widget_w - (pad * 2) %}
+  {% set bar_h = row2_h * 0.66 %}
+  {% set bar_y = y2 + ((row2_h - bar_h) * 0.5) %}
+  <quad pos="{{ bar_x }} -{{ bar_y }}" z-index="41" size="{{ bar_w }} {{ bar_h }}" bgcolor="2228" />
+  <quad pos="{{ bar_x }} -{{ bar_y }}" z-index="42"
+        size="{{ (bar_w * (bar_pct|default(0)|float) / 100.0)|round(2) }} {{ bar_h }}"
         bgcolor="44cc88ee" />
-
-  <label pos="1.5 -7.7" z-index="42" text="$fff{{ percent_text|default('+0.0%') }}"
-         textsize="1.2" textfont="GameFontBlack" />
-  <label pos="{{ widget_w / 2 }} -7.7" z-index="42" halign="center"
-         text="${{ score_color|default('aaa') }}{{ score_text|default('+0.0') }}"
-         textsize="1.2" textfont="GameFontBlack" />
-  <label pos="{{ widget_w - 1.5 }} -7.7" z-index="42" halign="right"
-         text="$cccV:{{ count|default(0) }}  You:{{ my_vote|default('--') }}"
-         textsize="0.9" textfont="GameFontBlack" />
 {% endcall %}

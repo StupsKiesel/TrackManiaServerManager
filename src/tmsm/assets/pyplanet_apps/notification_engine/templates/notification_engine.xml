@@ -1,0 +1,178 @@
+{# notification_engine — toast stack template
+
+   Animation strategy (proven against TM2020 manialinks): use AnimLib's
+   Penner easing functions and write the result directly to the frame's
+   RelativePosition_V3.X every tick. AnimMgr.Add is unreliable on
+   dynamically-rendered nested frames inside our setup, so we do the
+   lerp manually.
+
+   On each render the frame's XML start position matches its lifecycle
+   state ("enter" = off-screen right, "idle" = 0, "leave" = 0).
+   The script reads the current X as its starting reference and animates
+   to the target, so a re-render mid-animation will continue from where
+   the card currently is on screen.
+
+   Context:
+     anchor_x, anchor_y : top-left of the stack (from widget_engine)
+     card_w             : card width
+     notifications      : list of {nid, message, severity, color, icon,
+                                    state, source, slot, actions[]}
+#}
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{% set CARD_H = 11 %}
+{% set CARD_GAP = 1.5 %}
+{% set STRIP_W = 1.6 %}
+{% set FLY_MS = 350 %}
+{% set OFFSCREEN_PAD = 40 %}
+
+<frame pos="{{ anchor_x }} {{ anchor_y }}" z-index="900" id="toast_root">
+  {% for n in notifications %}
+    {% if n.state == 'enter' %}{% set start_x = card_w + OFFSCREEN_PAD %}
+    {% elif n.state == 'leave' %}{% set start_x = 0 %}
+    {% else %}{% set start_x = 0 %}{% endif %}
+
+    <frame pos="0 -{{ n.slot * (CARD_H + CARD_GAP) }}" z-index="{{ 900 + n.slot }}"
+           id="tslot_{{ n.nid }}">
+      <frame id="tcard_{{ n.state }}_{{ n.nid }}" pos="{{ start_x }} 0">
+
+        <quad pos="0 0" z-index="0" size="{{ card_w }} {{ CARD_H }}"
+              bgcolor="000c" halign="left" valign="top" />
+        <quad pos="0 0" z-index="1" size="{{ STRIP_W }} {{ CARD_H }}"
+              bgcolor="{{ n.color }}f" halign="left" valign="top" />
+
+        <label pos="4 -{{ CARD_H / 2 }}" z-index="2"
+               halign="left" valign="center2"
+               text="${{ n.color }}{{ ui.icon_glyph(n.icon) }}"
+               textsize="1.8" textfont="GameFont" />
+
+        {% if n.source %}
+          <label pos="10 -1.2" z-index="2"
+                 halign="left" valign="top"
+                 text="$777{{ n.source }}"
+                 textsize="0.7" textfont="GameFont" />
+        {% endif %}
+
+        <label pos="10 -{{ CARD_H / 2 + (0.5 if n.source else 0) }}" z-index="2"
+               halign="left" valign="center2"
+               size="{{ card_w - 14 - (16 if n.actions else 4) }} {{ CARD_H - 2 }}"
+               autonewline="1" maxline="2"
+               text="$fff{{ n.message }}"
+               textsize="1.0" textfont="GameFont" />
+
+        {% if n.actions %}
+          {% set btn_y = -(CARD_H / 2) %}
+          {% for a in n.actions %}
+            {% set bx = card_w - 2 - loop.index0 * 16 %}
+            <quad pos="{{ bx }} {{ btn_y }}" z-index="3" size="14 4.5"
+                  bgcolor="0d48" halign="right" valign="center"
+                  id="uibtn_{{ a.variant }}_{{ id }}__dismiss__{{ n.nid }}"
+                  action="{{ id }}__dismiss__{{ n.nid }}" scriptevents="1"
+                  class="ui-btn ui-btn-{{ a.variant }}" />
+            <label pos="{{ bx - 7 }} {{ btn_y }}" z-index="4"
+                   halign="center" valign="center2"
+                   text="$fff{{ a.label }}" textsize="0.9" textfont="GameFont" />
+          {% endfor %}
+        {% endif %}
+
+      </frame>
+    </frame>
+  {% endfor %}
+</frame>
+
+<script><!--
+// nonce={{ render_nonce }} -- forces script reinit on every send
+#Include "TextLib" as TL
+
+Void _SetIdle(CMlControl C, Vec3 Color, Real Op) {
+  declare CMlQuad Q <=> (C as CMlQuad);
+  if (Q == Null) return;
+  Q.BgColor = Color;
+  Q.Opacity = Op;
+}
+
+main() {
+  // ----- aliases first (ManiaScript requires <=> at top of function) -----
+  {% for n in notifications if n.state in ('enter', 'leave') %}
+  declare CMlFrame TF_{{ loop.index }} <=> (Page.GetFirstChild("tcard_{{ n.state }}_{{ n.nid }}") as CMlFrame);
+  {% endfor %}
+
+  // ----- all other declares (must come before any executable statement) --
+  declare Vec3 PalIdlePrim = <0.07, 0.33, 0.87>;
+  declare Vec3 PalIdleDang = <0.80, 0.20, 0.20>;
+  declare Vec3 PalIdleSucc = <0.07, 0.60, 0.27>;
+  declare Vec3 PalIdleWarn = <0.93, 0.47, 0.07>;
+  declare Vec3 PalIdleGhst = <1.00, 1.00, 1.00>;
+  declare Real PalIdleOp   = 0.55;
+  declare Real PalIdleGhOp = 0.15;
+  declare Vec3 PalHovPrim  = <0.15, 0.55, 1.00>;
+  declare Vec3 PalHovDang  = <1.00, 0.35, 0.35>;
+  declare Vec3 PalHovSucc  = <0.15, 0.85, 0.45>;
+  declare Vec3 PalHovWarn  = <1.00, 0.65, 0.20>;
+  declare Vec3 PalHovGhst  = <1.00, 1.00, 1.00>;
+  declare Real PalHovOp    = 0.90;
+  declare Real PalHovGhOp  = 0.40;
+
+  // ----- now executable statements ---------------------------------------
+  Page.GetClassChildren("ui-btn-primary", Page.MainFrame, True);
+  foreach (C in Page.GetClassChildren_Result) _SetIdle(C, PalIdlePrim, PalIdleOp);
+  Page.GetClassChildren("ui-btn-danger",  Page.MainFrame, True);
+  foreach (C in Page.GetClassChildren_Result) _SetIdle(C, PalIdleDang, PalIdleOp);
+  Page.GetClassChildren("ui-btn-success", Page.MainFrame, True);
+  foreach (C in Page.GetClassChildren_Result) _SetIdle(C, PalIdleSucc, PalIdleOp);
+  Page.GetClassChildren("ui-btn-warning", Page.MainFrame, True);
+  foreach (C in Page.GetClassChildren_Result) _SetIdle(C, PalIdleWarn, PalIdleOp);
+  Page.GetClassChildren("ui-btn-ghost",   Page.MainFrame, True);
+  foreach (C in Page.GetClassChildren_Result) _SetIdle(C, PalIdleGhst, PalIdleGhOp);
+
+  // Fire one AnimMgr per card — the proven TM2020 animation API.
+  {% for n in notifications if n.state in ('enter', 'leave') %}
+  if (TF_{{ loop.index }} != Null) {
+    {% if n.state == 'enter' %}
+    AnimMgr.Add(TF_{{ loop.index }}, """<frame pos="0 0"/>""", {{ FLY_MS }}, CAnimManager::EAnimManagerEasing::CubicInOut);
+    {% else %}
+    AnimMgr.Add(TF_{{ loop.index }}, """<frame pos="{{ (card_w + OFFSCREEN_PAD)|round|int }} 0"/>""", {{ FLY_MS }}, CAnimManager::EAnimManagerEasing::CubicInOut);
+    {% endif %}
+  }
+  {% endfor %}
+
+  while (True) {
+    yield;
+
+    foreach (Event in PendingEvents) {
+      if (Event.Type != CMlScriptEvent::Type::MouseOver
+          && Event.Type != CMlScriptEvent::Type::MouseOut) continue;
+      if (!TL::StartsWith("uibtn_", Event.ControlId)) continue;
+
+      declare CMlQuad HQ <=> (Page.GetFirstChild(Event.ControlId) as CMlQuad);
+      if (HQ == Null) continue;
+
+      declare Vec3 HIdle = PalIdlePrim;
+      declare Vec3 HHov  = PalHovPrim;
+      declare Real HOpI  = PalIdleOp;
+      declare Real HOpH  = PalHovOp;
+
+      if (TL::StartsWith("uibtn_primary_", Event.ControlId)) {
+        HIdle = PalIdlePrim; HHov = PalHovPrim;
+      } else if (TL::StartsWith("uibtn_danger_", Event.ControlId)) {
+        HIdle = PalIdleDang; HHov = PalHovDang;
+      } else if (TL::StartsWith("uibtn_success_", Event.ControlId)) {
+        HIdle = PalIdleSucc; HHov = PalHovSucc;
+      } else if (TL::StartsWith("uibtn_warning_", Event.ControlId)) {
+        HIdle = PalIdleWarn; HHov = PalHovWarn;
+      } else if (TL::StartsWith("uibtn_ghost_", Event.ControlId)) {
+        HIdle = PalIdleGhst; HHov = PalHovGhst;
+        HOpI  = PalIdleGhOp; HOpH = PalHovGhOp;
+      } else {
+        continue;
+      }
+
+      if (Event.Type == CMlScriptEvent::Type::MouseOver) {
+        HQ.BgColor = HHov;  HQ.Opacity = HOpH;
+      } else {
+        HQ.BgColor = HIdle; HQ.Opacity = HOpI;
+      }
+    }
+  }
+}
+--></script>

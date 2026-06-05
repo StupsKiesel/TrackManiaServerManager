@@ -7,7 +7,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from pyplanet.apps.tmsm.widgets.widget_base import WidgetAppBase
+from pyplanet.apps.tmsm.widget_engine import AnimDir, DriveMode
+from pyplanet.apps.tmsm.widget_engine.widget_base import WidgetAppBase
 from pyplanet.utils import times
 
 
@@ -28,10 +29,11 @@ class SectorDiffWidget(WidgetAppBase):
 
     WIDGET_REFRESH_SECONDS = 0.0
     WIDGET_HIDE_NAMED = ["in_menu"]
-    WIDGET_HIDE_WHILE_DRIVING = False
-    WIDGET_ANIM_DIR = "down"
+    WIDGET_DRIVE_MODE = DriveMode.FIXED
+    WIDGET_ANIM_DIR = AnimDir.DOWN
     WIDGET_ANIM_DURATION_MS = 250
-    WIDGET_ANIM_DELAY_MS = 0
+    WIDGET_ANIM_IN_DELAY_MS = 0
+    WIDGET_ANIM_OUT_DELAY_MS = 0
 
     WIDGET_STRIP_COLOR = "66bbffff"
 

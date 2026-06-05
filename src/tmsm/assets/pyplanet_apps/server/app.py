@@ -652,8 +652,16 @@ class ServerApp(AppConfig):
         """Set inline UI status AND emit a toast through tmsm_status:notify."""
         color = self._SEV_COLOR.get(severity, "888")
         self._mode_status[player.login] = (msg, color)
+        sig = None
+        for code in ("notification_engine:notify", "tmsm_status:notify"):
+            try:
+                sig = self.context.signals.get_signal(code)
+                break
+            except KeyError:
+                continue
+        if sig is None:
+            return
         try:
-            sig = self.context.signals.get_signal("tmsm_status:notify")
             await sig.send_robust({
                 "message": msg, "severity": severity,
                 "login": player.login, "source": "server",

@@ -1,4 +1,0 @@
-{
-  "description": "Renders 10 distinct widget silhouettes (rectangle, rounded, pill, arrow, ribbon, hex, tabbed, L-shape, frame-only, diagonal-stripe) side-by-side so the designer can pick a body shape for real widgets. Neutral palette: shapes are the only variable.",
-  "author": "tmsm"
-}

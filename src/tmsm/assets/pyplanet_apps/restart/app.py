@@ -149,6 +149,15 @@ class RestartApp(AppConfig):
         self._watch_task: asyncio.Task | None = None
         self._watch_triggered: bool = False
 
+    def _notification_engine_available(self) -> bool:
+        try:
+            if self.instance.apps.apps.get("notification_engine") is None:
+                return False
+            self.context.signals.get_signal("notification_engine:notify")
+            return True
+        except Exception:
+            return False
+
     # ---- lifecycle -----------------------------------------------------
 
     async def on_start(self) -> None:
@@ -1032,17 +1041,29 @@ class RestartApp(AppConfig):
 
     async def _notify(self, message: str, severity: str = "info",
                       audience: str = "global") -> None:
-        """Send a toast via the tmsm status-messages widget."""
+        """Send a toast via notification_engine, or fall back to chat."""
+        if self._notification_engine_available():
+            try:
+                sig = self.context.signals.get_signal("notification_engine:notify")
+                await sig.send_robust({
+                    "message": message,
+                    "severity": severity,
+                    "audience": audience,
+                    "source": "restart",
+                })
+                return
+            except Exception:
+                logger.exception("restart: notify failed")
+        chat_msg = f"$f80$o[restart]$z {message}"
         try:
-            sig = self.context.signals.get_signal("tmsm_status:notify")
-            await sig.send_robust({
-                "message": message,
-                "severity": severity,
-                "audience": audience,
-                "source": "restart",
-            })
+            if audience == "ops":
+                for player in list(self.instance.player_manager.online):
+                    if self._is_master(player):
+                        await self.instance.chat(chat_msg, player)
+            else:
+                await self.instance.chat(chat_msg)
         except Exception:
-            logger.exception("restart: notify failed")
+            logger.exception("restart: fallback chat notify failed")
 
     async def _toast(self, player, msg: str, color: str = "aaa") -> None:
         self._status[player.login] = (msg, color)

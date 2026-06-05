@@ -1,0 +1,14 @@
+{% import 'widget_engine/frame.xml' as widgets with context %}
+
+{% call widgets.frame() %}
+  <label pos="2 -2.1" z-index="40"
+         text="$dddPODIUM IN"
+         textsize="1.35" textfont="GameFont"
+         halign="left" valign="top" />
+
+  <label pos="{{ widget_w * 0.5 }} -{{ widget_h * 0.62 }}" z-index="42"
+         text="$fff{{ countdown_text }}"
+         textsize="{{ (widget_h * 0.46) if widget_h > 7 else (widget_h * 0.42) }}"
+         textfont="GameFontBlack"
+         halign="center" valign="center2" />
+{% endcall %}

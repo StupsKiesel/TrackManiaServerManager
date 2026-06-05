@@ -1,0 +1,45 @@
+{% import 'widget_engine/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(72.0) %}
+{% set widget_h = widget_h|default(9.0) %}
+
+{% call widgets.frame() %}
+  {% set pad = 0.8 %}
+  {% set gap = 0.6 %}
+  {% set count = 6 %}
+  {% set row_h = widget_h - (pad * 2) %}
+  {% set btn_w = (widget_w - (pad * 2) - (gap * (count - 1))) / count %}
+  {% set icon_size = (row_h * 0.62) if row_h > 3 else (row_h * 0.7) %}
+  {% set btn_bg = '1f2937aa' %}
+  {% set btn_hover = '3b82f0aa' %}
+
+  {% for b in buttons %}
+    {% set x = pad + loop.index0 * (btn_w + gap) %}
+    {% set y = pad %}
+    {% set enabled = b.url|default('') %}
+
+    <quad pos="{{ x }} -{{ y }}" z-index="41" size="{{ btn_w }} {{ row_h }}"
+          bgcolor="{{ btn_bg }}" />
+
+    {% if b.is_custom_image and b.image_url %}
+      <quad pos="{{ x + (btn_w * 0.5) }} -{{ y + (row_h * 0.5) }}" z-index="42"
+            size="{{ row_h * 0.62 }} {{ row_h * 0.62 }}"
+            halign="center" valign="center2"
+            image="{{ b.image_url }}" keepratio="Fit" />
+    {% else %}
+      <label pos="{{ x + (btn_w * 0.5) }} -{{ y + (row_h * 0.5) }}" z-index="42"
+             halign="center" valign="center2"
+             text="${{ b.icon_color }}{{ b.icon|safe }}"
+             textsize="{{ icon_size }}" textfont="GameFont" />
+    {% endif %}
+
+    {% if enabled %}
+      <quad pos="{{ x }} -{{ y }}" z-index="43" size="{{ btn_w }} {{ row_h }}"
+            bgcolor="0000"
+            bgcolorfocus="{{ btn_hover }}"
+            focusareacolor1="{{ btn_hover }}"
+            focusareacolor2="{{ btn_hover }}"
+            url="{{ b.url }}" />
+    {% endif %}
+  {% endfor %}
+{% endcall %}

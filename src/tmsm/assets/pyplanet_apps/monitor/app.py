@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class MonitorApp(AppConfig):
     name = "pyplanet.apps.tmsm.monitor"
     label = "monitor"
-    app_dependencies = ["core.maniaplanet", "tmsm_ui", "tmsm_widgets"]
+    app_dependencies = ["core.maniaplanet", "tmsm_ui"]
     game_dependencies = ["trackmania", "trackmania_next", "shootmania"]
 
     EDGE_MIN = -20
@@ -90,7 +90,7 @@ class MonitorApp(AppConfig):
 
     def _widgets_app(self):
         try:
-            return self.instance.apps.apps.get("tmsm_widgets")
+            return self.instance.apps.apps.get("widget_engine")
         except Exception:
             return None
 

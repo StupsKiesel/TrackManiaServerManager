@@ -1,30 +1,186 @@
-{% import 'tmsm_widgets/frame.xml' as widgets with context %}
+{% import 'widget_engine/frame.xml' as widgets with context %}
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
 
 {% call widgets.frame() %}
-    <label pos="1.0 -2.2" z-index="42" halign="left" valign="top"
-      text="$3f7●" textsize="1.45" textfont="GameFontBlack" />
-    <label pos="5.0 -2.25" z-index="42" halign="left" valign="top"
-         text="$fff{{ map_author_time|default('—') }}" textsize="1.35" textfont="GameFontBlack" />
-      <label pos="1.0 -5.2" z-index="42" halign="left" valign="top"
-      text="$39f●" textsize="1.25" textfont="GameFontBlack" />
-      <label pos="3.2 -5.25" z-index="42" halign="left" valign="top"
-        text="$fff{{ map_checkpoints|default(0) }}" textsize="1.0" textfont="GameFontBlack" />
+  {% set pad = 1.0 %}
+  {% set rows = 3 %}
+  {% set row_h = (widget_h - (pad * 2)) / rows %}
+  {% set y1 = pad %}
+  {% set y2 = pad + row_h %}
+  {% set y3 = pad + (row_h * 2) %}
 
-  {% set bx = widget_w - 12.15 %}
-  <quad pos="{{ bx - 0.6 }} -2.1" z-index="41" size="11.4 6.45" bgcolor="0007" halign="left" valign="top" />
+       {% set row1_w = widget_w - (pad * 2) %}
+       {% set row1_x = pad %}
+       {% set row1_y = -y1 %}
+       {% set row1_icon_w = row_h %}
+       {% if row_h >= 5.5 %}
+              {% set row1_icon_pad = 0.70 %}
+       {% elif row_h >= 4.0 %}
+              {% set row1_icon_pad = 0.52 %}
+       {% else %}
+              {% set row1_icon_pad = 0.38 %}
+       {% endif %}
+       {% set row1_icon_size = (row_h - (row1_icon_pad * 2)) * 0.62 %}
+       {% set row1_ratio = row1_icon_w / row1_w %}
 
-  {# Graphical-only difficulty signal (1..6 bars), no text label. #}
+       {% set row2_w = widget_w - (pad * 2) %}
+       {% set row2_x = pad %}
+       {% set row2_y = -y2 %}
+       {% set row2_icon_w = row_h %}
+       {% if row_h >= 5.5 %}
+              {% set row2_icon_pad = 0.70 %}
+       {% elif row_h >= 4.0 %}
+              {% set row2_icon_pad = 0.52 %}
+       {% else %}
+              {% set row2_icon_pad = 0.38 %}
+       {% endif %}
+       {% set row2_icon_size = (row_h - (row2_icon_pad * 2)) * 0.72 %}
+       {% set row2_ratio = row2_icon_w / row2_w %}
+
+       {% set row3_w = widget_w - (pad * 2) %}
+       {% set row3_x = pad %}
+       {% set row3_y = -y3 %}
+
+       {% set row3_col_w = row3_w / 4.0 %}
+       {% set row3_cp_w = row3_col_w %}
+       {% set row3_lap_w = row3_col_w %}
+       {% set row3_diff_w = row3_col_w %}
+       {% set row3_env_w = row3_col_w %}
+
+       {% set d1 = row3_cp_w %}
+       {% set d2 = row3_cp_w + row3_lap_w %}
+       {% set d3 = row3_cp_w + row3_lap_w + row3_diff_w %}
+
+       {% set row3_cp_x = row3_x %}
+       {% set row3_lap_x = row3_x + row3_cp_w %}
+       {% set row3_diff_x = row3_x + row3_cp_w + row3_lap_w %}
+       {% set row3_env_x = row3_x + row3_cp_w + row3_lap_w + row3_diff_w %}
+
+       {# prebuilt tmsm_ui horizontal dividers between row 1/2 and 2/3 #}
+       {% set split_x = pad %}
+       {% set split_y = -pad %}
+       {% set split_w = widget_w - (pad * 2) %}
+       {% set split_h = widget_h - (pad * 2) %}
+       {% call(i, px, py, pw, ph) ui.splitter(
+                     x=split_x, y=split_y, w=split_w, h=split_h,
+                     ratio=(1.0/3.0), orient='v', gap=0,
+                     divider=True, divider_color='ffffff28', z=41
+              ) %}{% endcall %}
+       {% call(i, px, py, pw, ph) ui.splitter(
+                     x=split_x, y=split_y, w=split_w, h=split_h,
+                     ratio=(2.0/3.0), orient='v', gap=0,
+                     divider=True, divider_color='ffffff28', z=41
+              ) %}{% endcall %}
+
+  {% if row_h >= 5.5 %}
+    {% set icon_size = 1.2 %}
+    {% set text_size = 1.05 %}
+    {% set sub_size = 0.95 %}
+  {% elif row_h >= 4.0 %}
+    {% set icon_size = 1.0 %}
+    {% set text_size = 0.9 %}
+    {% set sub_size = 0.82 %}
+  {% else %}
+    {% set icon_size = 0.86 %}
+    {% set text_size = 0.78 %}
+    {% set sub_size = 0.72 %}
+  {% endif %}
+
+       {# row 1: key icon + divider + value #}
+       {% call(i, px, py, pw, ph) ui.splitter(
+                     x=row1_x, y=row1_y, w=row1_w, h=row_h,
+                     ratio=row1_ratio, orient='h', gap=0,
+                     divider=True, divider_color='ffffff2f', z=41
+              ) %}{% endcall %}
+       <label pos="{{ row1_x + (row1_icon_w * 0.5) }} -{{ y1 + (row_h * 0.5) }}" z-index="42" halign="center" valign="center2"
+                             text="$7cf&#xf279;" textsize="{{ row1_icon_size }}" textfont="GameFont" />
+       <label pos="{{ row1_x + row1_icon_w + 0.7 }} -{{ y1 + (row_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+         text="$fff{{ map_name|default('-') }}" textsize="{{ text_size }}" textfont="GameFontBlack" />
+
+  {# row 2: AT icon | divider | value/author #}
+  {% call(i, px, py, pw, ph) ui.splitter(
+      x=row2_x, y=row2_y, w=row2_w, h=row_h,
+      ratio=row2_ratio, orient='h', gap=0,
+      divider=True, divider_color='ffffff2f', z=41
+    ) %}{% endcall %}
+  <label pos="{{ row2_x + (row2_icon_w * 0.5) }} -{{ y2 + (row_h * 0.5) }}" z-index="42" halign="center" valign="center2"
+         text="$3f7&#xf017;" textsize="{{ row2_icon_size }}" textfont="GameFont" />
+  <label pos="{{ row2_x + row2_icon_w + 0.7 }} -{{ y2 + (row_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+         text="$fff{{ map_author_time|default('—') }} $aaaby $fff{{ map_author|default('-') }}"
+         textsize="{{ text_size }}" textfont="GameFontBlack" />
+
+       {# row 3 separators: cp | laps | difficulty | environment #}
+  {% call(i, px, py, pw, ph) ui.splitter(
+      x=row3_x, y=row3_y, w=row3_w, h=row_h,
+      ratio=(d1 / row3_w), orient='h', gap=0,
+      divider=True, divider_color='ffffff2f', z=41
+    ) %}{% endcall %}
+  {% call(i, px, py, pw, ph) ui.splitter(
+      x=row3_x, y=row3_y, w=row3_w, h=row_h,
+      ratio=(d2 / row3_w), orient='h', gap=0,
+      divider=True, divider_color='ffffff2f', z=41
+    ) %}{% endcall %}
+  {% call(i, px, py, pw, ph) ui.splitter(
+      x=row3_x, y=row3_y, w=row3_w, h=row_h,
+      ratio=(d3 / row3_w), orient='h', gap=0,
+      divider=True, divider_color='ffffff2f', z=41
+    ) %}{% endcall %}
+
+  {% set row3_kv_pad = 0.5 %}
+       {% set row3_kv_gap = 0.75 %}
+
+  {# row 3: cp key/value #}
+  {% set row3_cp_icon_x = row3_cp_x + row3_kv_pad %}
+  {% set row3_cp_val_x = row3_cp_icon_x + row2_icon_size + row3_kv_gap %}
+  <label pos="{{ row3_cp_icon_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+         text="$39f&#xf024;" textsize="{{ row2_icon_size }}" textfont="GameFont" />
+  <label pos="{{ row3_cp_val_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+         text="$fff{{ map_checkpoints|default(0) }}" textsize="{{ sub_size }}" textfont="GameFontBlack" />
+
+  {# row 3: laps key/value #}
+  {% set row3_lap_icon_x = row3_lap_x + row3_kv_pad %}
+  {% set row3_lap_val_x = row3_lap_icon_x + row2_icon_size + row3_kv_gap %}
+  <label pos="{{ row3_lap_icon_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+         text="$7cf&#xf01e;" textsize="{{ row2_icon_size }}" textfont="GameFont" />
+  <label pos="{{ row3_lap_val_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+         text="$fff{{ map_laps|default('-') }}" textsize="{{ sub_size }}" textfont="GameFontBlack" />
+
+  {# row 3: difficulty bars #}
+       {% set diff_pad = row2_icon_pad %}
+       {% set diff_h = row_h - (diff_pad * 2) %}
+       {% set diff_w_full = row3_diff_w - (diff_pad * 2) %}
+       {% set diff_w = diff_w_full * 1.5 %}
+       {% if diff_w > (diff_h * 1.20) %}
+              {% set diff_w = diff_h * 1.20 %}
+       {% endif %}
+       {% set diff_x = row3_diff_x + diff_pad + ((diff_w_full - diff_w) * 0.5) %}
+       {% set diff_y = -(y3 + diff_pad) %}
+
+  {% set bar_count = 6 %}
+  {% set bar_gap = 0.10 %}
+  {% set bar_w = (diff_w - (bar_gap * (bar_count + 1))) / bar_count %}
   {% for i in [1, 2, 3, 4, 5, 6] %}
-    {% set h = 0.75 + (i * 0.7875) %}
-    {% set x = bx + ((i - 1) * 1.65) %}
-    {% set y = -7.025 %}
-        {% if i <= difficulty_bars|default(3) %}
-      <quad pos="{{ x }} {{ y }}" z-index="42" size="1.05 {{ h }}"
-          bgcolor="{{ difficulty_color|default('fd3f') }}" halign="left" valign="bottom" />
+    {% set x = diff_x + bar_gap + ((i - 1) * (bar_w + bar_gap)) %}
+    {% set h = 0.20 + (i * ((diff_h - 0.45) / 6.0)) %}
+    {% set by = diff_y - diff_h + 0.08 %}
+    {% if i <= difficulty_bars|default(3) %}
+      <quad pos="{{ x }} {{ by }}" z-index="42" size="{{ bar_w }} {{ h }}"
+            bgcolor="{{ difficulty_color|default('fd3f') }}" halign="left" valign="bottom" />
     {% else %}
-      <quad pos="{{ x }} {{ y }}" z-index="42" size="1.05 {{ h }}"
+      <quad pos="{{ x }} {{ by }}" z-index="42" size="{{ bar_w }} {{ h }}"
             bgcolor="6667" halign="left" valign="bottom" />
     {% endif %}
   {% endfor %}
+
+  {# row 3: environment image #}
+  {% if map_environment_image|default('') %}
+    {% set row3_env_icon_pad = row2_icon_pad %}
+    {% set row3_env_img_w = row3_env_w - (row3_env_icon_pad * 2) %}
+    {% set row3_env_img_h = row_h - (row3_env_icon_pad * 2) %}
+    <quad pos="{{ row3_env_x + (row3_env_w * 0.5) }} -{{ y3 + (row_h * 0.5) }}" z-index="42"
+           size="{{ row3_env_img_w }} {{ row3_env_img_h }}"
+          halign="center" valign="center2"
+          image="{{ map_environment_image }}" keepratio="Fit" />
+  {% endif %}
 
 {% endcall %}

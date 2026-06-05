@@ -1,0 +1,4 @@
+{
+  "description": "Demo clock wired to the widget_engine sandbox (uses tmsm_we_* tables and tmsm_widget_engine:* signals). For testing the refactored engine alongside the original widgets app.",
+  "author": "tmsm"
+}

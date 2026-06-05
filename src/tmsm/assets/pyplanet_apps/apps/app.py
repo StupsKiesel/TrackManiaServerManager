@@ -325,7 +325,15 @@ class App_Apps(AppConfig):
         except OSError:
             pass
         try:
-            sig = self.context.signals.get_signal("tmsm_status:notify")
+            sig = self.context.signals.get_signal("notification_engine:notify")
+        except KeyError:
+            try:
+                sig = self.context.signals.get_signal("tmsm_status:notify")
+            except KeyError:
+                sig = None
+        try:
+            if sig is None:
+                return
             await sig.send_robust({
                 "message": f"Apps updated: {n} change(s)",
                 "severity": "success",

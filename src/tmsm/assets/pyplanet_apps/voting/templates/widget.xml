@@ -1,33 +1,39 @@
-{% if vote_active %}
-<frame pos="{{ anchor_x|default(0.0) }} {{ anchor_y|default(0.0) }}" z-index="40">
-       {% set w = card_w|default(58.0) %}
-       {% set h = card_h|default(12.0) %}
+{% import 'widget_engine/frame.xml' as widgets with context %}
 
-  <quad pos="0 0" z-index="40" size="{{ w }} {{ h }}" bgcolor="1b2230dd" halign="left" valign="top" />
-  <quad pos="0 0" z-index="41" size="{{ w }} 0.7" bgcolor="44cc88ff" halign="left" valign="top" />
+{% set widget_w = card_w|default(widget_w|default(58.0)) %}
+{% set widget_h = card_h|default(widget_h|default(12.0)) %}
+
+{% call widgets.frame() %}
+  <quad pos="0 0" z-index="40" size="{{ widget_w }} {{ widget_h }}" bgcolor="1b2230dd" halign="left" valign="top" />
+  <quad pos="0 0" z-index="41" size="{{ widget_w }} 0.7" bgcolor="44cc88ff" halign="left" valign="top" />
 
   <label pos="1.2 -1.2" z-index="42" halign="left" valign="top"
          text="$fffVote" textsize="1.0" textfont="GameFontBlack" />
-  <label pos="{{ w - 1.2 }} -1.2" z-index="42" halign="right" valign="top"
+  <label pos="{{ widget_w - 1.2 }} -1.2" z-index="42" halign="right" valign="top"
          text="$aaa{{ remaining_text|default('--') }}" textsize="0.9" textfont="GameFontBlack" />
 
-  <label pos="1.2 -3.2" z-index="42" halign="left" valign="top" sizen="{{ w - 2.4 }} 3.0"
+  <label pos="1.2 -3.2" z-index="42" halign="left" valign="top" sizen="{{ widget_w - 2.4 }} 3.0"
          text="$ddd{{ vote_title|default('No active vote') }}" textsize="0.9" textfont="GameFontRegular" />
 
   {% set left_x = 1.2 %}
-  {% set right_x = w - 1.2 - 13.0 %}
+  {% set right_x = widget_w - 1.2 - 13.0 %}
 
   <quad pos="{{ left_x }} -7.5" z-index="41" size="13 3.2" bgcolor="1f8f55e0" halign="left" valign="top" />
   <label pos="{{ left_x + 6.5 }} -9.1" z-index="42" halign="center" valign="center2"
          text="$fffYES" textsize="1.0" textfont="GameFontBlack" />
-  <quad pos="{{ left_x }} -7.5" z-index="43" size="13 3.2" bgcolor="0000" action="{{ id }}__vote_yes" />
+  <quad pos="{{ left_x }} -7.5" z-index="43" size="13 3.2"
+        bgcolor="0000" bgcolorfocus="8ff2"
+        focusareacolor1="8ff2" focusareacolor2="4cf2"
+        action="{{ id }}__vote_yes" />
 
   <quad pos="{{ right_x }} -7.5" z-index="41" size="13 3.2" bgcolor="a84343e0" halign="left" valign="top" />
   <label pos="{{ right_x + 6.5 }} -9.1" z-index="42" halign="center" valign="center2"
          text="$fffNO" textsize="1.0" textfont="GameFontBlack" />
-  <quad pos="{{ right_x }} -7.5" z-index="43" size="13 3.2" bgcolor="0000" action="{{ id }}__vote_no" />
+  <quad pos="{{ right_x }} -7.5" z-index="43" size="13 3.2"
+        bgcolor="0000" bgcolorfocus="f882"
+        focusareacolor1="f882" focusareacolor2="f442"
+        action="{{ id }}__vote_no" />
 
-  <label pos="{{ w / 2 }} -9.1" z-index="42" halign="center" valign="center2"
+  <label pos="{{ widget_w / 2 }} -9.1" z-index="42" halign="center" valign="center2"
          text="$aaa{{ vote_hint|default('') }}" textsize="0.8" textfont="GameFontRegular" />
-</frame>
-{% endif %}
+{% endcall %}

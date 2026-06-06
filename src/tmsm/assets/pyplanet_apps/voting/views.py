@@ -9,6 +9,13 @@ class VotingView(BaseView):
     template_name = "voting/window.xml"
     breadcrumbs = [{"key": "hub", "label": "Hub"}]
 
+    async def refresh(self) -> None:
+        # Keep this window strictly per-player: never fall back to BaseView.show(),
+        # which would target the full audience when _visible_logins is empty.
+        if not self._visible or not self._visible_logins:
+            return
+        await self.display(player_logins=list(self._visible_logins))
+
     async def get_context_data(self):
         ctx = await super().get_context_data()
         ctx.update(self.app.view_context(None))

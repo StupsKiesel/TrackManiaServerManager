@@ -58,8 +58,8 @@ class App_Voting(AppConfig):
 
         self.widget_view = VotingWidgetView(self)
         self.widget_view.handle_catch_all = self._widget_catch_all
-        self.widget_view.subscribe("vote_yes", self._widget_vote_yes)
-        self.widget_view.subscribe("vote_no", self._widget_vote_no)
+        self.widget_view.connect("vote_yes", self._widget_vote_yes)
+        self.widget_view.connect("vote_no", self._widget_vote_no)
         # widget_engine renders `app.view`; provide a dedicated binding so
         # moving/editing this widget never opens the voting window UI.
         self._widget_binding = SimpleNamespace(view=self.widget_view)
@@ -260,16 +260,17 @@ class App_Voting(AppConfig):
             "vote_title": vote_title,
             "remaining_text": remaining_text,
             "vote_hint": vote_hint,
+            "widget_force_hidden": not vote_active,
         }
 
-    async def _widget_vote_yes(self, player, values=None) -> None:
+    async def _widget_vote_yes(self, player, values=None, **kwargs) -> None:
         value = self._widget_button_value(True)
         if value is None:
             await self.instance.chat("$fa0There is no active vote.", player)
             return
         await self._cast(player, value)
 
-    async def _widget_vote_no(self, player, values=None) -> None:
+    async def _widget_vote_no(self, player, values=None, **kwargs) -> None:
         value = self._widget_button_value(False)
         if value is None:
             await self.instance.chat("$fa0There is no active vote.", player)

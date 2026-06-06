@@ -14,6 +14,7 @@ from typing import Any
 
 from pyplanet.apps.config import AppConfig
 from pyplanet.contrib.command import Command
+from pyplanet.views.template import TemplateView
 
 from .views import VotingView, VotingWidgetView
 
@@ -165,6 +166,17 @@ class App_Voting(AppConfig):
         targets = logins or self._online_logins()
         if not targets:
             return
+
+        vote_active = isinstance(self._active_vote, dict)
+        if not vote_active:
+            for login in targets:
+                self.widget_view._visible_logins.discard(str(login))
+            try:
+                await TemplateView.hide(self.widget_view, player_logins=targets)
+            except Exception:
+                logger.exception("voting: widget hide failed")
+            return
+
         self.widget_view._visible = True
         for login in targets:
             self.widget_view._visible_logins.add(str(login))

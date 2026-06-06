@@ -260,7 +260,7 @@ class WidgetsApp(AppConfig):
                 return
             logins = self._online_logins()
             keys = list(self._widget_apps.keys())
-            logger.info(
+            logger.debug(
                 "widget_engine: delayed push attempt — players=%d widgets=%d",
                 len(logins), len(keys),
             )
@@ -268,7 +268,7 @@ class WidgetsApp(AppConfig):
                 continue
             try:
                 await self._refresh_all()
-                logger.info("widget_engine: delayed push succeeded")
+                logger.debug("widget_engine: delayed push succeeded")
                 return
             except Exception:
                 logger.exception("widget_engine: delayed widget push failed")
@@ -392,7 +392,7 @@ class WidgetsApp(AppConfig):
         if widget_app is not None:
             self._widget_apps[entry.key] = widget_app
         if first_available:
-            logger.info(
+            logger.debug(
                 "widget_engine: available '%s' (%s, kind=%s)",
                 entry.key, entry.name, entry.kind.value,
             )
@@ -417,7 +417,7 @@ class WidgetsApp(AppConfig):
     def _register_entry(self, entry: WidgetEntry) -> None:
         first = entry.key not in self._entries
         self._entries[entry.key] = entry
-        logger.info(
+        logger.debug(
             "widget_engine: %s '%s' (%s, kind=%s)",
             "installed" if first else "updated",
             entry.key, entry.name, entry.kind.value,
@@ -545,7 +545,7 @@ class WidgetsApp(AppConfig):
             # every scenario, so we use it as the single path.
             logins = self._online_logins()
             resolved = self.engine.resolve(key, logins[0]) if logins else None
-            logger.info(
+            logger.debug(
                 "widget_engine: redisplay '%s' players=%d disabled=%s phase=%s",
                 key, len(logins),
                 resolved.disabled if resolved else "n/a",
@@ -892,7 +892,7 @@ class WidgetsApp(AppConfig):
             if out_of_phase or not self.is_replacement_enabled(login, key):
                 xml = f'<manialink id="{manialink_id}" version="3"></manialink>'
                 if out_of_phase:
-                    logger.info(
+                    logger.debug(
                         "widget_engine: clearing replacement '%s' id=%s for %s "
                         "(out of phase: current=%s allowed=%s)",
                         key, manialink_id, login,
@@ -1144,7 +1144,7 @@ class WidgetsApp(AppConfig):
                 "Common.UIModules.SetProperties",
                 [json.dumps(payload)],
             )
-            logger.info(
+            logger.debug(
                 "widget_engine: Common.UIModules.SetProperties ids=%s visible=%s",
                 ids, visible,
             )

@@ -269,6 +269,20 @@ class App_Voting(AppConfig):
         self.view._visible_logins.add(player.login)
         await self.view.display(player_logins=[player.login])
 
+    async def _hide_window_for(self, player) -> None:
+        if self.view is None:
+            return
+        login = str(getattr(player, "login", "") or "")
+        if not login:
+            return
+        self.view._visible_logins.discard(login)
+        if not self.view._visible_logins:
+            self.view._visible = False
+        try:
+            await TemplateView.hide(self.view, player_logins=[login])
+        except Exception:
+            logger.exception("voting: hide window failed")
+
     async def _refresh_view(self) -> None:
         if self.view is None:
             pass
@@ -383,14 +397,14 @@ class App_Voting(AppConfig):
     async def _widget_vote_yes(self, player, values=None, **kwargs) -> None:
         value = self._widget_button_value(True)
         if value is None:
-            await self.instance.chat("$fa0There is no active vote.", player)
+            await self._notify("$fa0There is no active vote.", player)
             return
         await self._cast(player, value)
 
     async def _widget_vote_no(self, player, values=None, **kwargs) -> None:
         value = self._widget_button_value(False)
         if value is None:
-            await self.instance.chat("$fa0There is no active vote.", player)
+            await self._notify("$fa0There is no active vote.", player)
             return
         await self._cast(player, value)
 
@@ -499,21 +513,25 @@ class App_Voting(AppConfig):
 
     async def _view_catch_all(self, player, action, values, **kwargs):
         if action == "start_skip":
+            await self._hide_window_for(player)
             await self._start_skip_vote(player)
             return
         if action == "start_extend_5":
+            await self._hide_window_for(player)
             await self._start_extend_vote(player, minutes=5)
             return
         if action == "start_extend_10":
+            await self._hide_window_for(player)
             await self._start_extend_vote(player, minutes=10)
             return
         if action == "start_replay":
+            await self._hide_window_for(player)
             await self._start_replay_vote(player)
             return
         if action == "cancel_vote":
             from pyplanet.apps.tmsm.ui import perms as _perms
             if not _perms.is_operator(player):
-                await self.instance.chat("$f44Only operators can cancel an active vote.", player)
+                await self._notify("$f44Only operators can cancel an active vote.", player)
                 return
             await self._emit_engine("request_cancel", {"reason": f"cancelled by {player.login}"})
             return
@@ -524,7 +542,7 @@ class App_Voting(AppConfig):
                 return
             vote = self._active_vote if isinstance(self._active_vote, dict) else None
             if vote is None:
-                await self.instance.chat("$fa0There is no active vote.", player)
+                await self._notify("$fa0There is no active vote.", player)
                 return
             options = list(vote.get("options") or [])
             if idx < 0 or idx >= len(options):
@@ -542,15 +560,24 @@ class App_Voting(AppConfig):
         try:
             sig = self.context.signals.get_signal(f"tmsm_voting_engine:{code}")
         except KeyError:
-            await self.instance.chat("$f44Voting engine is not loaded.", payload.get("player"))
+            await self._notify("$f44Voting engine is not loaded.", payload.get("player"))
             return
         await sig.send_robust(payload, raw=True)
 
+    async def _notify(self, msg: str, player=None) -> None:
+        # Voting addon should be silent in in-game chat; keep the message
+        # in debug logs only for troubleshooting.
+        try:
+            login = getattr(player, "login", None)
+            logger.debug("voting notify suppressed login=%s msg=%s", login, msg)
+        except Exception:
+            pass
+
     async def _broadcast(self, msg: str) -> None:
-        await self.instance.chat(msg)
+        await self._notify(msg)
 
     async def _chat_help(self, player) -> None:
-        await self.instance.chat(
+        await self._notify(
             "$4d8Voting:$fff /vote$4d8 opens the voting window. Chat commands: "
             "$fff/vote skip$4d8 | $fff/vote extend 5|10$4d8 | $fff/vote replay$4d8 | "
             "$fff/vote yes$4d8/$fffno$4d8 | $fff/vote 5$4d8/$fff10$4d8 (when extend vote is active).",
@@ -588,7 +615,7 @@ class App_Voting(AppConfig):
         if token == "cancel":
             from pyplanet.apps.tmsm.ui import perms as _perms
             if not _perms.is_operator(player):
-                await self.instance.chat("$f44Only operators can cancel an active vote.", player)
+                await self._notify("$f44Only operators can cancel an active vote.", player)
                 return
             await self._emit_engine("request_cancel", {"reason": f"cancelled by {player.login}"})
             return
@@ -684,7 +711,7 @@ class App_Voting(AppConfig):
         now = asyncio.get_running_loop().time()
         left = int(self._START_COOLDOWN_S - (now - self._last_vote_started_at))
         if left > 0:
-            await self.instance.chat(f"$fa0Please wait {left}s before starting another vote.", player)
+            await self._notify(f"$fa0Please wait {left}s before starting another vote.", player)
             return False
         return True
 
@@ -718,6 +745,16 @@ class App_Voting(AppConfig):
         payload = self._unwrap(kwargs)
         vote = payload.get("vote")
         if isinstance(vote, dict):
+            # Guard against out-of-order progress/ended delivery: a stale
+            # timeout snapshot must not re-show the widget.
+            try:
+                remaining = int(vote.get("remaining") or 0)
+            except (TypeError, ValueError):
+                remaining = 0
+            if remaining <= 0:
+                self._active_vote = None
+                await self._refresh_view()
+                return
             self._active_vote = vote
             await self._refresh_view()
 
@@ -732,7 +769,7 @@ class App_Voting(AppConfig):
             except Exception:
                 player = None
             if player is not None:
-                await self.instance.chat(f"$f44Vote action rejected: {reason}", player)
+                await self._notify(f"$f44Vote action rejected: {reason}", player)
         await self._refresh_view()
 
     async def _on_vote_ended(self, **kwargs) -> None:

@@ -94,7 +94,7 @@ class WidgetEngine:
         old_visible = _visible_in(previous)
         new_visible = _visible_in(phase)
 
-        logger.info(
+        logger.debug(
             "widget_engine: phase %s -> %s (out=%d in=%d)",
             previous.value if previous else "?",
             phase.value if phase else "?",

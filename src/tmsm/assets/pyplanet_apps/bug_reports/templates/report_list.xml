@@ -1,0 +1,176 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# Per-player ctx:
+     filters: [{key, label, count, active}]
+     rows:    [{id, subject, subject_full, login, nickname, map_name,
+                mode_script, status, ago, is_selected}]
+     counts:  {open, fixed, wontfix, total}
+     selected: {id, subject, details, login, nickname, map_name, map_uid,
+                mode_script, status, created_s} | None
+     status, status_color
+#}
+
+{% set W = 260 %}
+{% set H = 170 %}
+{% set ROW_H = 6.5 %}
+{% set LIST_TOP = -28 %}
+{% set DETAIL_H = 58 if selected else 0 %}
+{% set LIST_BOTTOM = -(H - 18 - DETAIL_H) %}
+
+{% set STATUS_COLOR = {
+  'open': 'f93',
+  'fixed': '0c4',
+  'wontfix': '888',
+} %}
+
+<frame pos="-130 85" z-index="200">
+
+  {{ ui.window('Bug reports', icon='bug', x=0, y=0, w=W, h=H) }}
+
+  {# ── filter row ─────────────────────────────────────────────────── #}
+  {% set _fx = namespace(v=4) %}
+  {% for f in filters %}
+    {% set bg = '15d8' if f.active else 'fff2' %}
+    {% set fg = 'ffff' if f.active else 'cccf' %}
+    {% set bw = 20 %}
+    <quad pos="{{ _fx.v }} -16" z-index="201" size="{{ bw }} 5"
+          bgcolor="{{ bg }}" halign="left" valign="center"
+          id="uibtn_ghost_{{ id }}__filter__{{ f.key }}"
+          action="{{ id }}__filter__{{ f.key }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    <label pos="{{ _fx.v + bw/2 }} -16" z-index="202"
+           halign="center" valign="center2"
+           text="${{ fg[:3] }}{{ f.label }} ({{ f.count }})"
+           textsize="0.9" textfont="GameFont" />
+    {% set _fx.v = _fx.v + bw + 1 %}
+  {% endfor %}
+
+  {# Counts summary on the right of the filter row #}
+  {{ ui.label('Open: ' ~ counts.open ~ '  ·  Fixed: ' ~ counts.fixed ~ '  ·  Wontfix: ' ~ counts.wontfix ~ '  ·  Total: ' ~ counts.total,
+              x=W - 4, y=-16, color='888', halign='right', size='sm') }}
+
+  {# Header strip for the list #}
+  <quad pos="4 -25" z-index="201" size="{{ W - 8 }} 4" bgcolor="0006"
+        halign="left" valign="top" />
+  {{ ui.label('#',         x=6,   y=-27, color='aaa', size='sm', bold=True) }}
+  {{ ui.label('STATUS',    x=14,  y=-27, color='aaa', size='sm', bold=True) }}
+  {{ ui.label('SUBJECT',   x=34,  y=-27, color='aaa', size='sm', bold=True) }}
+  {{ ui.label('REPORTER',  x=130, y=-27, color='aaa', size='sm', bold=True) }}
+  {{ ui.label('MAP',       x=170, y=-27, color='aaa', size='sm', bold=True) }}
+  {{ ui.label('WHEN',      x=W - 38, y=-27, color='aaa', size='sm', bold=True) }}
+  {{ ui.label('ACTIONS',   x=W - 6,  y=-27, color='aaa', size='sm', bold=True, halign='right') }}
+
+  {# ── rows ────────────────────────────────────────────────────────── #}
+  {% if rows %}
+    {% for r in rows %}
+      {% set y = LIST_TOP - 3 - loop.index0 * ROW_H %}
+      {% if y > LIST_BOTTOM + ROW_H %}
+        {# row background (clickable to select) #}
+        {% set row_bg = '15d3' if r.is_selected else ('fff1' if loop.index0 % 2 == 0 else '0000') %}
+        <quad pos="4 {{ y }}" z-index="201" size="{{ W - 8 }} {{ ROW_H - 0.4 }}"
+              bgcolor="{{ row_bg }}" halign="left" valign="top"
+              id="uibtn_ghost_{{ id }}__select__{{ r.id }}"
+              action="{{ id }}__select__{{ r.id }}" scriptevents="1"
+              class="ui-btn ui-btn-ghost" />
+        {% set ty = y - ROW_H/2 %}
+        <label pos="6 {{ ty }}" z-index="202" halign="left" valign="center2"
+               text="$ddd#{{ r.id }}" textsize="0.9" textfont="GameFont" />
+        {# status pill #}
+        {% set sc = STATUS_COLOR[r.status] if r.status in STATUS_COLOR else '888' %}
+        <quad pos="14 {{ ty }}" z-index="202" size="14 3.6"
+              bgcolor="{{ sc }}8" halign="left" valign="center" />
+        <label pos="21 {{ ty }}" z-index="203" halign="center" valign="center2"
+               text="$fff{{ r.status|upper }}" textsize="0.75" textfont="GameFont" />
+        <label pos="34 {{ ty }}" z-index="202" halign="left" valign="center2"
+               text="$fff{{ r.subject }}" textsize="0.9" textfont="GameFont" />
+        <label pos="130 {{ ty }}" z-index="202" halign="left" valign="center2"
+               text="$bbf{{ r.nickname }}" textsize="0.85" textfont="GameFont" />
+        <label pos="170 {{ ty }}" z-index="202" halign="left" valign="center2"
+               text="$ccc{{ r.map_name }}" textsize="0.85" textfont="GameFont" />
+        <label pos="{{ W - 38 }} {{ ty }}" z-index="202" halign="left" valign="center2"
+               text="$888{{ r.ago }}" textsize="0.85" textfont="GameFont" />
+        {# per-row action buttons (right-aligned) #}
+        {% set ax = W - 6 %}
+        <quad pos="{{ ax }} {{ ty }}" z-index="203" size="4 4"
+              bgcolor="c333" halign="right" valign="center"
+              id="uibtn_danger_{{ id }}__delete__{{ r.id }}"
+              action="{{ id }}__delete__{{ r.id }}" scriptevents="1"
+              class="ui-btn ui-btn-danger" data-tooltip="Delete" />
+        <label pos="{{ ax - 2 }} {{ ty }}" z-index="204" halign="center" valign="center2"
+               text="$fff{{ '&#xf1f8;'|safe }}" textsize="0.9" textfont="GameFont" />
+        {% set ax2 = ax - 5 %}
+        <quad pos="{{ ax2 }} {{ ty }}" z-index="203" size="4 4"
+              bgcolor="8884" halign="right" valign="center"
+              id="uibtn_ghost_{{ id }}__status__{{ r.id }}:wontfix"
+              action="{{ id }}__status__{{ r.id }}:wontfix" scriptevents="1"
+              class="ui-btn ui-btn-ghost" data-tooltip="Wontfix" />
+        <label pos="{{ ax2 - 2 }} {{ ty }}" z-index="204" halign="center" valign="center2"
+               text="$fff{{ '&#xf05e;'|safe }}" textsize="0.9" textfont="GameFont" />
+        {% set ax3 = ax2 - 5 %}
+        <quad pos="{{ ax3 }} {{ ty }}" z-index="203" size="4 4"
+              bgcolor="0a44" halign="right" valign="center"
+              id="uibtn_success_{{ id }}__status__{{ r.id }}:fixed"
+              action="{{ id }}__status__{{ r.id }}:fixed" scriptevents="1"
+              class="ui-btn ui-btn-success" data-tooltip="Mark fixed" />
+        <label pos="{{ ax3 - 2 }} {{ ty }}" z-index="204" halign="center" valign="center2"
+               text="$fff{{ '&#xf00c;'|safe }}" textsize="0.9" textfont="GameFont" />
+        {% set ax4 = ax3 - 5 %}
+        <quad pos="{{ ax4 }} {{ ty }}" z-index="203" size="4 4"
+              bgcolor="0d48" halign="right" valign="center"
+              id="uibtn_primary_{{ id }}__status__{{ r.id }}:open"
+              action="{{ id }}__status__{{ r.id }}:open" scriptevents="1"
+              class="ui-btn ui-btn-primary" data-tooltip="Reopen" />
+        <label pos="{{ ax4 - 2 }} {{ ty }}" z-index="204" halign="center" valign="center2"
+               text="$fff{{ '&#xf021;'|safe }}" textsize="0.9" textfont="GameFont" />
+      {% endif %}
+    {% endfor %}
+  {% else %}
+    {{ ui.label('No reports yet. Players can submit via the "Report bug" hub tile or /report.',
+                x=W/2, y=LIST_TOP - 12, color='888', halign='center', size='md') }}
+  {% endif %}
+
+  {# ── detail block for the currently selected row ──────────────────── #}
+  {# Note on z-order: ui.label defaults to z=200, so the panel background
+     MUST sit below that or it would hide the text it is meant to back. #}
+  {% if selected %}
+    {% set dy = -(H - 18 - DETAIL_H) - 2 %}
+    <quad pos="4 {{ dy }}" z-index="150" size="{{ W - 8 }} {{ DETAIL_H - 2 }}"
+          bgcolor="000d" halign="left" valign="top" />
+    <quad pos="4 {{ dy }}" z-index="151" size="{{ W - 8 }} 0.3"
+          bgcolor="15dfa" halign="left" valign="top" />
+    {{ ui.label('Report #' ~ selected.id ~ ' — ' ~ selected.subject,
+                x=6, y=dy - 3, color='fff', bold=True, size='md') }}
+    {{ ui.label('From ' ~ (selected.nickname or selected.login) ~ ' [' ~ selected.login ~ ']'
+                ~ ('  ·  auth: ' ~ selected.auth_level if selected.auth_level else '')
+                ~ '  ·  ' ~ selected.created_s,
+                x=6, y=dy - 8, color='bbf', size='sm') }}
+    {{ ui.label('Map: ' ~ (selected.map_name or '?') ~ ('  [' ~ selected.map_uid ~ ']' if selected.map_uid else '')
+                ~ '   ·   Mode: ' ~ (selected.mode_script or '?')
+                ~ '   ·   Phase: ' ~ (selected.game_phase or '?'),
+                x=6, y=dy - 12, color='ccc', size='sm') }}
+    {{ ui.label('Input: ' ~ (selected.input_device or '?')
+                ~ '   ·   About: ' ~ (selected.about_tags or '-')
+                ~ '   ·   Openplanet: ' ~ ('yes' if selected.uses_openplanet else 'no'),
+                x=6, y=dy - 16, color='ccc', size='sm') }}
+    {{ ui.label('Server: ' ~ (selected.game_version or '?')
+                ~ '   ·   Client: ' ~ (selected.client_version or '?'),
+                x=6, y=dy - 20, color='ccc', size='sm') }}
+    {{ ui.label('Uptime: PyPlanet ' ~ (selected.pyplanet_uptime or '?')
+                ~ '   ·   Dedicated ' ~ (selected.dedicated_uptime or '?'),
+                x=6, y=dy - 24, color='ccc', size='sm') }}
+    {{ ui.label('Details:', x=6, y=dy - 30, color='aaa', size='sm', bold=True) }}
+    {{ ui.label(selected.details or '(no details)',
+                x=6, y=dy - 34, color='ddd', size='sm') }}
+  {% endif %}
+
+  {# ── footer: status line + settings/refresh/export ────────────────── #}
+  {{ ui.label(status, x=4, y=-(H - 5), color=status_color, size='sm') }}
+  {{ ui.push_button('settings', 'Settings', icon='cog',
+                    x=4, y=-(H - 6), variant='ghost', halign='left', size='md') }}
+  {{ ui.push_button('refresh', 'Refresh', icon='reload',
+                    x=W - 32, y=-(H - 6), variant='ghost', halign='right', size='md') }}
+  {{ ui.push_button('export', 'Export', icon='save',
+                    x=W - 4, y=-(H - 6), variant='primary', halign='right', size='md') }}
+
+  {{ ui.hover_script() }}
+</frame>

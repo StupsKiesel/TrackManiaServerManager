@@ -186,7 +186,7 @@ class KarmaWidgetApp(WidgetAppBase):
         self.current_karma_negative = total_abs - self.current_karma_positive
         self.current_karma = total_score
         self.current_karma_percentage = (
-            (self.current_karma_positive / total_abs) if total_abs > 0 else 0.0
+            (total_score / total_abs) if total_abs > 0 else 0.0
         )
 
     async def _score_from_token(self, token: str) -> tuple[float, float] | None:
@@ -312,6 +312,7 @@ class KarmaWidgetApp(WidgetAppBase):
         bar_pct = max(0.0, min(100.0, (p + 100.0) / 2.0))
         score = float(self.current_karma or 0.0)
         score_color = "3f8" if score >= 0 else "f66"
+        percent_text = "NONE" if round(p, 1) == 0.0 else f"{p:+.1f}%"
 
         return {
             "score": score,
@@ -323,6 +324,6 @@ class KarmaWidgetApp(WidgetAppBase):
             "source": "LOCAL",
             "bar_pct": bar_pct,
             "score_color": score_color,
-            "percent_text": f"{p:+.1f}%",
+            "percent_text": percent_text,
             "score_text": f"{score:+.1f}",
         }

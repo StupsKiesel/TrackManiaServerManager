@@ -252,6 +252,7 @@ class MainScreen(Screen):
 
     def action_update_tmsm(self) -> None:
         from .install_screen import InstallScreen
+        from .confirm import ConfirmScreen
         from .. import updater
 
         app = self.app
@@ -264,9 +265,51 @@ class MainScreen(Screen):
             if getattr(app, "restart_pending", False):
                 app.exit()
 
+        def _launch() -> None:
+            self.app.push_screen(
+                InstallScreen(title="Updating tmsm from git", runner=runner),
+                after,
+            )
+
+        dirty = updater.get_uncommitted_changes()
+        if not dirty:
+            _launch()
+            return
+
+        # Truncate long lists so the modal stays readable.
+        lines = [ln for ln in dirty.splitlines() if ln.strip()]
+        shown = lines[:20]
+        more = len(lines) - len(shown)
+        change_list = "\n".join(shown)
+        if more > 0:
+            change_list += f"\n... and {more} more"
+        msg = (
+            "The source checkout has local uncommitted changes "
+            "(e.g. saved widget preset CSVs):\n\n"
+            f"{change_list}\n\n"
+            "Discard them and continue updating? "
+            "This runs `git checkout -- .` and cannot be undone."
+        )
+
+        def _on_confirm(ok: bool | None) -> None:
+            if not ok:
+                return
+            try:
+                updater.discard_uncommitted_changes()
+            except Exception as exc:
+                self.notify(f"Discard failed: {exc}", severity="error")
+                return
+            _launch()
+
         self.app.push_screen(
-            InstallScreen(title="Updating tmsm from git", runner=runner),
-            after,
+            ConfirmScreen(
+                msg,
+                title="Discard local changes?",
+                ok_label="Discard & update",
+                cancel_label="Cancel",
+                destructive=True,
+            ),
+            _on_confirm,
         )
 
     def action_open_menu(self) -> None:

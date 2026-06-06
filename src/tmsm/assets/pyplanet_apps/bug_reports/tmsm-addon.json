@@ -1,0 +1,4 @@
+{
+  "description": "Bug reports - players submit short bug reports via /report; master admins triage them via /reports (list, status, delete) and can export the whole table to a markdown file ready to hand to a maintainer or AI agent. Each report snapshots the current map + mode so context is preserved.",
+  "author": "tmsm"
+}

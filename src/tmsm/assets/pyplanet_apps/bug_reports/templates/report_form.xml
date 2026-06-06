@@ -1,0 +1,74 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# Per-player ctx provides:
+     subject_value, details_value,
+     about_widgets, about_ui,
+     input_device, input_devices,
+     uses_openplanet,
+     map_name, map_uid, mode_script,
+     game_phase, auth_level, game_version, client_version,
+     pyplanet_uptime_s, dedicated_uptime_s,
+     status, status_color
+#}
+
+{% set W = 190 %}
+{% set H = 155 %}
+
+<frame pos="-95 77" z-index="200">
+
+  {{ ui.window('Report a bug', icon='bug', x=0, y=0, w=W, h=H) }}
+
+  {# intro line #}
+  {{ ui.label('Tell the admins what you noticed. Keep it short — server context (map, mode, phase, versions, uptimes) is attached automatically.',
+              x=4, y=-12, color='ccc', size='sm') }}
+
+  {# subject #}
+  {{ ui.label('Subject', x=4, y=-22, color='fff', bold=True) }}
+  {{ ui.line_edit('subject', value=subject_value, x=4, y=-27, width=W - 8, size='md') }}
+
+  {# details #}
+  {{ ui.label('Details (one line — what happened, what you expected)',
+              x=4, y=-37, color='fff', bold=True, size='sm') }}
+  {{ ui.line_edit('details', value=details_value, x=4, y=-42, width=W - 8, size='md') }}
+
+  {# ── classification: what is this report about ─────────────────── #}
+  {{ ui.label('What is this report about?', x=4, y=-54, color='fff', bold=True, size='sm') }}
+  {{ ui.check_box('toggle_widgets', label='Widgets (HUD elements, overlays)',
+                  checked=about_widgets, x=10, y=-60, size='sm') }}
+  {{ ui.check_box('toggle_ui',      label='UI windows (menus, dialogs)',
+                  checked=about_ui,      x=10, y=-65, size='sm') }}
+
+  {# ── input device radio ────────────────────────────────────────── #}
+  {{ ui.label('Input device', x=4, y=-74, color='fff', bold=True, size='sm') }}
+  {{ ui.radio_group('device', input_devices, selected=input_device,
+                    x=10, y=-80, gap=30, orient='h', size='sm') }}
+
+  {# ── Openplanet self-declared (no reliable XMLRPC probe) ───────── #}
+  {{ ui.check_box('toggle_openplanet',
+                  label='I am running Openplanet (TM2020 plugin loader)',
+                  checked=uses_openplanet, x=10, y=-88, size='sm') }}
+
+  {# ── auto-snapshot block ───────────────────────────────────────── #}
+  {{ ui.label('Auto-attached to your report:', x=4, y=-97, color='888', size='sm') }}
+  {{ ui.label('Map:    ' ~ (map_name or '(unknown)') ~ ('  [' ~ map_uid ~ ']' if map_uid else ''),
+              x=4, y=-103, color='ddd', size='sm') }}
+  {{ ui.label('Mode:   ' ~ (mode_script or '(unknown)') ~ '   ·   Phase: ' ~ (game_phase or 'unknown'),
+              x=4, y=-108, color='ddd', size='sm') }}
+  {{ ui.label('Auth:   ' ~ (auth_level or '?') ~ '   ·   Server: ' ~ (game_version or '?'),
+              x=4, y=-113, color='ddd', size='sm') }}
+  {{ ui.label('Client: ' ~ (client_version or '(unknown)'),
+              x=4, y=-118, color='ddd', size='sm') }}
+  {{ ui.label('Uptime: PyPlanet ' ~ pyplanet_uptime_s ~ 's   ·   Dedicated ' ~ dedicated_uptime_s ~ 's',
+              x=4, y=-123, color='ddd', size='sm') }}
+
+  {# status / last-action feedback #}
+  {{ ui.label(status, x=4, y=-(H - 5), color=status_color, size='sm') }}
+
+  {# action buttons #}
+  {{ ui.push_button('clear', 'Clear', icon='cross',
+                    x=W - 28, y=-(H - 6), variant='ghost', halign='right', size='md') }}
+  {{ ui.push_button('submit', 'Submit', icon='check',
+                    x=W - 4, y=-(H - 6), variant='success', halign='right', size='md') }}
+
+  {{ ui.hover_script() }}
+</frame>

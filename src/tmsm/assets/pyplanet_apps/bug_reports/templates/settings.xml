@@ -1,0 +1,56 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# Per-player ctx provides:
+     discord_enabled, discord_webhook_url,
+     delivery_mode, delivery_modes,
+     store_locally,
+     last_delivery_s, pending_count, total_count,
+     status, status_color
+#}
+
+{% set W = 180 %}
+{% set H = 135 %}
+
+<frame pos="-90 67" z-index="200">
+
+  {{ ui.window('Bug reports — settings', icon='cog', x=0, y=0, w=W, h=H) }}
+
+  {{ ui.label('Configure how submitted bug reports get delivered and retained.',
+              x=4, y=-12, color='ccc', size='sm') }}
+
+  {# ── Discord webhook ──────────────────────────────────────────── #}
+  {{ ui.label('Discord webhook', x=4, y=-20, color='fff', bold=True) }}
+  {{ ui.check_box('toggle_discord', label='Enable Discord delivery',
+                  checked=discord_enabled, x=10, y=-26, size='sm') }}
+  {{ ui.label('Webhook URL', x=4, y=-34, color='fff', size='sm') }}
+  {{ ui.line_edit('webhook', value=discord_webhook_url, x=4, y=-39, width=W - 8, size='md') }}
+
+  {# ── Delivery schedule ─────────────────────────────────────────── #}
+  {{ ui.label('Delivery schedule', x=4, y=-50, color='fff', bold=True) }}
+  {{ ui.radio_group('mode', delivery_modes, selected=delivery_mode,
+                    x=10, y=-56, gap=6, orient='v', size='sm') }}
+
+  {# ── Local retention ───────────────────────────────────────────── #}
+  {{ ui.label('Local retention', x=4, y=-88, color='fff', bold=True) }}
+  {{ ui.check_box('toggle_store', label='Store local copy in DB table (recommended)',
+                  checked=store_locally, x=10, y=-94, size='sm') }}
+  {{ ui.label('If disabled, reports are deleted right after Discord delivery succeeds.',
+              x=10, y=-99, color='888', size='sm') }}
+
+  {# ── Stats row ────────────────────────────────────────────────── #}
+  {{ ui.label('Pending delivery: ' ~ pending_count ~ '   ·   Stored: ' ~ total_count
+              ~ '   ·   Last delivery: ' ~ (last_delivery_s or 'never'),
+              x=4, y=-110, color='aaa', size='sm') }}
+
+  {# ── status + actions ─────────────────────────────────────────── #}
+  {{ ui.label(status, x=4, y=-(H - 5), color=status_color, size='sm') }}
+
+  {{ ui.push_button('test', 'Test', icon='check',
+                    x=W - 56, y=-(H - 6), variant='ghost', halign='right', size='md') }}
+  {{ ui.push_button('flush', 'Send now', icon='reload',
+                    x=W - 32, y=-(H - 6), variant='primary', halign='right', size='md') }}
+  {{ ui.push_button('save', 'Save', icon='save',
+                    x=W - 4, y=-(H - 6), variant='success', halign='right', size='md') }}
+
+  {{ ui.hover_script() }}
+</frame>

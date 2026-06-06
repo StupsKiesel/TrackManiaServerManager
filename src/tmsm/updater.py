@@ -21,6 +21,52 @@ def _repo_root() -> Path | None:
     return None
 
 
+def get_uncommitted_changes() -> str:
+    """Return `git status --porcelain` output for tracked, content-modified
+    files in the source checkout (empty string when clean).
+
+    Mirrors the guard inside :func:`update_tmsm` so the TUI can offer to
+    discard them before invoking the update.
+    """
+    repo = _repo_root()
+    if repo is None:
+        return ""
+    try:
+        diff = subprocess.run(
+            ["git", "-c", "core.fileMode=false", "diff", "--quiet", "HEAD"],
+            cwd=str(repo), check=False,
+        )
+        if diff.returncode == 0:
+            return ""
+        info = subprocess.run(
+            ["git", "-c", "core.fileMode=false", "status",
+             "--porcelain", "--untracked-files=no"],
+            cwd=str(repo), capture_output=True, text=True, check=False,
+        )
+        return info.stdout or ""
+    except OSError:
+        return ""
+
+
+def discard_uncommitted_changes(log: Log | None = None) -> None:
+    """Hard-reset tracked, content-modified files in the source checkout.
+
+    Untracked files are left alone (consistent with the updater's policy
+    of allowing local notes/scripts in the tree)."""
+    repo = _repo_root()
+    if repo is None:
+        raise RuntimeError("No git checkout to reset.")
+    cmd = ["git", "-c", "core.fileMode=false", "checkout", "--", "."]
+    if log is not None:
+        _run(cmd, repo, log)
+        return
+    r = subprocess.run(cmd, cwd=str(repo), capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"git checkout failed (exit {r.returncode}): {r.stderr.strip() or r.stdout.strip()}"
+        )
+
+
 def check_update_available(timeout: float = 10.0) -> bool:
     """Return True if the upstream branch has commits we don't have locally.
 

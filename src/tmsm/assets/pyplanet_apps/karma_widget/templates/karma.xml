@@ -21,34 +21,53 @@
        {% set info_left = left_btn_x + btn_size + info_inset %}
        {% set info_right = right_btn_x - info_inset %}
 
-       <quad pos="{{ left_btn_x }} -{{ btn_y }}" z-index="41" size="{{ btn_size }} {{ btn_size }}" bgcolor="2f8f4488" />
+       <quad pos="{{ left_btn_x }} -{{ btn_y }}" z-index="41" size="{{ btn_size }} {{ btn_size }}" bgcolor="c7444488" />
   <label pos="{{ left_btn_x + (btn_size * 0.5) }} -{{ btn_y + (btn_size * 0.5) }}" z-index="42" halign="center" valign="center2"
-         text="$fff&#xf164;" textsize="1.1" textfont="GameFont" />
+         text="$fff&#xf165;" textsize="1.1" textfont="GameFont" />
   <quad pos="{{ left_btn_x }} -{{ btn_y }}" z-index="43" size="{{ btn_size }} {{ btn_size }}"
-         bgcolor="0000" bgcolorfocus="8ff2"
-         focusareacolor1="8ff2" focusareacolor2="4cf2"
-         action="{{ id }}__vote_up" />
+         bgcolor="0000" bgcolorfocus="f882"
+         focusareacolor1="f882" focusareacolor2="f442"
+         action="{{ id }}__vote_down" />
 
   <label pos="{{ info_left }} -{{ y1 + (row1_h * 0.5) }}" z-index="42" halign="left" valign="center2"
          text="$dddKARMA" textsize="1.0" textfont="GameFontBlack" />
   <label pos="{{ info_right }} -{{ y1 + (row1_h * 0.5) }}" z-index="42" halign="right" valign="center2"
          text="$fff{{ percent_text|default('+0.0%') }}" textsize="1.08" textfont="GameFontBlack" />
 
-       <quad pos="{{ right_btn_x }} -{{ btn_y }}" z-index="41" size="{{ btn_size }} {{ btn_size }}" bgcolor="c7444488" />
+       <quad pos="{{ right_btn_x }} -{{ btn_y }}" z-index="41" size="{{ btn_size }} {{ btn_size }}" bgcolor="2f8f4488" />
   <label pos="{{ right_btn_x + (btn_size * 0.5) }} -{{ btn_y + (btn_size * 0.5) }}" z-index="42" halign="center" valign="center2"
-         text="$fff&#xf165;" textsize="1.1" textfont="GameFont" />
+         text="$fff&#xf164;" textsize="1.1" textfont="GameFont" />
   <quad pos="{{ right_btn_x }} -{{ btn_y }}" z-index="43" size="{{ btn_size }} {{ btn_size }}"
-         bgcolor="0000" bgcolorfocus="f882"
-         focusareacolor1="f882" focusareacolor2="f442"
-         action="{{ id }}__vote_down" />
+         bgcolor="0000" bgcolorfocus="8ff2"
+         focusareacolor1="8ff2" focusareacolor2="4cf2"
+         action="{{ id }}__vote_up" />
 
   {# row 2: full-width progress bar #}
   {% set bar_x = pad %}
   {% set bar_w = widget_w - (pad * 2) %}
+  {% set bar_mid_w = bar_w / 2.0 %}
+  {% set pct = percent|default(0)|float %}
+  {% set pct_clamped = 100.0 if pct > 100.0 else (-100.0 if pct < -100.0 else pct) %}
+  {% set fill_abs = (pct_clamped|abs) / 100.0 %}
+  {% set fill_w = bar_mid_w * fill_abs %}
+  {% set fill_x = (bar_x + bar_mid_w) if pct_clamped >= 0 else (bar_x + bar_mid_w - fill_w) %}
+  {% set fill_color = '44cc88ee' if pct_clamped >= 0 else 'ff6666ee' %}
   {% set bar_h = row2_h * 0.66 %}
   {% set bar_y = y2 + ((row2_h - bar_h) * 0.5) %}
+       {% set tick_w = 0.64 %}
+       {% set tick_h = bar_h + 0.70 %}
+       {% set tick_y = bar_y - ((tick_h - bar_h) * 0.5) %}
+
+  {# Neutral background plus subtle side tints to communicate sign. #}
   <quad pos="{{ bar_x }} -{{ bar_y }}" z-index="41" size="{{ bar_w }} {{ bar_h }}" bgcolor="2228" />
-  <quad pos="{{ bar_x }} -{{ bar_y }}" z-index="42"
-        size="{{ (bar_w * (bar_pct|default(0)|float) / 100.0)|round(2) }} {{ bar_h }}"
-        bgcolor="44cc88ee" />
+  <quad pos="{{ bar_x }} -{{ bar_y }}" z-index="41" size="{{ bar_mid_w }} {{ bar_h }}" bgcolor="88333333" />
+  <quad pos="{{ bar_x + bar_mid_w }} -{{ bar_y }}" z-index="41" size="{{ bar_mid_w }} {{ bar_h }}" bgcolor="33883333" />
+
+  {# Center zero marker. #}
+       <quad pos="{{ bar_x + bar_mid_w - (tick_w * 0.5) }} -{{ tick_y }}" z-index="43" size="{{ tick_w }} {{ tick_h }}" bgcolor="ffffffff" />
+
+  {# Diverging fill: grows from center toward sign direction. #}
+  <quad pos="{{ fill_x }} -{{ bar_y }}" z-index="42"
+         size="{{ fill_w|round(2) }} {{ bar_h }}"
+         bgcolor="{{ fill_color }}" />
 {% endcall %}

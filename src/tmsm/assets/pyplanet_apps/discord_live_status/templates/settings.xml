@@ -1,0 +1,33 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{% set W = 172 %}
+{% set H = 102 %}
+
+<frame pos="-86 52" z-index="200">
+  {{ ui.window('Discord Live — settings', icon='cog', x=0, y=0, w=W, h=H) }}
+
+  {{ ui.check_box('toggle_enabled', label='Enable webhook updates', checked=enabled,
+                  x=8, y=-14, size='sm') }}
+
+  {{ ui.label('Webhook URL', x=4, y=-24, color='fff', size='sm') }}
+  {{ ui.line_edit('webhook', value=webhook, x=4, y=-30, width=W - 8, size='md') }}
+
+  {{ ui.label('Map message id: ' ~ (map_message_id or '(not set)'),
+              x=4, y=-42, color='aaa', size='sm') }}
+  {{ ui.label('Players message id: ' ~ (players_message_id or '(not set)'),
+              x=4, y=-47, color='aaa', size='sm') }}
+
+  {{ ui.label('Map message updates on map changes. Player list updates on connect/disconnect.',
+              x=4, y=-56, color='888', size='sm') }}
+
+  {{ ui.label(status, x=4, y=-(H - 5), color=status_color, size='sm') }}
+
+  {{ ui.push_button('reset_ids', 'Reset IDs', icon='trash',
+                    x=W - 74, y=-(H - 6), variant='ghost', halign='right', size='md') }}
+  {{ ui.push_button('sync', 'Sync now', icon='reload',
+                    x=W - 40, y=-(H - 6), variant='primary', halign='right', size='md') }}
+  {{ ui.push_button('save', 'Save', icon='save',
+                    x=W - 4, y=-(H - 6), variant='success', halign='right', size='md') }}
+
+  {{ ui.hover_script() }}
+</frame>

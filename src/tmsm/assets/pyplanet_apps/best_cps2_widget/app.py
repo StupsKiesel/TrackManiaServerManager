@@ -32,8 +32,10 @@ class BestCps2Widget(WidgetAppBase):
     WIDGET_REFRESH_SECONDS = 0.0
     WIDGET_HIDE_NAMED = ["in_menu"]
     WIDGET_DRIVE_MODE = DriveMode.FIXED
-    WIDGET_ANIM_DIR = AnimDir.NONE
-    WIDGET_ANIM_DURATION_MS = 0
+    # Keep a concrete direction so widget_engine's disabled/active toggle
+    # can move this widget out/in reliably.
+    WIDGET_ANIM_DIR = AnimDir.LEFT
+    WIDGET_ANIM_DURATION_MS = 250
     WIDGET_ANIM_IN_DELAY_MS = 0
     WIDGET_ANIM_OUT_DELAY_MS = 0
 
@@ -133,7 +135,14 @@ class BestCps2Widget(WidgetAppBase):
         if cp_idx <= 0:
             return
 
-        split_raw = raw.get("racetime", race_time)
+        prev_cp = int(self._player_cp.get(login, 0) or 0)
+        if cp_idx != prev_cp:
+            self._player_cp[login] = cp_idx
+            self._queue_refresh()
+
+        split_raw = raw.get("racetime")
+        if split_raw in (None, ""):
+            split_raw = raw.get("checkpointtime", raw.get("cp_time", race_time))
         try:
             split_ms = int(split_raw or 0)
         except (TypeError, ValueError):
@@ -141,7 +150,6 @@ class BestCps2Widget(WidgetAppBase):
         if split_ms <= 0:
             return
 
-        self._player_cp[login] = cp_idx
         current = self._best_by_cp.get(cp_idx)
         if current is None or split_ms < int(current.get("time", 0) or 0):
             self._best_by_cp[cp_idx] = {

@@ -69,6 +69,15 @@ class LiveRankingsWidget(WidgetAppBase):
         self._queue_refresh()
         return True
 
+    def _is_multi_lap_map(self) -> bool:
+        current_map = getattr(self.instance.map_manager, "current_map", None)
+        if current_map is None:
+            return False
+        try:
+            return int(getattr(current_map, "num_laps", 0) or 0) > 1
+        except (TypeError, ValueError):
+            return False
+
     async def on_stop(self) -> None:
         if self._queued_refresh is not None:
             self._queued_refresh.cancel()
@@ -145,6 +154,10 @@ class LiveRankingsWidget(WidgetAppBase):
         self._sync_map_uid()
         if section == "PreEndRound":
             return
+        # On multi-lap maps this feed can represent best lap times; keep
+        # live records based on end-race callbacks only.
+        if self._is_multi_lap_map():
+            return
         changed = False
         for item in list(players or []):
             if not isinstance(item, dict):
@@ -175,7 +188,7 @@ class LiveRankingsWidget(WidgetAppBase):
         login = str(getattr(player, "login", "") or "")
         nickname = str(getattr(player, "nickname", login) or login)
         try:
-            score = int(lap_time or race_time or 0)
+            score = int(race_time or lap_time or 0)
         except (TypeError, ValueError):
             score = 0
         if self._upsert_best(login, nickname, score):

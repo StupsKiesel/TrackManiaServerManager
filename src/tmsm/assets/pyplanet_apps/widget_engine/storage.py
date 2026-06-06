@@ -348,6 +348,21 @@ class WidgetStorage:
             return
         self._settings[key] = value
 
+    async def setting_delete(self, key: str) -> None:
+        db = self._db
+        if db is None:
+            return
+        try:
+            await WeSetting.objects.execute(
+                WeSetting.delete().where(WeSetting.key == key)
+            )
+        except Exception:
+            logger.exception(
+                "widget_engine.storage: setting_delete '%s' failed", key,
+            )
+            return
+        self._settings.pop(key, None)
+
     # ── schema / introspection ────────────────────────────────────────
 
     @property

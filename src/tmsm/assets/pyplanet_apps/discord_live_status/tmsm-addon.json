@@ -1,0 +1,4 @@
+{
+  "description": "Discord webhook live status: keeps two persistent messages updated (current map + current players).",
+  "author": "tmsm"
+}

@@ -25,6 +25,7 @@ from pyplanet.apps.tmsm.widget_engine.registry import (
     AnimDir,
     Animation,
     GbxReplacement,
+    Phase,
     WidgetEntry,
 )
 from pyplanet.utils import times
@@ -111,6 +112,16 @@ class TabScoreboard(AppConfig):
                 manialink_id=_MANIALINK_ID,
                 hide_ui_modules=_HIDE_UI_MODULES,
                 hotkey="Tab",
+            ),
+            # The podium_scoreboard_widget owns the screen during the
+            # podium phase; suppress the hold-to-show TAB scoreboard there
+            # so the two manialinks don't fight over Race_ScoresTable.
+            visible_phases=(
+                Phase.LOADING_MAP,
+                Phase.WARMUP,
+                Phase.PRE_RACE,
+                Phase.IN_RACE,
+                Phase.POST_RACE,
             ),
         )
         try:

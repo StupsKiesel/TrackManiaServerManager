@@ -18,11 +18,11 @@ class VotingView(BaseView):
 
     async def get_context_data(self):
         ctx = await super().get_context_data()
-        ctx.update(self.app.view_context(None))
+        ctx.update(await self.app.view_context(None))
         return ctx
 
     async def get_per_player_data(self, login):
-        return self.app.view_context(login)
+        return await self.app.view_context(login)
 
 
 class VotingWidgetView(BaseView):

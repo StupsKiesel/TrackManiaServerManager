@@ -42,6 +42,8 @@ PHASE_LABEL: dict[Phase, str] = {
 }
 
 ROWS_PER_PAGE = 10
+REPLACEMENTS_PER_PAGE = 4
+UI_MODULES_PER_PAGE = 6
 
 
 class WidgetEngineManagerView(BaseView):
@@ -63,6 +65,9 @@ class WidgetEngineManagerView(BaseView):
             st["picker_open"] = False
             st["confirm_remove"] = None
             st["settings_open"] = False
+            st["replacements_open"] = False
+            st["ui_modules_editor_open"] = False
+            st["ui_modules_editor_key"] = None
         await super()._on_close(player)
 
     def __init__(self, app: "WidgetsApp") -> None:
@@ -107,6 +112,16 @@ class WidgetEngineManagerView(BaseView):
                 "settings_open": False,
                 # Editor "copy effective to..." combo open state.
                 "copy_combo_open": False,
+                # Replacements sub-view tab: 'active' | 'discover' | 'catalog'
+                "replacements_tab": "active",
+                # Pagination cursor for the Active tab.
+                "replacements_page": 1,
+                # UI modules editor (overlay launched from a row).
+                "ui_modules_editor_open": False,
+                "ui_modules_editor_key": None,
+                "ui_modules_editor_selected": set(),
+                "ui_modules_editor_input": "",
+                "ui_modules_editor_page": 1,
             }
             self._state[login] = st
         return st
@@ -154,19 +169,319 @@ class WidgetEngineManagerView(BaseView):
         return counts
 
     def _build_replacements_rows(self, login: str) -> list[dict[str, Any]]:
-        """Per-login rows for the Replacements panel: one entry per
+        """Per-login rows for the Replacements 'Active' tab: one entry per
         installed widget that overrides a GBX manialink id."""
         rows: list[dict[str, Any]] = []
         for entry in self._replacement_entries():
             repl = entry.gbx_replace
+            ui_modules = list(self.host.get_effective_hide_ui_modules(entry.key))
+            overridden = self.host.has_ui_modules_override(entry.key)
+            enabled = bool(self.host.is_replacement_enabled(login, entry.key))
             rows.append({
                 "key": entry.key,
-                "name": entry.name,
-                "manialink_id": repl.manialink_id,
-                "hide_ui_modules": list(repl.hide_ui_modules or ()),
-                "enabled": self.host.is_replacement_enabled(login, entry.key),
+                "name": entry.name or entry.key,
+                "description": entry.description or "",
+                "icon": entry.icon or "exchange-alt",
+                "author": entry.author or "",
+                "version": entry.version or "",
+                "manialink_id": repl.manialink_id or "",
+                "ui_modules": ui_modules,
+                "ui_modules_count": len(ui_modules),
+                "ui_modules_overridden": overridden,
+                "hotkey": repl.hotkey or "",
+                "chrome": bool(repl.chrome),
+                "connect_delay_s": float(repl.connect_delay_s or 0.0),
+                # Source kind: every installed replacement currently uses a
+                # manialink id as its primary target. The list of UI modules
+                # is auxiliary (hidden alongside).
+                "target_kind": "manialink_id",
+                # Scope: the engine stores per-login disabled sets, so the
+                # toggle is per-player. We surface this for clarity.
+                "scope": "per-player",
+                "enabled": enabled,
+                "status_label": "ENABLED" if enabled else "DISABLED",
+                "status_variant": "success" if enabled else "ghost",
             })
         return rows
+
+    # Read-only catalog of replacement targets known to the engine. This is
+    # a curated reference admins can browse to learn which ids exist.
+    # Discovery (live observation) will populate the Discover tab in a
+    # follow-up iteration; this catalog stays static.
+    _CATALOG: tuple[dict[str, Any], ...] = (
+        {
+            "group": "Race UI Modules",
+            "entries": (
+                {"id": "Race_ScoresTable",  "desc": "Default round/team scoreboard (TAB)."},
+                {"id": "Race_ScoresTable2", "desc": "Alternate scoreboard variant (some modes)."},
+                {"id": "Race_ScoresTable3", "desc": "TimeAttack scoreboard variant."},
+                {"id": "Race_Chrono",       "desc": "Race timer / chrono HUD."},
+                {"id": "Race_Checkpoint",   "desc": "Checkpoint counter / split panel."},
+                {"id": "Race_RespawnHelper", "desc": "Respawn-to-checkpoint helper."},
+                {"id": "Race_Countdown",    "desc": "Pre-race countdown panel."},
+                {"id": "Race_Record",       "desc": "Personal best / record display."},
+                {"id": "Race_LapsCounter",  "desc": "Lap counter HUD."},
+                {"id": "Race_DisplayMessage", "desc": "Generic race message banner."},
+                {"id": "Race_BigMessage",   "desc": "Large announcement banner."},
+                {"id": "Race_HUD",          "desc": "Aggregate race HUD container."},
+            ),
+        },
+        {
+            "group": "Round / Cup UI Modules",
+            "entries": (
+                {"id": "Rounds_BigMessage",   "desc": "Round-mode big message banner."},
+                {"id": "Rounds_SmallMessage", "desc": "Round-mode small message banner."},
+            ),
+        },
+        {
+            "group": "Manialinks (PyPlanet / TMSM)",
+            "entries": (
+                {"id": "<view-uuid>", "desc": "PyPlanet views use random UUID ids by default — only stable when an addon sets an explicit id."},
+            ),
+        },
+    )
+
+    def _build_catalog_groups(self) -> list[dict[str, Any]]:
+        installed_ml_ids: set[str] = set()
+        installed_ui_modules: set[str] = set()
+        for entry in self._replacement_entries():
+            repl = entry.gbx_replace
+            if repl.manialink_id:
+                installed_ml_ids.add(str(repl.manialink_id))
+            for mod in (repl.hide_ui_modules or ()):
+                installed_ui_modules.add(str(mod))
+
+        out: list[dict[str, Any]] = []
+        for grp in self._CATALOG:
+            items = []
+            for it in grp["entries"]:
+                target_id = str(it["id"])
+                in_use = (
+                    target_id in installed_ml_ids
+                    or target_id in installed_ui_modules
+                )
+                items.append({
+                    "id": target_id,
+                    "desc": str(it.get("desc", "")),
+                    "in_use": in_use,
+                })
+            out.append({"group": grp["group"], "entries": items})
+        return out
+
+    def _build_discover_rows(self) -> list[dict[str, Any]]:
+        # Live discovery is a follow-up; surface an empty result for now so
+        # the UI shape is stable.
+        return []
+
+    # ---- ui modules editor (overlay) ---------------------------------
+
+    def _ui_modules_input_key(self) -> str:
+        return f"entry_{self.id}__ui_modules_editor__input"
+
+    async def _ui_modules_editor_open(self, login: str, key: str) -> None:
+        entry = self.host._entries.get(key)
+        if entry is None or not entry.gbx_replace:
+            return
+        st = self._ensure_state(login)
+        st["replacements_open"] = False
+        st["ui_modules_editor_open"] = True
+        st["ui_modules_editor_key"] = key
+        st["ui_modules_editor_selected"] = set(
+            self.host.get_effective_hide_ui_modules(key)
+        )
+        st["ui_modules_editor_input"] = ""
+        st["ui_modules_editor_page"] = 1
+        await self.display(player_logins=[login])
+
+    def _ui_modules_editor_close(self, login: str) -> None:
+        st = self._ensure_state(login)
+        st["ui_modules_editor_open"] = False
+        st["ui_modules_editor_key"] = None
+        st["ui_modules_editor_selected"] = set()
+        st["ui_modules_editor_input"] = ""
+        st["ui_modules_editor_page"] = 1
+        # Return to the replacements panel where the editor was launched.
+        st["replacements_open"] = True
+
+    def _capture_ui_modules_input(self, login: str, values: dict) -> None:
+        if not isinstance(values, dict):
+            return
+        st = self._ensure_state(login)
+        raw = values.get(self._ui_modules_input_key())
+        if raw is None:
+            return
+        st["ui_modules_editor_input"] = str(raw or "").strip()
+
+    async def _ui_modules_editor_toggle(self, login: str, module_id: str) -> None:
+        st = self._ensure_state(login)
+        if not st.get("ui_modules_editor_open"):
+            return
+        selected = st.setdefault("ui_modules_editor_selected", set())
+        if module_id in selected:
+            selected.discard(module_id)
+        else:
+            selected.add(module_id)
+        await self.display(player_logins=[login])
+
+    async def _ui_modules_editor_add_custom(self, login: str, values: dict) -> None:
+        st = self._ensure_state(login)
+        if not st.get("ui_modules_editor_open"):
+            return
+        self._capture_ui_modules_input(login, values)
+        candidate = str(st.get("ui_modules_editor_input") or "").strip()
+        if not candidate:
+            await self.display(player_logins=[login])
+            return
+        selected = st.setdefault("ui_modules_editor_selected", set())
+        selected.add(candidate)
+        st["ui_modules_editor_input"] = ""
+        await self.display(player_logins=[login])
+
+    async def _ui_modules_editor_save(self, login: str, values: dict) -> None:
+        st = self._ensure_state(login)
+        if not st.get("ui_modules_editor_open"):
+            return
+        key = st.get("ui_modules_editor_key")
+        if not key:
+            self._ui_modules_editor_close(login)
+            await self.display(player_logins=[login])
+            return
+        # Pull the entry one last time so a typed-but-not-added value is
+        # not silently dropped on save.
+        self._capture_ui_modules_input(login, values)
+        pending = str(st.get("ui_modules_editor_input") or "").strip()
+        if pending:
+            st.setdefault("ui_modules_editor_selected", set()).add(pending)
+            st["ui_modules_editor_input"] = ""
+        selected = sorted(st.get("ui_modules_editor_selected") or ())
+        await self.host.set_ui_modules_override(key, list(selected))
+        self._ui_modules_editor_close(login)
+        await self.display(player_logins=[login])
+
+    async def _ui_modules_editor_reset(self, login: str) -> None:
+        st = self._ensure_state(login)
+        key = st.get("ui_modules_editor_key")
+        if key:
+            await self.host.set_ui_modules_override(key, None)
+        self._ui_modules_editor_close(login)
+        await self.display(player_logins=[login])
+
+    async def _ui_modules_editor_cancel(self, login: str) -> None:
+        self._ui_modules_editor_close(login)
+        await self.display(player_logins=[login])
+
+    async def _ui_modules_editor_pagination(self, login: str, verb: str) -> None:
+        st = self._ensure_state(login)
+        if not st.get("ui_modules_editor_open"):
+            return
+        flat = self._ui_modules_flat_items(st)
+        total = len(flat)
+        total_pages = max(
+            1, (total + UI_MODULES_PER_PAGE - 1) // UI_MODULES_PER_PAGE,
+        )
+        cur = max(1, int(st.get("ui_modules_editor_page", 1) or 1))
+        new = cur
+        if verb == "first":
+            new = 1
+        elif verb == "prev":
+            new = max(1, cur - 1)
+        elif verb == "next":
+            new = min(total_pages, cur + 1)
+        elif verb == "last":
+            new = total_pages
+        elif verb.startswith("page__"):
+            try:
+                new = max(1, min(total_pages, int(verb[len("page__"):])))
+            except ValueError:
+                return
+        if new == cur:
+            return
+        st["ui_modules_editor_page"] = new
+        await self.display(player_logins=[login])
+
+    def _ui_modules_flat_items(self, st: dict) -> list[dict[str, Any]]:
+        key = st.get("ui_modules_editor_key") or ""
+        entry = self.host._entries.get(key) if key else None
+        defaults = tuple(entry.gbx_replace.hide_ui_modules or ()) if entry and entry.gbx_replace else ()
+        selected: set[str] = set(st.get("ui_modules_editor_selected") or ())
+        flat: list[dict[str, Any]] = []
+        for grp in self._CATALOG:
+            if "UI Modules" not in grp["group"]:
+                continue
+            for it in grp["entries"]:
+                mid = str(it["id"])
+                flat.append({
+                    "group": grp["group"],
+                    "id": mid,
+                    "desc": str(it.get("desc", "")),
+                    "checked": mid in selected,
+                    "is_default": mid in defaults,
+                })
+        return flat
+
+    def _ui_modules_catalog_ids(self) -> set[str]:
+        out: set[str] = set()
+        for grp in self._CATALOG:
+            if "UI Modules" not in grp["group"]:
+                continue
+            for it in grp["entries"]:
+                out.add(str(it["id"]))
+        return out
+
+    def _build_ui_modules_editor_ctx(self, login: str) -> dict[str, Any]:
+        st = self._state.get(login) or {}
+        if not st.get("ui_modules_editor_open"):
+            return {"open": False}
+        key = st.get("ui_modules_editor_key") or ""
+        entry = self.host._entries.get(key) if key else None
+        if entry is None or not entry.gbx_replace:
+            return {"open": False}
+        defaults = tuple(entry.gbx_replace.hide_ui_modules or ())
+        selected: set[str] = set(st.get("ui_modules_editor_selected") or ())
+        overridden = self.host.has_ui_modules_override(key)
+        # Flat paginated list of catalog UI modules (manialink ids are
+        # not valid `UIModules.SetProperties` targets so they are excluded).
+        flat = self._ui_modules_flat_items(st)
+        catalog_ids = self._ui_modules_catalog_ids()
+        total = len(flat)
+        total_pages = max(
+            1, (total + UI_MODULES_PER_PAGE - 1) // UI_MODULES_PER_PAGE,
+        )
+        page = max(1, int(st.get("ui_modules_editor_page", 1) or 1))
+        if page > total_pages:
+            page = total_pages
+            st["ui_modules_editor_page"] = page
+        start = (page - 1) * UI_MODULES_PER_PAGE
+        page_items = flat[start:start + UI_MODULES_PER_PAGE]
+        # Tag each page item with a `group_header` flag so the template
+        # can render a header strip when the group changes.
+        prev_group = None
+        for it in page_items:
+            it["group_header"] = (it["group"] != prev_group)
+            prev_group = it["group"]
+        # Selected ids that are not part of the curated catalog get
+        # surfaced as a separate "custom" section so the user can remove
+        # them.
+        custom_ids = sorted(selected - catalog_ids)
+        return {\
+            "open": True,\
+            "key": key,\
+            "name": entry.name or key,\
+            "manialink_id": entry.gbx_replace.manialink_id or "",\
+            "defaults": list(defaults),\
+            "defaults_count": len(defaults),\
+            "selected": sorted(selected),\
+            "selected_count": len(selected),\
+            "overridden": overridden,\
+            "page_items": page_items,\
+            "page": page,\
+            "total_pages": total_pages,\
+            "total_items": total,\
+            "per_page": UI_MODULES_PER_PAGE,\
+            "custom_ids": custom_ids,\
+            "input": str(st.get("ui_modules_editor_input") or ""),\
+            "input_field": "ui_modules_editor__input",\
+        }
 
     async def _on_replacement_toggle(self, login: str, key: str) -> None:
         entry = self.host._entries.get(key)
@@ -355,6 +670,17 @@ class WidgetEngineManagerView(BaseView):
             ),
         }
 
+        # Replacements pagination (Active tab).
+        rp_all_rows = self._build_replacements_rows(login)
+        rp_total = len(rp_all_rows)
+        rp_total_pages = max(1, (rp_total + REPLACEMENTS_PER_PAGE - 1) // REPLACEMENTS_PER_PAGE)
+        rp_page = max(1, int(st.get("replacements_page", 1) or 1))
+        if rp_page > rp_total_pages:
+            rp_page = rp_total_pages
+            st["replacements_page"] = rp_page
+        rp_start = (rp_page - 1) * REPLACEMENTS_PER_PAGE
+        rp_page_rows = rp_all_rows[rp_start:rp_start + REPLACEMENTS_PER_PAGE]
+
         return {
             "phases": phases_ctx,
             "selected_phase_key": phase.value,
@@ -380,7 +706,19 @@ class WidgetEngineManagerView(BaseView):
             "settings_open": bool(st.get("settings_open")),
             "engine_settings": engine_settings,
             "replacements_open": bool(st.get("replacements_open")),
-            "replacements_rows": self._build_replacements_rows(login),
+            "replacements_tab": str(st.get("replacements_tab") or "active"),
+            "replacements_tabs": [
+                {"key": "active",   "label": "Active"},
+                {"key": "discover", "label": "Discover"},
+                {"key": "catalog",  "label": "Catalog"},
+            ],
+            "replacements_rows": rp_page_rows,
+            "replacements_page": rp_page,
+            "replacements_total_pages": rp_total_pages,
+            "replacements_total": rp_total,
+            "replacements_catalog": self._build_catalog_groups(),
+            "replacements_discover": self._build_discover_rows(),
+            "ui_modules_editor": self._build_ui_modules_editor_ctx(login),
         }
     # ---- actions ------------------------------------------------------
 
@@ -415,15 +753,64 @@ class WidgetEngineManagerView(BaseView):
             if action == "replacements__open":
                 st = self._ensure_state(login)
                 st["replacements_open"] = True
+                if not st.get("replacements_tab"):
+                    st["replacements_tab"] = "active"
                 await self.display(player_logins=[login])
+                return
+            if action.startswith("replacements__tab__"):
+                tab = action[len("replacements__tab__"):]
+                if tab in {"active", "discover", "catalog"}:
+                    st = self._ensure_state(login)
+                    st["replacements_tab"] = tab
+                    await self.display(player_logins=[login])
+                return
+            if action.startswith("replacements__pag__"):
+                await self._on_replacements_pagination(
+                    login, action[len("replacements__pag__"):]
+                )
+                return
+            if action.startswith("ui_modules_editor__"):
+                # ui_modules_editor__toggle__<id>
+                # ui_modules_editor__remove__<id>
+                # ui_modules_editor__pag__first|prev|next|last|page__N
+                # ui_modules_editor__add | __save | __reset | __cancel
+                rest = action[len("ui_modules_editor__"):]
+                if rest.startswith("toggle__"):
+                    await self._ui_modules_editor_toggle(login, rest[len("toggle__"):])
+                    return
+                if rest.startswith("remove__"):
+                    await self._ui_modules_editor_toggle(login, rest[len("remove__"):])
+                    return
+                if rest.startswith("pag__"):
+                    await self._ui_modules_editor_pagination(
+                        login, rest[len("pag__"):]
+                    )
+                    return
+                if rest == "add":
+                    await self._ui_modules_editor_add_custom(login, values or {})
+                    return
+                if rest == "save":
+                    await self._ui_modules_editor_save(login, values or {})
+                    return
+                if rest == "reset":
+                    await self._ui_modules_editor_reset(login)
+                    return
+                if rest == "cancel":
+                    await self._ui_modules_editor_cancel(login)
+                    return
                 return
             if action.startswith("replacements__row__"):
                 # replacements__row__<key>__toggle
                 # replacements__row__<key>__edit
+                # replacements__row__<key>__ui_modules
                 rest = action[len("replacements__row__"):]
                 if rest.endswith("__toggle"):
                     key = rest[:-len("__toggle")]
                     await self._on_replacement_toggle(login, key)
+                    return
+                if rest.endswith("__ui_modules"):
+                    key = rest[:-len("__ui_modules")]
+                    await self._ui_modules_editor_open(login, key)
                     return
                 if rest.endswith("__edit"):
                     key = rest[:-len("__edit")]
@@ -449,6 +836,12 @@ class WidgetEngineManagerView(BaseView):
             if action == "_crumb__widget_engine":
                 # Picker / editor / settings breadcrumb back to the manager.
                 st = self._ensure_state(login)
+                if st.get("ui_modules_editor_open"):
+                    # Step back to the replacements panel rather than the
+                    # main manager — the user came from there.
+                    self._ui_modules_editor_close(login)
+                    await self.display(player_logins=[login])
+                    return
                 if st.get("editor_open"):
                     await self._editor_close(login)
                     return
@@ -463,6 +856,17 @@ class WidgetEngineManagerView(BaseView):
                 if st.get("replacements_open"):
                     st["replacements_open"] = False
                     await self.display(player_logins=[login])
+                return
+            if action == "_crumb__replacements":
+                # Inside the UI modules overlay, "Replacements" crumb
+                # returns to the panel without saving the draft.
+                st = self._ensure_state(login)
+                if st.get("ui_modules_editor_open"):
+                    self._ui_modules_editor_close(login)
+                    await self.display(player_logins=[login])
+                return
+            if action == "_crumb__ui_modules":
+                # Current-page crumb: no-op.
                 return
             if action.startswith("picker__pag__"):
                 await self._on_picker_pagination(login, action[len("picker__pag__"):])
@@ -593,6 +997,30 @@ class WidgetEngineManagerView(BaseView):
         if new == cur:
             return
         st["page"][phase.value] = new
+        await self.display(player_logins=[login])
+
+    async def _on_replacements_pagination(self, login: str, verb: str) -> None:
+        st = self._ensure_state(login)
+        total = len(self._build_replacements_rows(login))
+        total_pages = max(1, (total + REPLACEMENTS_PER_PAGE - 1) // REPLACEMENTS_PER_PAGE)
+        cur = max(1, int(st.get("replacements_page", 1) or 1))
+        new = cur
+        if verb == "first":
+            new = 1
+        elif verb == "prev":
+            new = max(1, cur - 1)
+        elif verb == "next":
+            new = min(total_pages, cur + 1)
+        elif verb == "last":
+            new = total_pages
+        elif verb.startswith("page__"):
+            try:
+                new = max(1, min(total_pages, int(verb[len("page__"):])))
+            except ValueError:
+                return
+        if new == cur:
+            return
+        st["replacements_page"] = new
         await self.display(player_logins=[login])
 
     async def _on_row_action(self, login: str, key: str, verb: str) -> None:

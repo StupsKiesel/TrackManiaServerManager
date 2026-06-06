@@ -421,7 +421,7 @@ class App_Voting(AppConfig):
         # can be ignored safely.
         return
 
-    def view_context(self, login: str | None) -> dict[str, Any]:
+    async def view_context(self, login: str | None) -> dict[str, Any]:
         vote = self._active_vote if isinstance(self._active_vote, dict) else None
         active = vote is not None
 
@@ -465,7 +465,9 @@ class App_Voting(AppConfig):
         is_operator = False
         if login:
             try:
-                player = self.instance.player_manager.get_player(login=login)
+                player = await self.instance.player_manager.get_player(
+                    login=login, lock=False,
+                )
             except Exception:
                 player = None
             if player is not None:

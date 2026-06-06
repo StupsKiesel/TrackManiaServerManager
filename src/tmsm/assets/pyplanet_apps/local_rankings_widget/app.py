@@ -13,6 +13,8 @@ from pyplanet.apps.tmsm.widget_engine import AnimDir, DriveMode
 from pyplanet.apps.tmsm.widget_engine.widget_base import WidgetAppBase
 from pyplanet.utils import times
 
+from .storage import LocalRankingsStorage
+
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,13 @@ class LocalRankingsWidget(WidgetAppBase):
         super().__init__(*args, **kwargs)
         self.current_records: list[dict[str, Any]] = []
         self._queued_refresh: asyncio.Task | None = None
+        self.storage = LocalRankingsStorage(self.instance)
+
+    def _current_map_uid(self) -> str:
+        current_map = getattr(self.instance.map_manager, "current_map", None)
+        if current_map is None:
+            return ""
+        return str(getattr(current_map, "uid", "") or "")
 
     async def on_stop(self) -> None:
         if self._queued_refresh is not None:
@@ -80,6 +89,10 @@ class LocalRankingsWidget(WidgetAppBase):
 
     async def on_start(self) -> None:
         await super().on_start()
+        try:
+            await self.storage.ensure_schema()
+        except Exception:
+            logger.exception("local_rankings: storage ensure_schema failed")
         try:
             self.context.signals.listen("trackmania:scores", self._on_scores)
             self.context.signals.listen("trackmania:finish", self._on_finish)
@@ -112,8 +125,21 @@ class LocalRankingsWidget(WidgetAppBase):
         self.current_records.sort(key=lambda x: int(x.get("score", 0) or 0))
         return changed
 
+    def _is_multi_lap_map(self) -> bool:
+        current_map = getattr(self.instance.map_manager, "current_map", None)
+        if current_map is None:
+            return False
+        try:
+            return int(getattr(current_map, "num_laps", 0) or 0) > 1
+        except (TypeError, ValueError):
+            return False
+
     async def _on_scores(self, section=None, players=None, **kwargs) -> None:
         if section == "PreEndRound":
+            return
+        # On multi-lap maps score snapshots may carry lap PB values.
+        # Keep event fallback based on end-race callbacks only there.
+        if self._is_multi_lap_map():
             return
         changed = False
         for item in list(players or []):
@@ -142,31 +168,20 @@ class LocalRankingsWidget(WidgetAppBase):
         login = str(getattr(player, "login", "") or "")
         nickname = str(getattr(player, "nickname", login) or login)
         try:
-            score = int(lap_time or race_time or 0)
+            score = int(race_time or lap_time or 0)
         except (TypeError, ValueError):
             score = 0
         if self._upsert_record(login, nickname, score):
+            map_uid = self._current_map_uid()
+            if map_uid:
+                await self.storage.upsert(map_uid, login, nickname, score)
             self._queue_refresh()
 
     async def _load_current_records(self) -> list[Any]:
-        current_map = getattr(self.instance.map_manager, "current_map", None)
-        if current_map is None:
+        map_uid = self._current_map_uid()
+        if not map_uid:
             return []
-        try:
-            from pyplanet.apps.contrib.local_records.models import LocalRecord
-            from pyplanet.apps.core.maniaplanet.models import Player
-
-            query = (
-                LocalRecord.select(LocalRecord, Player)
-                .join(Player)
-                .where(LocalRecord.map_id == current_map.get_id())
-                .order_by(LocalRecord.score.asc())
-            )
-            rows = await LocalRecord.objects.execute(query)
-            return list(rows)
-        except Exception:
-            logger.exception("local_rankings: failed loading local_records rows")
-            return []
+        return await self.storage.list_for_map(map_uid)
 
     def _visible_row_capacity(self, login: str) -> int:
         """Compute visible row count from resolved widget height."""
@@ -183,73 +198,13 @@ class LocalRankingsWidget(WidgetAppBase):
         fit = int(usable // self._ROW_PITCH)
         return max(1, min(self.ROW_LIMIT * 4, fit))
 
-    def _load_contrib_current_records(self) -> list[dict[str, Any]]:
-        """Use contrib local_records in-memory cache when available.
-
-        This is the most up-to-date source right after map restart/map_begin.
-        """
-        try:
-            apps = getattr(self.instance.apps, "apps", {}) or {}
-        except Exception:
-            apps = {}
-
-        app = None
-        for key in (
-            "local_records",
-            "pyplanet.apps.contrib.local_records",
-            "pyplanet.apps.contrib.local_records.app",
-        ):
-            app = apps.get(key)
-            if app is not None:
-                break
-
-        if app is None:
-            for key, candidate in apps.items():
-                module = str(getattr(candidate.__class__, "__module__", "") or "")
-                key_str = str(key or "")
-                if "contrib.local_records" in module or key_str.endswith("local_records"):
-                    app = candidate
-                    break
-
-        if app is None:
-            return []
-        out: list[dict[str, Any]] = []
-        for rec in list(getattr(app, "current_records", []) or []):
-            player = getattr(rec, "player", None)
-            score = int(getattr(rec, "score", 0) or 0)
-            if score <= 0:
-                continue
-            out.append(
-                {
-                    "login": str(getattr(player, "login", "") or ""),
-                    "nickname": str(getattr(player, "nickname", "Unknown") or "Unknown"),
-                    "score": score,
-                }
-            )
-        return out
-
     async def get_widget_data(self, login: str) -> dict[str, Any]:
         visible_rows = self._visible_row_capacity(login)
         db_records = await self._load_current_records()
         rows: list[dict[str, Any]] = []
         my_row = None
 
-        feed: list[dict[str, Any]] = []
-        contrib_records = self._load_contrib_current_records()
-        if contrib_records:
-            feed = contrib_records
-        elif db_records:
-            for rec in db_records:
-                player = getattr(rec, "player", None)
-                feed.append(
-                    {
-                        "login": str(getattr(player, "login", "") or ""),
-                        "nickname": str(getattr(player, "nickname", "Unknown") or "Unknown"),
-                        "score": int(getattr(rec, "score", 0) or 0),
-                    }
-                )
-        else:
-            feed = list(self.current_records)
+        feed: list[dict[str, Any]] = list(db_records) if db_records else list(self.current_records)
 
         for index, rec in enumerate(feed, start=1):
             player_login = str(rec.get("login") or "")

@@ -34,7 +34,7 @@
 {% set PAG_Y = LIST_Y - LIST_H - 3 %}
 
 <frame pos="-{{ WIN_W / 2 }} {{ WIN_H / 2 }}" z-index="120">
-{% if not picker_open and not editor_open and not settings_open and not replacements_open %}
+{% if not picker_open and not editor_open and not settings_open and not replacements_open and not ui_modules_editor.open %}
 
   {{ ui.window('Widget Engine · manager', icon='cog',
                x=0, y=0, w=WIN_W, h=WIN_H) }}
@@ -563,13 +563,11 @@
   {% endcall %}
 {% endif %}
 
-{# ── GBX replacements sub-view ─────────────────────────────────────── #}
+{# ── GBX replacements sub-view (read-only redesign) ────────────────── #}
 {% if replacements_open %}
   {% set RP_W = WIN_W %}
   {% set RP_H = WIN_H %}
   {% set RP_HDR_H = 8 %}
-  {% set RP_ROW_H = 7 %}
-  {% set RP_LIST_Y = -RP_HDR_H - 4 %}
 
   {{ ui.window('Widget Engine · GBX replacements',
                icon='exchange-alt', x=0, y=0, w=RP_W, h=RP_H,
@@ -577,47 +575,378 @@
                        {'key':'widget_engine','label':'Widget Engine'},
                        {'key':'replacements','label':'Replacements'}]) }}
 
-  <label pos="3 {{ RP_LIST_Y + 1 }}" z-index="135"
-         halign="left" valign="bottom2"
-         text="$888Widgets that override a default GBX manialink. Toggle per-player."
-         textsize="0.9" textfont="GameFont" />
+  {# read-only banner #}
+  <quad pos="2 {{ -RP_HDR_H - 1 }}" size="{{ RP_W - 4 }} 4.5"
+        bgcolor="15dfa3" halign="left" valign="top" z-index="134" />
+  <label pos="3 {{ -RP_HDR_H - 3.25 }}" z-index="135"
+         halign="left" valign="center2"
+         text="$cdfREAD-ONLY  $aaareview surface for upcoming replacements rework. No actions wired yet."
+         textsize="0.9" textfont="GameFontBlack" />
 
-  {% if replacements_rows|length == 0 %}
-    <label pos="{{ RP_W/2 }} {{ RP_LIST_Y - 10 }}" z-index="135"
-           halign="center" valign="center2"
-           text="$666No replacement widgets installed."
-           textsize="1.1" textfont="GameFont" />
+  {% set RP_TAB_Y = -RP_HDR_H - 7 %}
+  {% set RP_TAB_H = 5 %}
+  {% set RP_BODY_TOP = RP_TAB_Y - RP_TAB_H - 2 %}
+  {# Window's usable height below the tab strip. RP_H is the window height;
+     |RP_BODY_TOP| is how far below the window top the body starts. #}
+  {% set RP_BODY_H = RP_H - (-RP_BODY_TOP) - 2 %}
+
+  {% call(tab_key, t) ui.tabs('replacements', replacements_tabs,
+                              active=replacements_tab,
+                              x=2, y=RP_TAB_Y, w=RP_W - 4,
+                              tab_h=RP_TAB_H, body_h=RP_BODY_H) %}
+
+    {# ===== Active tab ============================================== #}
+    {% if tab_key == 'active' %}
+      {% if replacements_rows|length == 0 and replacements_total == 0 %}
+        <label pos="{{ RP_W/2 }} {{ RP_BODY_TOP - 10 }}" z-index="135"
+               halign="center" valign="center2"
+               text="$666No replacement widgets installed."
+               textsize="1.1" textfont="GameFont" />
+        <label pos="{{ RP_W/2 }} {{ RP_BODY_TOP - 14 }}" z-index="135"
+               halign="center" valign="center2"
+               text="$555Replacement widgets are addons whose tmsm-addon.json declares a `gbx_replace` block."
+               textsize="0.85" textfont="GameFont" />
+      {% else %}
+        {% set CARD_H = 13 %}
+        {% set CARD_GAP = 0.8 %}
+        <frame pos="3 {{ RP_BODY_TOP - 1 }}" z-index="135">
+          {% for r in replacements_rows %}
+            {% set ry = -(loop.index0 * (CARD_H + CARD_GAP)) %}
+            {% set CW = RP_W - 6 %}
+            {# card background #}
+            <quad pos="0 {{ ry }}" size="{{ CW }} {{ CARD_H }}"
+                  valign="top" halign="left" bgcolor="14141488" />
+            {# left status stripe #}
+            <quad pos="0 {{ ry }}" size="0.6 {{ CARD_H }}"
+                  valign="top" halign="left"
+                  bgcolor="{{ '0d8f' if r.enabled else '666c' }}" />
+            {# title row: name · key #}
+            <label pos="2 {{ ry - 2 }}" z-index="136"
+                   halign="left" valign="center2"
+                   text="${{ 'fff' if r.enabled else 'aaa' }}{{ r.name }}$555  ·  {{ r.key }}"
+                   textsize="1.1" textfont="GameFontBlack" />
+            {# right-aligned controls: MODULES + EDIT buttons + status badge #}
+            {{ ui.push_button('replacements__row__' ~ r.key ~ '__edit',
+                              'EDIT', icon='cog',
+                              x=CW - 2, y=ry - 2,
+                              width=14, halign='right',
+                              variant='ghost', size='sm', z=137) }}
+            {{ ui.push_button('replacements__row__' ~ r.key ~ '__ui_modules',
+                              'MODULES', icon='eye-slash',
+                              x=CW - 17, y=ry - 2,
+                              width=18, halign='right',
+                              variant=('primary' if r.ui_modules_overridden else 'ghost'),
+                              size='sm', z=137) }}
+            {{ ui.check_box('replacements__row__' ~ r.key ~ '__toggle',
+                            checked=r.enabled,
+                            x=CW - 36, y=ry - 2, size='sm', z=137) }}
+            {# meta row 1: target_kind · scope · author/version #}
+            <label pos="2 {{ ry - 5.4 }}" z-index="136"
+                   halign="left" valign="center2"
+                   text="$888target  $cdf{{ r.target_kind }}$888    scope  $cdf{{ r.scope }}{% if r.author %}$888    by  $aaa{{ r.author }}{% if r.version %} $666v{{ r.version }}{% endif %}{% endif %}"
+                   textsize="0.9" textfont="GameFont" />
+            {# meta row 2: manialink id #}
+            <label pos="2 {{ ry - 8.0 }}" z-index="136"
+                   halign="left" valign="center2"
+                   text="$888manialink id  $aaa{{ r.manialink_id or '—' }}{% if r.hotkey %}$888    hotkey  $aaa{{ r.hotkey }}{% endif %}{% if r.connect_delay_s and r.connect_delay_s > 0 %}$888    delay  $aaa{{ '%.2f'|format(r.connect_delay_s) }}s{% endif %}"
+                   textsize="0.9" textfont="GameFont" />
+            {# meta row 3: hidden ui modules as inline chips #}
+            {% if r.ui_modules_count > 0 %}
+              <label pos="2 {{ ry - 10.6 }}" z-index="136"
+                     halign="left" valign="center2"
+                     text="$888hides ui modules{% if r.ui_modules_overridden %} $cdf(override){% endif %}  $aaa{{ r.ui_modules|join('  ·  ') }}"
+                     textsize="0.85" textfont="GameFont" />
+            {% else %}
+              <label pos="2 {{ ry - 10.6 }}" z-index="136"
+                     halign="left" valign="center2"
+                     text="$666hides no ui modules{% if r.ui_modules_overridden %} $cdf(override){% endif %}"
+                     textsize="0.85" textfont="GameFont" />
+            {% endif %}
+          {% endfor %}
+        </frame>
+
+        {# pagination strip (centered below the cards) #}
+        {% if replacements_total_pages > 1 %}
+          {% set rp_max_visible = 5 %}
+          {% set rp_btn_w = 5 %}
+          {% set rp_gap = 0.5 %}
+          {% set rp_half = (rp_max_visible // 2) %}
+          {% set rp_start = replacements_page - rp_half %}
+          {% set rp_end = replacements_page + rp_half %}
+          {% if rp_start < 1 %}{% set rp_end = rp_end + (1 - rp_start) %}{% set rp_start = 1 %}{% endif %}
+          {% if rp_end > replacements_total_pages %}{% set rp_start = rp_start - (rp_end - replacements_total_pages) %}{% set rp_end = replacements_total_pages %}{% endif %}
+          {% if rp_start < 1 %}{% set rp_start = 1 %}{% endif %}
+          {% set rp_visible = rp_end - rp_start + 1 %}
+          {% set rp_cells = 4 + rp_visible %}
+          {% if rp_start > 1 %}{% set rp_cells = rp_cells + 1 %}{% if rp_start > 2 %}{% set rp_cells = rp_cells + 1 %}{% endif %}{% endif %}
+          {% if rp_end < replacements_total_pages %}{% set rp_cells = rp_cells + 1 %}{% if rp_end < replacements_total_pages - 1 %}{% set rp_cells = rp_cells + 1 %}{% endif %}{% endif %}
+          {% set rp_total_w = rp_cells * (rp_btn_w + rp_gap) - rp_gap %}
+          {% set rp_pag_x = (RP_W - rp_total_w) / 2 %}
+          {% set rp_pag_y = RP_BODY_TOP - 1 - (4 * (CARD_H + CARD_GAP)) - 1 %}
+          {{ ui.pagination('replacements__pag',
+                           page=replacements_page,
+                           total_pages=replacements_total_pages,
+                           x=rp_pag_x, y=rp_pag_y,
+                           max_visible=rp_max_visible,
+                           btn_w=rp_btn_w, btn_h=5, gap=rp_gap, z=140) }}
+        {% endif %}
+        {# page indicator (always shown, dims when only 1 page) #}
+        <label pos="{{ RP_W - 3 }} {{ RP_BODY_TOP - 1 - (4 * (CARD_H + CARD_GAP)) + 1 }}"
+               z-index="140" halign="right" valign="center2"
+               text="$888page $aaa{{ replacements_page }}$888 / $aaa{{ replacements_total_pages }}$888    $666total $aaa{{ replacements_total }}"
+               textsize="0.85" textfont="GameFont" />
+      {% endif %}
+
+    {# ===== Discover tab ============================================ #}
+    {% elif tab_key == 'discover' %}
+      <label pos="{{ RP_W/2 }} {{ RP_BODY_TOP - 8 }}" z-index="135"
+             halign="center" valign="center2"
+             text="$cdfLive discovery"
+             textsize="1.4" textfont="GameFontBlack" />
+      <label pos="{{ RP_W/2 }} {{ RP_BODY_TOP - 13 }}" z-index="135"
+             halign="center" valign="center2"
+             text="$aaaThis tab will list manialink ids and UI modules observed in flight from the server / mode script."
+             textsize="0.95" textfont="GameFont" />
+      <label pos="{{ RP_W/2 }} {{ RP_BODY_TOP - 17 }}" z-index="135"
+             halign="center" valign="center2"
+             text="$888Each row will show a target id, last seen timestamp, and a sample count."
+             textsize="0.9" textfont="GameFont" />
+      <label pos="{{ RP_W/2 }} {{ RP_BODY_TOP - 24 }}" z-index="135"
+             halign="center" valign="center2"
+             text="$555Not implemented yet."
+             textsize="1.0" textfont="GameFontBlack" />
+
+    {# ===== Catalog tab ============================================= #}
+    {% elif tab_key == 'catalog' %}
+      <label pos="3 {{ RP_BODY_TOP - 1 }}" z-index="135"
+             halign="left" valign="center2"
+             text="$888Curated reference of replaceable HUD targets. Items marked $0d8fIN USE$888 are hooked by an installed widget."
+             textsize="0.9" textfont="GameFont" />
+      {% set GROUP_W = (RP_W - 8) / 2 %}
+      <frame pos="3 {{ RP_BODY_TOP - 5 }}" z-index="135">
+        {% for grp in replacements_catalog %}
+          {% set col = loop.index0 % 2 %}
+          {% set row = loop.index0 // 2 %}
+          {% set gx = col * (GROUP_W + 2) %}
+          {% set gy = -row * 38 %}
+          {# group header #}
+          <quad pos="{{ gx }} {{ gy }}" size="{{ GROUP_W }} 4"
+                valign="top" halign="left" bgcolor="0d4a99" />
+          <label pos="{{ gx + 1.5 }} {{ gy - 2 }}" z-index="136"
+                 halign="left" valign="center2"
+                 text="$fff{{ grp.group }}"
+                 textsize="1.0" textfont="GameFontBlack" />
+          {# items #}
+          {% for it in grp.entries %}
+            {% set iy = gy - 4 - loop.index0 * 5 %}
+            <quad pos="{{ gx }} {{ iy }}" size="{{ GROUP_W }} 4.6"
+                  valign="top" halign="left"
+                  bgcolor="{{ '15151588' if loop.index0 % 2 == 0 else '0a0a0a88' }}" />
+            <label pos="{{ gx + 1.5 }} {{ iy - 1.4 }}" z-index="136"
+                   halign="left" valign="center2"
+                   text="${{ '8fc' if it.in_use else 'ccc' }}{{ it.id }}"
+                   textsize="0.95" textfont="GameFontBlack" />
+            <label pos="{{ gx + 1.5 }} {{ iy - 3.4 }}" z-index="136"
+                   halign="left" valign="center2"
+                   text="$888{{ it.desc }}"
+                   textsize="0.8" textfont="GameFont" />
+            {% if it.in_use %}
+              {{ ui.badge('IN USE',
+                          x=gx + GROUP_W - 1, y=iy - 1.0, halign='right',
+                          variant='success', size='sm', z=137) }}
+            {% endif %}
+          {% endfor %}
+        {% endfor %}
+      </frame>
+    {% endif %}
+
+  {% endcall %}
+{% endif %}
+
+{# ── UI modules editor (overlay launched from a replacement card) ──── #}
+{% if ui_modules_editor.open %}
+  {% set UM_W = WIN_W %}
+  {% set UM_H = WIN_H %}
+  {% set UM_HDR_H = 8 %}
+  {% set UM_LX = 2 %}
+  {% set UM_LW = (UM_W - 6) * 0.62 %}
+  {% set UM_RX = UM_LX + UM_LW + 2 %}
+  {% set UM_RW = UM_W - UM_RX - 2 %}
+  {% set UM_BODY_TOP = -UM_HDR_H - 7 %}
+  {% set UM_FOOTER_Y = -UM_H + 6 %}
+
+  {{ ui.window('Widget Engine · hidden UI modules',
+               icon='eye-slash', x=0, y=0, w=UM_W, h=UM_H,
+               crumbs=[{'key':'hub','label':'Hub'},
+                       {'key':'widget_engine','label':'Widget Engine'},
+                       {'key':'replacements','label':'Replacements'},
+                       {'key':'ui_modules','label': ui_modules_editor.name ~ ' · UI modules'}]) }}
+
+  {# Sub-header: widget name + manialink id + override pill #}
+  <label pos="3 {{ -UM_HDR_H - 2 }}" z-index="135"
+         halign="left" valign="center2"
+         text="$fff{{ ui_modules_editor.name }}$555  ·  $aaamanialink $cdf{{ ui_modules_editor.manialink_id or '—' }}"
+         textsize="1.1" textfont="GameFontBlack" />
+  {% if ui_modules_editor.overridden %}
+    {{ ui.badge('OVERRIDE', x=UM_W - 3, y=-UM_HDR_H - 2,
+                halign='right', variant='primary', size='sm', z=136) }}
   {% else %}
-    <frame pos="3 {{ RP_LIST_Y - 2 }}" z-index="135">
-      {% for r in replacements_rows %}
-        {% set ry = -(loop.index0 * (RP_ROW_H + 0.6)) %}
-        {% set RW = RP_W - 6 %}
-        <quad pos="0 {{ ry }}" size="{{ RW }} {{ RP_ROW_H }}"
+    {{ ui.badge('DEFAULT', x=UM_W - 3, y=-UM_HDR_H - 2,
+                halign='right', variant='ghost', size='sm', z=136) }}
+  {% endif %}
+
+  {# ──── LEFT column: catalog grouped checkboxes ────────────────── #}
+  <quad pos="{{ UM_LX }} {{ UM_BODY_TOP }}" z-index="133"
+        size="{{ UM_LW }} {{ -UM_FOOTER_Y + UM_BODY_TOP - 2 }}"
+        bgcolor="0a0a0a55" halign="left" valign="top" />
+  <label pos="{{ UM_LX + 1.5 }} {{ UM_BODY_TOP - 2 }}" z-index="135"
+         halign="left" valign="center2"
+         text="$888Pick from known UI modules. Defaults from the addon manifest are marked $aaadef$888."
+         textsize="0.85" textfont="GameFont" />
+
+  {% set UM_ITEM_H = 5.4 %}
+  {% set UM_HDR_STRIP_H = 4 %}
+  {% if ui_modules_editor.page_items|length == 0 %}
+    <label pos="{{ UM_LX + UM_LW/2 }} {{ UM_BODY_TOP - 16 }}" z-index="135"
+           halign="center" valign="center2"
+           text="$666No catalog entries on this page."
+           textsize="0.95" textfont="GameFont" />
+  {% else %}
+    <frame pos="{{ UM_LX + 2 }} {{ UM_BODY_TOP - 6 }}" z-index="135">
+      {% set off = namespace(y=0) %}
+      {% for it in ui_modules_editor.page_items %}
+        {% if it.group_header %}
+          <quad pos="0 {{ off.y }}" size="{{ UM_LW - 4 }} {{ UM_HDR_STRIP_H }}"
+                valign="top" halign="left" bgcolor="0d4a99" />
+          <label pos="1 {{ off.y - 2 }}" z-index="136"
+                 halign="left" valign="center2"
+                 text="$fff{{ it.group }}"
+                 textsize="0.95" textfont="GameFontBlack" />
+          {% set off.y = off.y - (UM_HDR_STRIP_H + 0.6) %}
+        {% endif %}
+        <quad pos="0 {{ off.y }}" size="{{ UM_LW - 4 }} 5"
               valign="top" halign="left"
               bgcolor="{{ '15151588' if loop.index0 % 2 == 0 else '0a0a0a88' }}" />
-        <label pos="1.5 {{ ry - 2 }}" z-index="136"
+        {# checkbox (anchored right of the slot) #}
+        {{ ui.check_box('ui_modules_editor__toggle__' ~ it.id,
+                        checked=it.checked,
+                        x=3.2, y=off.y - 2.5, size='sm', z=137) }}
+        <label pos="4 {{ off.y - 1.6 }}" z-index="137"
                halign="left" valign="center2"
-               text="${{ 'fff' if r.enabled else '888' }}{{ r.name }}  $555{{ r.key }}"
-               textsize="1.0" textfont="GameFontBlack" />
-        <label pos="1.5 {{ ry - 5 }}" z-index="136"
+               text="${{ 'fff' if it.checked else 'ccc' }}{{ it.id }}{% if it.is_default %}  $666(def){% endif %}"
+               textsize="0.95" textfont="GameFontBlack" />
+        <label pos="4 {{ off.y - 3.6 }}" z-index="137"
                halign="left" valign="center2"
-               text="$888manialink: $aaa{{ r.manialink_id }}{% if r.hide_ui_modules %}  $888· hides $aaa{{ r.hide_ui_modules|join(', ') }}{% endif %}"
-               textsize="0.85" textfont="GameFont" />
-        {{ ui.push_button('replacements__row__' ~ r.key ~ '__toggle',
-                          ('ON' if r.enabled else 'OFF'),
-                          icon=('toggle-on' if r.enabled else 'toggle-off'),
-                          x=RW - 1, y=ry - RP_ROW_H/2,
-                          width=14, halign='right',
-                          variant=('primary' if r.enabled else 'ghost'),
-                          size='sm', z=136) }}
-        {{ ui.push_button('replacements__row__' ~ r.key ~ '__edit',
-                          'EDIT', icon='cog',
-                          x=RW - 16, y=ry - RP_ROW_H/2,
-                          width=14, halign='right',
-                          variant='ghost', size='sm', z=136) }}
+               text="$888{{ it.desc }}"
+               textsize="0.8" textfont="GameFont" />
+        {% set off.y = off.y - UM_ITEM_H %}
       {% endfor %}
     </frame>
   {% endif %}
+
+  {# paginator + page indicator pinned to the bottom of the left column #}
+  {% if ui_modules_editor.total_pages > 1 %}
+    {% set um_max_visible = 5 %}
+    {% set um_btn_w = 5 %}
+    {% set um_gap = 0.5 %}
+    {% set um_half = (um_max_visible // 2) %}
+    {% set um_start = ui_modules_editor.page - um_half %}
+    {% set um_end = ui_modules_editor.page + um_half %}
+    {% if um_start < 1 %}{% set um_end = um_end + (1 - um_start) %}{% set um_start = 1 %}{% endif %}
+    {% if um_end > ui_modules_editor.total_pages %}{% set um_start = um_start - (um_end - ui_modules_editor.total_pages) %}{% set um_end = ui_modules_editor.total_pages %}{% endif %}
+    {% if um_start < 1 %}{% set um_start = 1 %}{% endif %}
+    {% set um_visible = um_end - um_start + 1 %}
+    {% set um_cells = 4 + um_visible %}
+    {% if um_start > 1 %}{% set um_cells = um_cells + 1 %}{% if um_start > 2 %}{% set um_cells = um_cells + 1 %}{% endif %}{% endif %}
+    {% if um_end < ui_modules_editor.total_pages %}{% set um_cells = um_cells + 1 %}{% if um_end < ui_modules_editor.total_pages - 1 %}{% set um_cells = um_cells + 1 %}{% endif %}{% endif %}
+    {% set um_total_w = um_cells * (um_btn_w + um_gap) - um_gap %}
+    {% set um_pag_x = UM_LX + (UM_LW - um_total_w) / 2 %}
+    {{ ui.pagination('ui_modules_editor__pag',
+                     page=ui_modules_editor.page,
+                     total_pages=ui_modules_editor.total_pages,
+                     x=um_pag_x, y=UM_FOOTER_Y + 8,
+                     max_visible=um_max_visible,
+                     btn_w=um_btn_w, btn_h=5, gap=um_gap, z=140) }}
+  {% endif %}
+  <label pos="{{ UM_LX + UM_LW - 1.5 }} {{ UM_FOOTER_Y + 10 }}"
+         z-index="140" halign="right" valign="center2"
+         text="$888page $aaa{{ ui_modules_editor.page }}$888 / $aaa{{ ui_modules_editor.total_pages }}$888    $666total $aaa{{ ui_modules_editor.total_items }}"
+         textsize="0.85" textfont="GameFont" />
+
+  {# ──── RIGHT column: selection summary + custom add ──────────── #}
+  <quad pos="{{ UM_RX }} {{ UM_BODY_TOP }}" z-index="133"
+        size="{{ UM_RW }} {{ -UM_FOOTER_Y + UM_BODY_TOP - 2 }}"
+        bgcolor="0a0a0a55" halign="left" valign="top" />
+  <label pos="{{ UM_RX + 1.5 }} {{ UM_BODY_TOP - 2 }}" z-index="135"
+         halign="left" valign="center2"
+         text="$fffCurrently hides  $cdf{{ ui_modules_editor.selected_count }}$888 / addon default $aaa{{ ui_modules_editor.defaults_count }}"
+         textsize="0.95" textfont="GameFontBlack" />
+
+  {# Custom-ids section title #}
+  <label pos="{{ UM_RX + 1.5 }} {{ UM_BODY_TOP - 7 }}" z-index="135"
+         halign="left" valign="center2"
+         text="$888Custom ids (not in catalog)"
+         textsize="0.85" textfont="GameFont" />
+  <quad pos="{{ UM_RX + 1 }} {{ UM_BODY_TOP - 9 }}" z-index="134"
+        size="{{ UM_RW - 2 }} 0.2"
+        bgcolor="ffffff22" halign="left" valign="top" />
+
+  {% if ui_modules_editor.custom_ids|length == 0 %}
+    <label pos="{{ UM_RX + 1.5 }} {{ UM_BODY_TOP - 13 }}" z-index="135"
+           halign="left" valign="center2"
+           text="$555none"
+           textsize="0.9" textfont="GameFont" />
+    {% set custom_y_end = UM_BODY_TOP - 16 %}
+  {% else %}
+    <frame pos="{{ UM_RX + 1.5 }} {{ UM_BODY_TOP - 11 }}" z-index="135">
+      {% for cid in ui_modules_editor.custom_ids %}
+        {% set cy = -(loop.index0 * 5) %}
+        <quad pos="0 {{ cy }}" size="{{ UM_RW - 3 }} 4.5"
+              valign="top" halign="left" bgcolor="15151588" />
+        <label pos="1 {{ cy - 2.2 }}" z-index="136"
+               halign="left" valign="center2"
+               text="$fff{{ cid }}"
+               textsize="0.9" textfont="GameFont" />
+        {{ ui.push_button('ui_modules_editor__remove__' ~ cid,
+                          'REMOVE', icon='times',
+                          x=UM_RW - 4, y=cy - 2.2,
+                          width=14, halign='right',
+                          variant='ghost', size='sm', z=137) }}
+      {% endfor %}
+    </frame>
+    {% set custom_y_end = UM_BODY_TOP - 11 - (ui_modules_editor.custom_ids|length * 5) - 2 %}
+  {% endif %}
+
+  {# Add-custom input + button #}
+  <label pos="{{ UM_RX + 1.5 }} {{ custom_y_end - 4 }}" z-index="135"
+         halign="left" valign="center2"
+         text="$888Add UI module id"
+         textsize="0.85" textfont="GameFont" />
+  {{ ui.line_edit('ui_modules_editor__input',
+                  value=ui_modules_editor.input,
+                  x=UM_RX + 1.5, y=custom_y_end - 8.5,
+                  width=UM_RW - 19, size='sm', z=136) }}
+  {{ ui.push_button('ui_modules_editor__add', 'ADD', icon='plus',
+                    x=UM_RX + UM_RW - 2, y=custom_y_end - 8.5,
+                    width=16, halign='right',
+                    variant='primary', size='sm', z=137) }}
+
+  {# ──── footer: action buttons ──────────────────────────────── #}
+  <quad pos="{{ UM_LX }} {{ UM_FOOTER_Y + 4 }}" z-index="134"
+        size="{{ UM_W - 4 }} 0.2"
+        bgcolor="ffffff22" halign="left" valign="top" />
+  {{ ui.push_button('ui_modules_editor__cancel', 'Cancel', icon='times',
+                    x=UM_LX, y=UM_FOOTER_Y,
+                    halign='left', size='md', variant='ghost', z=140) }}
+  {% if ui_modules_editor.overridden %}
+    {{ ui.push_button('ui_modules_editor__reset',
+                      'Reset to default', icon='undo',
+                      x=UM_W - 38, y=UM_FOOTER_Y,
+                      halign='right', size='md', variant='warning', z=140) }}
+  {% endif %}
+  {{ ui.push_button('ui_modules_editor__save', 'Save', icon='check',
+                    x=UM_W - 2, y=UM_FOOTER_Y,
+                    halign='right', size='md', variant='primary', z=140) }}
 {% endif %}
 
 </frame>

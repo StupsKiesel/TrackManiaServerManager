@@ -86,6 +86,10 @@ class WidgetsApp(AppConfig):
         self._replacements: dict[str, str] = {}
         # Per-player opt-out for replacement widgets: key -> {login,...}.
         self._replace_disabled: dict[str, set[str]] = {}
+        # Server-wide override of `hide_ui_modules` per replacement widget.
+        # widget_key -> tuple(ids). Missing key = inherit addon manifest;
+        # empty tuple = explicit "hide nothing".
+        self._ui_modules_overrides: dict[str, tuple[str, ...]] = {}
 
     # ---- monitor compatibility API -----------------------------------
 
@@ -149,6 +153,26 @@ class WidgetsApp(AppConfig):
                     self._replace_disabled[widget_key] = logins
         except Exception:
             logger.exception("widget_engine: replacement opt-outs hydrate failed")
+        # Hydrate per-replacement UI module overrides (JSON list).
+        try:
+            for skey, sval in (self.storage.settings_all() or {}).items():
+                if not skey.startswith("repl_ui_modules:"):
+                    continue
+                widget_key = skey.split(":", 1)[1]
+                try:
+                    parsed = json.loads(sval or "[]")
+                except Exception:
+                    logger.exception(
+                        "widget_engine: repl_ui_modules JSON decode '%s' failed",
+                        skey,
+                    )
+                    continue
+                if isinstance(parsed, list):
+                    self._ui_modules_overrides[widget_key] = tuple(
+                        str(x) for x in parsed if x
+                    )
+        except Exception:
+            logger.exception("widget_engine: UI modules overrides hydrate failed")
         # Player connect: re-assert replacements for that player after the
         # original manialink lands. Each replacement entry carries its own
         # delay so addons can tune ordering vs PyPlanet's own override.
@@ -420,11 +444,12 @@ class WidgetsApp(AppConfig):
                     "widget_engine: schedule initial replacement push for '%s' failed",
                     entry.key,
                 )
-            if repl.hide_ui_modules:
+            if repl.manialink_id and self.get_effective_hide_ui_modules(entry.key):
                 try:
                     asyncio.ensure_future(
                         self._apply_ui_modules_visibility(
-                            repl.hide_ui_modules, visible=False,
+                            self.get_effective_hide_ui_modules(entry.key),
+                            visible=False,
                         )
                     )
                 except Exception:
@@ -592,11 +617,11 @@ class WidgetsApp(AppConfig):
                     "widget_engine: refresh push replacement '%s' failed", key,
                 )
             entry = self._entries.get(key)
-            repl = entry.gbx_replace if entry else None
-            if repl and repl.hide_ui_modules:
+            ids = self.get_effective_hide_ui_modules(key) if entry else ()
+            if ids:
                 try:
                     await self._apply_ui_modules_visibility(
-                        repl.hide_ui_modules, visible=False,
+                        ids, visible=False,
                     )
                 except Exception:
                     logger.exception(
@@ -632,11 +657,11 @@ class WidgetsApp(AppConfig):
                     key,
                 )
             entry = self._entries.get(key)
-            repl = entry.gbx_replace if entry else None
-            if repl and repl.hide_ui_modules:
+            ids = self.get_effective_hide_ui_modules(key) if entry else ()
+            if ids:
                 try:
                     await self._apply_ui_modules_visibility(
-                        repl.hide_ui_modules, visible=False,
+                        ids, visible=False,
                     )
                 except Exception:
                     logger.exception(
@@ -659,6 +684,66 @@ class WidgetsApp(AppConfig):
         if not login or key not in self._entries:
             return False
         return login not in self._replace_disabled.get(key, set())
+
+    def has_ui_modules_override(self, key: str) -> bool:
+        return key in self._ui_modules_overrides
+
+    def get_effective_hide_ui_modules(self, key: str) -> tuple[str, ...]:
+        """Effective list of UI module ids to hide for replacement `key`.
+        Returns the server-wide override if one is set (including an
+        explicit empty tuple), otherwise falls back to the addon's
+        manifest declaration."""
+        if key in self._ui_modules_overrides:
+            return self._ui_modules_overrides[key]
+        entry = self._entries.get(key)
+        if entry is None or not entry.gbx_replace:
+            return ()
+        return tuple(entry.gbx_replace.hide_ui_modules or ())
+
+    async def set_ui_modules_override(
+        self, key: str, modules: list[str] | tuple[str, ...] | None,
+    ) -> None:
+        """Persist or clear the server-wide UI modules override for
+        replacement `key`. `None` resets to the addon manifest default.
+        Applies the visibility delta in-flight: ids that were hidden but
+        no longer are get re-shown; new ids get hidden."""
+        entry = self._entries.get(key)
+        if entry is None or not entry.gbx_replace:
+            return
+        previous = self.get_effective_hide_ui_modules(key)
+        if modules is None:
+            self._ui_modules_overrides.pop(key, None)
+            try:
+                await self.storage.setting_delete(f"repl_ui_modules:{key}")
+            except Exception:
+                logger.exception(
+                    "widget_engine: clear repl_ui_modules '%s' failed", key,
+                )
+        else:
+            cleaned = tuple(dict.fromkeys(str(m).strip() for m in modules if str(m).strip()))
+            self._ui_modules_overrides[key] = cleaned
+            try:
+                await self.storage.setting_set(
+                    f"repl_ui_modules:{key}", json.dumps(list(cleaned)),
+                )
+            except Exception:
+                logger.exception(
+                    "widget_engine: persist repl_ui_modules '%s' failed", key,
+                )
+        new_effective = self.get_effective_hide_ui_modules(key)
+        prev_set = set(previous)
+        new_set = set(new_effective)
+        to_show = tuple(prev_set - new_set)
+        to_hide = tuple(new_set - prev_set)
+        any_enabled = any(
+            self.is_replacement_enabled(login, k)
+            for k in (key,)
+            for login in self._online_logins()
+        )
+        if to_show:
+            await self._apply_ui_modules_visibility(to_show, visible=True)
+        if to_hide and any_enabled:
+            await self._apply_ui_modules_visibility(to_hide, visible=False)
 
     async def set_replacement_enabled(
         self, login: str, key: str, enabled: bool,
@@ -684,7 +769,7 @@ class WidgetsApp(AppConfig):
                     "widget_engine: persist replace_disabled '%s' failed", key,
                 )
         await self.push_replacement(key, logins=[login])
-        if entry.gbx_replace.hide_ui_modules:
+        if self.get_effective_hide_ui_modules(key):
             await self._reconcile_ui_modules_for(key)
 
     async def _on_player_connect(self, player=None, **kwargs):  # noqa: ARG002
@@ -708,9 +793,9 @@ class WidgetsApp(AppConfig):
         # restore default UI module visibility per-player on join.
         hide_ids: list[str] = []
         for key in self._replacements.values():
-            entry = self._entries.get(key)
-            if entry and entry.gbx_replace and entry.gbx_replace.hide_ui_modules:
-                hide_ids.extend(entry.gbx_replace.hide_ui_modules)
+            ids = self.get_effective_hide_ui_modules(key)
+            if ids:
+                hide_ids.extend(ids)
         if hide_ids:
             try:
                 await self._apply_ui_modules_visibility(
@@ -790,14 +875,30 @@ class WidgetsApp(AppConfig):
             )
             return
         targets = list(logins) if logins is not None else self._online_logins()
+        # Out-of-phase: clear the replacement instead of rebuilding it.
+        # The current phase may be None (host hasn't reported one yet); in
+        # that case fall through and push normally.
+        out_of_phase = (
+            entry.visible_phases is not None
+            and self.engine.current_phase is not None
+            and self.engine.current_phase not in entry.visible_phases
+        )
         for login in targets:
             if not login:
                 continue
-            # Per-player opt-out: send an empty manialink so the override
-            # is cleared. The default UI will not necessarily come back
-            # until the next mode-script refresh.
-            if not self.is_replacement_enabled(login, key):
+            # Per-player opt-out OR out-of-phase: send an empty manialink
+            # so the override is cleared. The default UI will not
+            # necessarily come back until the next mode-script refresh.
+            if out_of_phase or not self.is_replacement_enabled(login, key):
                 xml = f'<manialink id="{manialink_id}" version="3"></manialink>'
+                if out_of_phase:
+                    logger.info(
+                        "widget_engine: clearing replacement '%s' id=%s for %s "
+                        "(out of phase: current=%s allowed=%s)",
+                        key, manialink_id, login,
+                        self.engine.current_phase.value if self.engine.current_phase else "?",
+                        ",".join(p.value for p in (entry.visible_phases or ())),
+                    )
             else:
                 try:
                     body = await builder(login)
@@ -1064,7 +1165,7 @@ class WidgetsApp(AppConfig):
         entry = self._entries.get(key)
         if entry is None or not entry.gbx_replace:
             return
-        ids = entry.gbx_replace.hide_ui_modules
+        ids = self.get_effective_hide_ui_modules(key)
         if not ids:
             return
         any_enabled = any(

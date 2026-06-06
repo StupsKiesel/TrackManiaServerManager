@@ -1,8 +1,9 @@
-{% set widget_w = card_w|default(58.0) %}
-{% set widget_h = card_h|default(12.0) %}
+{% import 'widget_engine/frame.xml' as widgets with context %}
 
-{% if vote_active %}
-<frame pos="{{ anchor_x|default(0.0) }} {{ anchor_y|default(0.0) }}" z-index="40">
+{% set widget_w = widget_w|default(card_w|default(58.0)) %}
+{% set widget_h = widget_h|default(card_h|default(12.0)) %}
+
+{% call widgets.frame() %}
   <quad pos="0 0" z-index="40" size="{{ widget_w }} {{ widget_h }}" bgcolor="1b2230dd" halign="left" valign="top" />
   <quad pos="0 0" z-index="41" size="{{ widget_w }} 0.7" bgcolor="44cc88ff" halign="left" valign="top" />
 
@@ -35,5 +36,4 @@
 
   <label pos="{{ widget_w / 2 }} -9.1" z-index="42" halign="center" valign="center2"
          text="$aaa{{ vote_hint|default('') }}" textsize="0.8" textfont="GameFontRegular" />
-</frame>
-{% endif %}
+{% endcall %}

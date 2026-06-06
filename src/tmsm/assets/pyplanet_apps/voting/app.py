@@ -14,7 +14,6 @@ from typing import Any
 
 from pyplanet.apps.config import AppConfig
 from pyplanet.contrib.command import Command
-from pyplanet.views.template import TemplateView
 
 from .views import VotingView, VotingWidgetView
 
@@ -167,16 +166,6 @@ class App_Voting(AppConfig):
         if not targets:
             return
 
-        vote_active = isinstance(self._active_vote, dict)
-        if not vote_active:
-            for login in targets:
-                self.widget_view._visible_logins.discard(str(login))
-            try:
-                await TemplateView.hide(self.widget_view, player_logins=targets)
-            except Exception:
-                logger.exception("voting: widget hide failed")
-            return
-
         self.widget_view._visible = True
         for login in targets:
             self.widget_view._visible_logins.add(str(login))
@@ -232,6 +221,16 @@ class App_Voting(AppConfig):
         anchor_y = float(self._WIDGET_DEFAULT_Y)
         card_w = float(self._WIDGET_DEFAULT_W)
         card_h = float(self._WIDGET_DEFAULT_H)
+        anim_dir = "none"
+        anim_duration_ms = 0
+        anim_in_delay_ms = 0
+        anim_out_delay_ms = 0
+        widget_disabled = False
+
+        bg_color = "0000"
+        strip_color = "0000"
+        strip_edge = "top"
+        strip_thickness = 1.0
 
         host = self.instance.apps.apps.get("widget_engine")
         if host is not None and getattr(host, "engine", None) is not None and login:
@@ -242,8 +241,26 @@ class App_Voting(AppConfig):
                     anchor_y = float(getattr(resolved, "y", anchor_y) or anchor_y)
                     card_w = float(getattr(resolved, "w", card_w) or card_w)
                     card_h = float(getattr(resolved, "h", card_h) or card_h)
+                    raw_dir = getattr(getattr(resolved, "anim_dir", None), "value", None)
+                    anim_dir = str(raw_dir or anim_dir)
+                    anim_duration_ms = int(getattr(resolved, "anim_duration_ms", anim_duration_ms) or anim_duration_ms)
+                    anim_in_delay_ms = int(getattr(resolved, "anim_in_delay_ms", anim_in_delay_ms) or anim_in_delay_ms)
+                    anim_out_delay_ms = int(getattr(resolved, "anim_out_delay_ms", anim_out_delay_ms) or anim_out_delay_ms)
+                    widget_disabled = bool(getattr(resolved, "disabled", widget_disabled))
+                    bg_color = str(getattr(resolved, "bg_color", bg_color) or bg_color)
+                    strip_color = str(getattr(resolved, "strip_color", strip_color) or strip_color)
+                    strip_edge = str(getattr(resolved, "strip_edge", strip_edge) or strip_edge)
+                    strip_thickness = float(getattr(resolved, "strip_thickness", strip_thickness) or strip_thickness)
             except Exception:
                 logger.exception("voting: widget resolve failed")
+
+        off_x, off_y = {
+            "none": (0.0, 0.0),
+            "left": (-500.0, 0.0),
+            "right": (500.0, 0.0),
+            "up": (0.0, 500.0),
+            "down": (0.0, -500.0),
+        }.get(anim_dir, (0.0, 0.0))
 
         vote = self._active_vote if isinstance(self._active_vote, dict) else None
         vote_active = vote is not None
@@ -268,11 +285,36 @@ class App_Voting(AppConfig):
             "anchor_y": anchor_y,
             "card_w": card_w,
             "card_h": card_h,
+            "widget_key": self._WIDGET_KEY,
+            "widget_view_id": self.widget_view.id if self.widget_view is not None else "",
+            "widget_kind": "persistent",
+            "widget_x": anchor_x,
+            "widget_y": anchor_y,
+            "widget_w": card_w,
+            "widget_h": card_h,
+            "widget_scale_y": 1.0,
+            "widget_disabled": widget_disabled,
+            "widget_hide_clauses": ["MenuOpen"],
+            "widget_hide_raw": "",
+            "widget_anim_dir": anim_dir,
+            "widget_anim_duration_ms": anim_duration_ms,
+            "widget_anim_in_delay_ms": anim_in_delay_ms,
+            "widget_anim_out_delay_ms": anim_out_delay_ms,
+            "widget_anim_off_x": off_x,
+            "widget_anim_off_y": off_y,
+            "widget_bg_color": bg_color,
+            "widget_strip_color": strip_color,
+            "widget_strip_edge": strip_edge,
+            "widget_strip_thickness": strip_thickness,
+            "widget_edit_mode": False,
+            "widget_debug_mode": False,
+            "widget_debug_status": "",
+            "widget_debug_lines": [],
             "vote_active": vote_active,
             "vote_title": vote_title,
             "remaining_text": remaining_text,
             "vote_hint": vote_hint,
-            "widget_force_hidden": not vote_active,
+            "widget_force_hidden": widget_disabled or (not vote_active),
         }
 
     async def _widget_vote_yes(self, player, values=None, **kwargs) -> None:

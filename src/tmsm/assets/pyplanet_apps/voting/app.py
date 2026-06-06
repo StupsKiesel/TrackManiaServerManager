@@ -14,6 +14,7 @@ from typing import Any
 
 from pyplanet.apps.config import AppConfig
 from pyplanet.contrib.command import Command
+from pyplanet.views.template import TemplateView
 
 from .views import VotingView, VotingWidgetView
 
@@ -166,6 +167,28 @@ class App_Voting(AppConfig):
         if not targets:
             return
 
+        vote_active = isinstance(self._active_vote, dict)
+        if not vote_active:
+            # First render hidden state so frame-script out animation can play.
+            self.widget_view._visible = True
+            for login in targets:
+                self.widget_view._visible_logins.add(str(login))
+            try:
+                await self.widget_view.display(player_logins=targets)
+            except Exception:
+                logger.exception("voting: widget display-for-hide failed")
+
+            max_delay_ms = 0
+            for login in targets:
+                try:
+                    d = self._widget_hide_delay_ms(str(login))
+                except Exception:
+                    d = 0
+                if d > max_delay_ms:
+                    max_delay_ms = d
+            asyncio.ensure_future(self._hide_widget_after(max_delay_ms / 1000.0, targets))
+            return
+
         self.widget_view._visible = True
         for login in targets:
             self.widget_view._visible_logins.add(str(login))
@@ -173,6 +196,46 @@ class App_Voting(AppConfig):
             await self.widget_view.display(player_logins=targets)
         except Exception:
             logger.exception("voting: widget display failed")
+
+    def _widget_hide_delay_ms(self, login: str) -> int:
+        host = self.instance.apps.apps.get("widget_engine")
+        if host is None or getattr(host, "engine", None) is None:
+            return 0
+        resolved = host.engine.resolve(self._WIDGET_KEY, login)
+        if resolved is None:
+            return 0
+        raw_dir = getattr(getattr(resolved, "anim_dir", None), "value", None)
+        anim_dir = str(raw_dir or "none").lower()
+        if anim_dir == "none":
+            return 0
+        try:
+            dur = int(getattr(resolved, "anim_duration_ms", 0) or 0)
+        except (TypeError, ValueError):
+            dur = 0
+        try:
+            out_delay = int(getattr(resolved, "anim_out_delay_ms", 0) or 0)
+        except (TypeError, ValueError):
+            out_delay = 0
+        total = dur + out_delay
+        return total if total > 0 else 0
+
+    async def _hide_widget_after(self, delay_s: float, targets: list[str]) -> None:
+        if delay_s > 0:
+            try:
+                await asyncio.sleep(delay_s)
+            except asyncio.CancelledError:
+                return
+        # A new vote started while we were waiting; keep widget visible.
+        if isinstance(self._active_vote, dict):
+            return
+        if self.widget_view is None:
+            return
+        for login in targets:
+            self.widget_view._visible_logins.discard(str(login))
+        try:
+            await TemplateView.hide(self.widget_view, player_logins=targets)
+        except Exception:
+            logger.exception("voting: delayed widget hide failed")
 
     async def _register_with_hub(self) -> None:
         if not _HAS_HUB:

@@ -35,11 +35,14 @@
     {{ ui.push_button('start_skip', 'Skip Current Map', icon='arrow_right',
                       x=4, y=-30, variant=('primary' if can_start else 'ghost'),
                       halign='left', size='md', width=48) }}
-    {{ ui.push_button('start_extend', 'Extend Time (+5/+10)', icon='clock',
-                      x=54, y=-30, variant=('primary' if can_start else 'ghost'),
-                      halign='left', size='md', width=58) }}
+    {{ ui.push_button('start_extend_5', 'Extend +5 Min', icon='clock',
+              x=54, y=-30, variant=('primary' if can_start else 'ghost'),
+              halign='left', size='md', width=28) }}
+    {{ ui.push_button('start_extend_10', 'Extend +10 Min', icon='clock',
+              x=84, y=-30, variant=('primary' if can_start else 'ghost'),
+              halign='left', size='md', width=28) }}
     {{ ui.push_button('start_replay', 'Replay Current Map', icon='redo',
-                      x=114, y=-30, variant=('primary' if can_start else 'ghost'),
+              x=114, y=-30, variant=('primary' if can_start else 'ghost'),
                       halign='left', size='md', width=38) }}
 
     {{ ui.label('Players vote with buttons here or with chat commands.',

@@ -436,8 +436,11 @@ class App_Voting(AppConfig):
         if action == "start_skip":
             await self._start_skip_vote(player)
             return
-        if action == "start_extend":
-            await self._start_extend_vote(player)
+        if action == "start_extend_5":
+            await self._start_extend_vote(player, minutes=5)
+            return
+        if action == "start_extend_10":
+            await self._start_extend_vote(player, minutes=10)
             return
         if action == "start_replay":
             await self._start_replay_vote(player)
@@ -484,7 +487,7 @@ class App_Voting(AppConfig):
     async def _chat_help(self, player) -> None:
         await self.instance.chat(
             "$4d8Voting:$fff /vote$4d8 opens the voting window. Chat commands: "
-            "$fff/vote skip$4d8 | $fff/vote extend$4d8 | $fff/vote replay$4d8 | "
+            "$fff/vote skip$4d8 | $fff/vote extend 5|10$4d8 | $fff/vote replay$4d8 | "
             "$fff/vote yes$4d8/$fffno$4d8 | $fff/vote 5$4d8/$fff10$4d8 (when extend vote is active).",
             player,
         )
@@ -529,7 +532,10 @@ class App_Voting(AppConfig):
             await self._start_skip_vote(player)
             return
         if token == "extend":
-            await self._start_extend_vote(player)
+            if arg2 in ("10", "+10", "extend10"):
+                await self._start_extend_vote(player, minutes=10)
+            else:
+                await self._start_extend_vote(player, minutes=5)
             return
         if token in ("replay", "again"):
             await self._start_replay_vote(player)
@@ -586,21 +592,27 @@ class App_Voting(AppConfig):
             "metadata": {"action": "replay_next", "yes_value": "yes", "no_value": "no"},
         })
 
-    async def _start_extend_vote(self, player) -> None:
+    async def _start_extend_vote(self, player, minutes: int = 5) -> None:
         if not await self._can_start_vote(player):
             return
+        mins = 10 if int(minutes) >= 10 else 5
         await self._emit_engine("request_start", {
-            "key": "extend_time",
-            "title": "Extend timelimit?",
-            "mode": "plurality",
+            "key": f"extend_time_{mins}",
+            "title": f"Extend timelimit by +{mins} min?",
+            "mode": "threshold_yes_no",
             "options": [
-                {"value": "extend_5", "label": "+5 min"},
-                {"value": "extend_10", "label": "+10 min"},
-                {"value": "no_change", "label": "No change"},
+                {"value": "yes", "label": "Yes"},
+                {"value": "no", "label": "No"},
             ],
             "duration_s": 20,
+            "pass_ratio": 0.55,
             "initiator": player.login,
-            "metadata": {"action": "extend_time"},
+            "metadata": {
+                "action": "extend_time",
+                "extend_minutes": mins,
+                "yes_value": "yes",
+                "no_value": "no",
+            },
         })
 
     async def _can_start_vote(self, player) -> bool:
@@ -701,7 +713,24 @@ class App_Voting(AppConfig):
                 return
 
             if action == "extend_time":
-                if winner == "extend_5":
+                mins_raw = metadata.get("extend_minutes")
+                mins = None
+                try:
+                    if mins_raw is not None:
+                        mins = int(mins_raw)
+                except (TypeError, ValueError):
+                    mins = None
+
+                if mins in (5, 10):
+                    if winner == "yes":
+                        ok = await self._extend_timelimit_minutes(mins)
+                        await self._broadcast(
+                            f"$4d8Vote passed:$fff timelimit +{mins} min."
+                            if ok else f"$f44Could not extend timelimit (+{mins})."
+                        )
+                    else:
+                        await self._broadcast("$fa0Vote ended with no timelimit change.")
+                elif winner == "extend_5":
                     ok = await self._extend_timelimit_minutes(5)
                     await self._broadcast("$4d8Vote passed:$fff timelimit +5 min." if ok else "$f44Could not extend timelimit (+5).")
                 elif winner == "extend_10":

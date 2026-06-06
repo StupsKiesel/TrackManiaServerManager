@@ -1,0 +1,55 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{% set W = 156 %}
+{% set H = 92 %}
+
+<frame pos="-78 52" z-index="200">
+  {{ ui.window('Player Voting', icon='check-square', x=0, y=0, w=W, h=H) }}
+
+  {{ ui.label(vote_title, x=4, y=-12, color='fff', bold=True) }}
+  {{ ui.label(vote_status, x=W - 4, y=-12, color='aaa', size='sm', halign='right') }}
+
+  {% if vote_active %}
+    {% set row_h = 7.5 %}
+    {% for opt in vote_options %}
+      {% set y = -20 - loop.index0 * row_h %}
+      <quad pos="4 {{ y }}" z-index="200" size="{{ W - 8 }} {{ row_h - 0.6 }}"
+            bgcolor="{{ '0a43' if opt.selected else 'fff1' }}" halign="left" valign="top" />
+      {{ ui.label(opt.label, x=8, y=y - 3.3, color=('fff' if opt.selected else 'ddd')) }}
+      {{ ui.label(opt.votes|string ~ ' vote(s)', x=W - 60, y=y - 3.3, color='aaa', size='sm') }}
+      {{ ui.push_button('castopt__' ~ opt.index|string,
+                        ('Selected' if opt.selected else 'Vote'),
+                        x=W - 4, y=y - 3.3,
+                        variant=('success' if opt.selected else 'primary'),
+                        halign='right', size='sm', width=24) }}
+    {% endfor %}
+
+    {% if is_operator %}
+      {{ ui.push_button('cancel_vote', 'Cancel Vote', icon='cross',
+                        x=W - 4, y=-H + 5,
+                        variant='danger', halign='right', size='sm') }}
+    {% endif %}
+  {% else %}
+    {{ ui.label('Start a vote:', x=4, y=-22, color='ddd') }}
+
+    {{ ui.push_button('start_skip', 'Skip Current Map', icon='arrow_right',
+                      x=4, y=-30, variant=('primary' if can_start else 'ghost'),
+                      halign='left', size='md', width=48) }}
+    {{ ui.push_button('start_extend', 'Extend Time (+5/+10)', icon='clock',
+                      x=54, y=-30, variant=('primary' if can_start else 'ghost'),
+                      halign='left', size='md', width=58) }}
+    {{ ui.push_button('start_replay', 'Replay Current Map', icon='redo',
+                      x=114, y=-30, variant=('primary' if can_start else 'ghost'),
+                      halign='left', size='md', width=38) }}
+
+    {{ ui.label('Players vote with buttons here or with chat commands.',
+                x=4, y=-44, color='888', size='sm') }}
+
+    {% if cooldown_left > 0 %}
+      {{ ui.label('Cooldown active: ' ~ cooldown_left|string ~ 's',
+                  x=4, y=-50, color='fa0', size='sm') }}
+    {% endif %}
+  {% endif %}
+
+  {{ ui.hover_script() }}
+</frame>

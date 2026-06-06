@@ -1,6 +1,8 @@
 """Map info widget — compact author time + graphical difficulty signal."""
 from __future__ import annotations
 
+import asyncio
+
 from pyplanet.apps.tmsm.widget_engine import AnimDir, DriveMode
 from pyplanet.apps.tmsm.widget_engine.widget_base import WidgetAppBase
 
@@ -38,6 +40,63 @@ class MapInfoWidget(WidgetAppBase):
         "blue bay": "https://trackmania.exchange/img/env/tm3_e4.png",
         "red island": "https://trackmania.exchange/img/env/tm3_e2.png",
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._queued_refresh: asyncio.Task | None = None
+
+    async def on_start(self) -> None:
+        await super().on_start()
+        try:
+            # Event-driven refresh: this widget is not periodic (refresh=0),
+            # so explicit map lifecycle hooks keep it in sync.
+            self.context.signals.listen("maniaplanet:loading_map_start", self._on_refresh_signal)
+            self.context.signals.listen("maniaplanet:map_begin", self._on_refresh_signal)
+            self.context.signals.listen("maniaplanet:map_start", self._on_refresh_signal)
+            self.context.signals.listen("maniaplanet:player_connect", self._on_refresh_signal)
+            self.context.signals.listen("maniaplanet:player_disconnect", self._on_refresh_signal)
+        except Exception:
+            pass
+
+    async def on_stop(self) -> None:
+        if self._queued_refresh is not None:
+            self._queued_refresh.cancel()
+            self._queued_refresh = None
+        await super().on_stop()
+
+    def _queue_refresh(self) -> None:
+        if self.view is None:
+            return
+        if self._queued_refresh is not None and not self._queued_refresh.done():
+            return
+
+        async def _flush() -> None:
+            try:
+                # Map-change callbacks can fire before `current_map` is fully
+                # populated. Do a few delayed refresh passes so we repaint once
+                # live map metadata becomes available.
+                for delay_s in (0.20, 0.75, 1.50):
+                    await asyncio.sleep(delay_s)
+                    if self.view is None:
+                        return
+                    await self.view.refresh()
+                    try:
+                        cm = self.instance.map_manager.current_map
+                        uid = str(getattr(cm, "uid", "") or "").strip() if cm is not None else ""
+                    except Exception:
+                        uid = ""
+                    if uid:
+                        # We have a live map now; no need for later retries.
+                        break
+            except Exception:
+                pass
+            finally:
+                self._queued_refresh = None
+
+        self._queued_refresh = asyncio.create_task(_flush())
+
+    async def _on_refresh_signal(self, **kwargs) -> None:
+        self._queue_refresh()
 
     @staticmethod
     def _truncate(value: str, max_len: int) -> str:

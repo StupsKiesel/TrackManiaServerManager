@@ -126,23 +126,27 @@
       divider=True, divider_color='ffffff2f', z=41
     ) %}{% endcall %}
 
-  {% set row3_kv_pad = 0.5 %}
-       {% set row3_kv_gap = 0.75 %}
+       {% set row3_kv_val_pad_right = 0.5 %}
+       {% set row3_kv_icon_lane = (row_h * 0.95) %}
 
   {# row 3: cp key/value #}
-  {% set row3_cp_icon_x = row3_cp_x + row3_kv_pad %}
-  {% set row3_cp_val_x = row3_cp_icon_x + row2_icon_size + row3_kv_gap %}
-  <label pos="{{ row3_cp_icon_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+  {% set row3_cp_icon_x = row3_cp_x + (row3_kv_icon_lane * 0.5) %}
+  {% set row3_cp_val_min_x = row3_cp_x + row3_kv_icon_lane %}
+  {% set row3_cp_val_max_x = row3_cp_x + row3_cp_w - row3_kv_val_pad_right %}
+  {% set row3_cp_val_x = row3_cp_val_min_x + ((row3_cp_val_max_x - row3_cp_val_min_x) * 0.5) %}
+  <label pos="{{ row3_cp_icon_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="center" valign="center2"
          text="$39f&#xf024;" textsize="{{ row2_icon_size }}" textfont="GameFont" />
-  <label pos="{{ row3_cp_val_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+  <label pos="{{ row3_cp_val_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="center" valign="center2"
          text="$fff{{ map_checkpoints|default(0) }}" textsize="{{ sub_size }}" textfont="GameFontBlack" />
 
   {# row 3: laps key/value #}
-  {% set row3_lap_icon_x = row3_lap_x + row3_kv_pad %}
-  {% set row3_lap_val_x = row3_lap_icon_x + row2_icon_size + row3_kv_gap %}
-  <label pos="{{ row3_lap_icon_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+  {% set row3_lap_icon_x = row3_lap_x + (row3_kv_icon_lane * 0.5) %}
+  {% set row3_lap_val_min_x = row3_lap_x + row3_kv_icon_lane %}
+  {% set row3_lap_val_max_x = row3_lap_x + row3_lap_w - row3_kv_val_pad_right %}
+  {% set row3_lap_val_x = row3_lap_val_min_x + ((row3_lap_val_max_x - row3_lap_val_min_x) * 0.5) %}
+  <label pos="{{ row3_lap_icon_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="center" valign="center2"
          text="$7cf&#xf01e;" textsize="{{ row2_icon_size }}" textfont="GameFont" />
-  <label pos="{{ row3_lap_val_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="left" valign="center2"
+  <label pos="{{ row3_lap_val_x }} -{{ y3 + (row_h * 0.5) }}" z-index="42" halign="center" valign="center2"
          text="$fff{{ map_laps|default('-') }}" textsize="{{ sub_size }}" textfont="GameFontBlack" />
 
   {# row 3: difficulty bars #}
@@ -156,13 +160,25 @@
        {% set diff_x = row3_diff_x + diff_pad + ((diff_w_full - diff_w) * 0.5) %}
        {% set diff_y = -(y3 + diff_pad) %}
 
-  {% set bar_count = 6 %}
-  {% set bar_gap = 0.10 %}
-  {% set bar_w = (diff_w - (bar_gap * (bar_count + 1))) / bar_count %}
-  {% for i in [1, 2, 3, 4, 5, 6] %}
-    {% set x = diff_x + bar_gap + ((i - 1) * (bar_w + bar_gap)) %}
-    {% set h = 0.20 + (i * ((diff_h - 0.45) / 6.0)) %}
-    {% set by = diff_y - diff_h + 0.08 %}
+       {% set bar_count = 6 %}
+       {% set bar_slot_w = diff_w / bar_count %}
+       {% set bar_w = bar_slot_w * 0.62 %}
+       {% set bar_slot_inset = (bar_slot_w - bar_w) * 0.5 %}
+       {# Keep tallest bar below full height and center cluster vertically so
+               the space below and above the tallest bar is the same. #}
+       {% set bar_max_h = diff_h * 0.76 %}
+       {% set bar_min_h = diff_h * 0.18 %}
+       {% set bar_bottom_margin = (diff_h - bar_max_h) * 0.5 %}
+       {% set bar_base_y = diff_y - diff_h + bar_bottom_margin %}
+       {% set bar_outline = 0.05 %}
+       {% for i in [1, 2, 3, 4, 5, 6] %}
+              {% set x = diff_x + ((i - 1) * bar_slot_w) + bar_slot_inset %}
+              {% set t = (i - 1) / (bar_count - 1) %}
+              {% set h = bar_min_h + (t * (bar_max_h - bar_min_h)) %}
+              {% set by = bar_base_y %}
+              <quad pos="{{ x - bar_outline }} {{ by - bar_outline }}" z-index="41"
+                                   size="{{ bar_w + (bar_outline * 2) }} {{ h + (bar_outline * 2) }}"
+                                   bgcolor="000b" halign="left" valign="bottom" />
     {% if i <= difficulty_bars|default(3) %}
       <quad pos="{{ x }} {{ by }}" z-index="42" size="{{ bar_w }} {{ h }}"
             bgcolor="{{ difficulty_color|default('fd3f') }}" halign="left" valign="bottom" />

@@ -4,15 +4,32 @@
 {% set widget_h = widget_h|default(12.0) %}
 
 {% call widgets.frame() %}
-  <label pos="1.4 -1.4" z-index="42" text="$dddSERVER" textsize="0.95" textfont="GameFontBlack" />
+  {# line 1: lock icon + exact dedicated cfg server name #}
+  <label pos="1.6 -1.6" z-index="42" text="${{ lock_color|default('6d6') }}{{ lock_icon|default('&#xf09c;')|safe }}"
+         textsize="0.95" textfont="GameFont" />
+  <label pos="5.2 -1.6" z-index="42" sizen="50 3" text="{{ server_name|default('-') }}"
+         textsize="0.95" textfont="GameFontBlack" halign="left" />
 
-  <label pos="2.0 -5.0" z-index="42" text="$aaaPlayers" textsize="0.8" textfont="GameFontBlack" />
-  <label pos="17.0 -5.0" z-index="42" text="$fff{{ players_text|default('-') }}" textsize="1.0" textfont="GameFontBlack" />
+  {# line 2: three equal columns -> players | specs | mode #}
+  {% set row_x = 2.0 %}
+  {% set row_w = widget_w - 4.0 %}
+  {% set col_w = row_w / 3.0 %}
+  {% set y3 = -5.8 %}
+  {% set c1 = row_x + (col_w * 0.5) %}
+  {% set c2 = row_x + (col_w * 1.5) %}
+  {% set c3 = row_x + (col_w * 2.5) %}
 
-  <label pos="29.0 -5.0" z-index="42" text="$aaaSpecs" textsize="0.8" textfont="GameFontBlack" />
-  <label pos="39.5 -5.0" z-index="42" text="$fff{{ specs_text|default('-') }}" textsize="1.0" textfont="GameFontBlack" />
+  <label pos="{{ c1 - 2.8 }} {{ y3 }}" z-index="42" text="$7cf{{ '&#xf0c0;'|safe }}"
+         textsize="0.95" textfont="GameFont" halign="center" />
+  <label pos="{{ c1 - 0.5 }} {{ y3 }}" z-index="42" text="$fff{{ players_text|default('-') }}"
+         textsize="0.95" textfont="GameFontBlack" halign="left" />
 
-  <label pos="2.0 -9.0" z-index="42" text="$aaaMode" textsize="0.8" textfont="GameFontBlack" />
-  <label pos="11.5 -9.0" z-index="42" sizen="45 3" text="$fff{{ mode_text|default('-') }}"
-         textsize="0.85" textfont="GameFontBlack" />
+  <label pos="{{ c2 - 2.8 }} {{ y3 }}" z-index="42" text="$fd3{{ '&#xf06e;'|safe }}"
+         textsize="0.95" textfont="GameFont" halign="center" />
+  <label pos="{{ c2 - 0.5 }} {{ y3 }}" z-index="42" text="$fff{{ specs_text|default('-') }}"
+         textsize="0.95" textfont="GameFontBlack" halign="left" />
+
+  <label pos="{{ c3 }} {{ y3 }}" z-index="42" sizen="{{ col_w - 1.0 }} 3"
+         text="$aaa{{ mode_text|default('-') }}" textsize="0.85"
+         textfont="GameFontBlack" halign="center" />
 {% endcall %}

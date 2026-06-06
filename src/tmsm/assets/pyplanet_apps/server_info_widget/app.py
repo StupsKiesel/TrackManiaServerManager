@@ -5,6 +5,7 @@ Contrib-like compact server status panel: players/spectators and mode.
 from __future__ import annotations
 
 import asyncio
+import time
 
 from pyplanet.apps.tmsm.widget_engine import AnimDir, DriveMode
 from pyplanet.apps.tmsm.widget_engine.widget_base import WidgetAppBase
@@ -38,6 +39,9 @@ class ServerInfoWidget(WidgetAppBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._queued_refresh: asyncio.Task | None = None
+        self._server_name_cache: str = "-"
+        self._server_name_last_fetch: float = 0.0
+        self._server_password_protected: bool = False
 
     async def on_start(self) -> None:
         await super().on_start()
@@ -77,6 +81,69 @@ class ServerInfoWidget(WidgetAppBase):
     async def _on_refresh_signal(self, **kwargs) -> None:
         self._queue_refresh()
 
+    async def _server_cfg_name(self) -> str:
+        """Resolve dedicated_cfg `<server_options><name>` via GBX.
+
+        `GetServerOptions` exposes the live options loaded from
+        `dedicated_cfg.txt`; cache briefly to avoid per-player spam.
+        """
+        now = time.monotonic()
+        if self._server_name_cache and (now - self._server_name_last_fetch) < 5.0:
+            return self._server_name_cache
+        try:
+            opts = await asyncio.wait_for(self.instance.gbx("GetServerOptions"), timeout=0.6)
+        except Exception:
+            self._server_name_last_fetch = now
+            return self._server_name_cache or "-"
+        self._server_name_last_fetch = now
+        if not isinstance(opts, dict):
+            return self._server_name_cache or "-"
+        name = str(opts.get("Name") or "").strip()
+        if name:
+            self._server_name_cache = name
+        # Password-protected when either player or spectator password is set.
+        pw_player = str(opts.get("Password") or "").strip()
+        pw_spec = str(opts.get("PasswordForSpectator") or "").strip()
+        self._server_password_protected = bool(pw_player or pw_spec)
+        return self._server_name_cache or "-"
+
+    @staticmethod
+    def _short_mode_name(raw: str) -> str:
+        """Compress mode script identifiers to a clean short label.
+
+        Examples:
+        - Trackmania/TM_TimeAttack_online -> TimeAttack
+        - TrackMania\\Modes\\TM_Rounds_Online.Script.txt -> Rounds
+        """
+        s = str(raw or "").strip()
+        if not s:
+            return "-"
+
+        # Keep only basename after path separators.
+        s = s.replace("\\", "/")
+        if "/" in s:
+            s = s.split("/")[-1]
+
+        # Remove common wrappers/prefix/suffix noise.
+        for pre in ("TM_", "tm_"):
+            if s.startswith(pre):
+                s = s[len(pre):]
+        for suf in ("_online", "_Online", ".Script.txt", ".Script", ".txt"):
+            if s.endswith(suf):
+                s = s[: -len(suf)]
+
+        # Normalize separators and trim.
+        s = s.replace("_", " ").replace("-", " ").strip()
+        if not s:
+            return "-"
+
+        # Convert "Time Attack" -> "TimeAttack" while preserving
+        # already-camel variants.
+        parts = [p for p in s.split() if p]
+        if len(parts) > 1:
+            s = "".join(p[:1].upper() + p[1:] for p in parts)
+        return s
+
     async def get_widget_data(self, login):
         pm = self.instance.player_manager
         players = int(getattr(pm, "count_players", 0) or 0)
@@ -89,11 +156,14 @@ class ServerInfoWidget(WidgetAppBase):
             mode_name = str(await self.instance.mode_manager.get_current_script() or "-")
         except Exception:
             pass
-        if mode_name.startswith("TrackMania\\"):
-            mode_name = mode_name.split("\\")[-1]
+
+        server_name = await self._server_cfg_name()
 
         return {
+            "server_name": server_name,
             "players_text": f"{players}/{max_players if max_players > 0 else '?'}",
             "specs_text": f"{specs}/{max_specs if max_specs > 0 else '?'}",
-            "mode_text": mode_name,
+            "mode_text": self._short_mode_name(mode_name),
+            "lock_icon": "&#xf023;" if self._server_password_protected else "&#xf09c;",
+            "lock_color": "f55" if self._server_password_protected else "6d6",
         }

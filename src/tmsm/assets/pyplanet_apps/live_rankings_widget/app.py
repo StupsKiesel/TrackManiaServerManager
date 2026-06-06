@@ -64,9 +64,10 @@ class LiveRankingsWidget(WidgetAppBase):
         self._map_uid = uid
         if self.current_rankings:
             self.current_rankings = []
-            self._queue_refresh()
-            return True
-        return False
+        # Always refresh after a map swap so the widget redraws even when
+        # no live scores exist yet on the new map.
+        self._queue_refresh()
+        return True
 
     async def on_stop(self) -> None:
         if self._queued_refresh is not None:
@@ -136,9 +137,8 @@ class LiveRankingsWidget(WidgetAppBase):
 
     async def _on_reset(self, **kwargs) -> None:
         self._map_uid = self._current_map_uid()
-        if not self.current_rankings:
-            return
-        self.current_rankings = []
+        if self.current_rankings:
+            self.current_rankings = []
         self._queue_refresh()
 
     async def _on_scores(self, section=None, players=None, **kwargs) -> None:

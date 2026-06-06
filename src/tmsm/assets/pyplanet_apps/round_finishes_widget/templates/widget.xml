@@ -1,0 +1,48 @@
+{% import 'widget_engine/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(62.0) %}
+{% set widget_h = widget_h|default(22.0) %}
+{% set row_h = 3.2 %}
+
+{% call widgets.frame() %}
+  <label pos="2.0 -0.9" z-index="42"
+         halign="left" valign="top"
+         textsize="1.2" textfont="GameFontBlack"
+         text="$fffRound Finishes" />
+
+  <label pos="{{ widget_w - 2.0 }} -0.9" z-index="42"
+         halign="right" valign="top"
+         textsize="1.0" textfont="GameFontRegular"
+         text="$888{{ total_finishes|default(0) }}" />
+
+  {% if rows|length == 0 %}
+    <label pos="{{ widget_w / 2 }} {{ -widget_h / 2 }}" z-index="42"
+           halign="center" valign="center2"
+           textsize="1.2" textfont="GameFontRegular"
+           text="$888{{ note|default('No data') }}" />
+  {% else %}
+    {% for row in rows %}
+      {% set y = -3.0 - (loop.index0 * row_h) %}
+      <label pos="2.0 {{ y }}" z-index="42"
+             halign="left" valign="top"
+             textsize="1.1" textfont="GameFontRegular"
+             text="$ddd{{ row.rank }}." />
+      <label pos="7.0 {{ y }}" z-index="42"
+             halign="left" valign="top"
+             sizen="34 2.6"
+             textsize="1.1" textfont="GameFontRegular"
+             text="$fff{{ row.nickname|default('Unknown') }}" />
+      <label pos="{{ widget_w - 2.0 }} {{ y }}" z-index="42"
+             halign="right" valign="top"
+             textsize="1.1" textfont="GameFontRegular"
+             text="$ff0{{ row.score|default('--:--.---') }}" />
+    {% endfor %}
+
+    {% if note %}
+      <label pos="{{ widget_w - 2.0 }} {{ -widget_h + 2.2 }}" z-index="42"
+             halign="right" valign="top"
+             textsize="0.85" textfont="GameFontRegular"
+             text="$888{{ note }}" />
+    {% endif %}
+  {% endif %}
+{% endcall %}

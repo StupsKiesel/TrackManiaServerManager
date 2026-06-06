@@ -10,9 +10,9 @@ import asyncio
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Dict
 
-FinishCallback = Callable[[dict[str, Any]], Awaitable[None]]
+FinishCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 
 
 @dataclass

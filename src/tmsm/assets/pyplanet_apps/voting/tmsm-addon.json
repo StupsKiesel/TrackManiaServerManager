@@ -1,4 +1,4 @@
 ﻿{
-  "description": "Voting — placeholder. Registers a hub tile that opens a 'work in progress' dialog. Requires tmsm_hub + tmsm_ui.",
+  "description": "Player voting app + HUD widget backed by tmsm_voting_engine (skip map, extend timelimit, replay current map next).",
   "author": "tmsm"
 }

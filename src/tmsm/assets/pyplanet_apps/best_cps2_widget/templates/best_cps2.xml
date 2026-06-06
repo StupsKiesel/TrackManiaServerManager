@@ -1,0 +1,35 @@
+{% import 'widget_engine/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(120.0) %}
+{% set widget_h = widget_h|default(16.0) %}
+{% set entries = entries|default([]) %}
+{% set cols = cols|default(4) %}
+{% set item_w = 38.0 %}
+{% set row_h = 3.2 %}
+{% set grid_x = 1.2 %}
+{% set grid_y = -4.0 %}
+
+{% call widgets.frame() %}
+       <label pos="1.2 -1.0" z-index="42" text="{{ title_left|default('BEST CPs') }}"
+         textsize="0.95" textfont="GameFontBlack" textcolor="ddd" />
+       <label pos="{{ widget_w - 1.2 }} -1.0" z-index="42" halign="right"
+         text="{{ title_right|default('CP --') }}" textsize="0.85"
+         textfont="GameFontBlack" textcolor="aaa" />
+
+  {% for e in entries %}
+    {% set col = loop.index0 % cols %}
+    {% set row = loop.index0 // cols %}
+    {% set x = grid_x + col * item_w %}
+    {% set y = grid_y - row * row_h %}
+
+    <quad pos="{{ x }} {{ y + 0.15 }}" z-index="41.5" size="{{ item_w - 0.6 }} 2.7"
+          bgcolor="0004" halign="left" valign="top" />
+
+    <label pos="{{ x + 0.4 }} {{ y }}" z-index="42" halign="left"
+           text="$aaa#{{ e.cp }}" textsize="0.82" textfont="GameFontBlack" />
+    <label pos="{{ x + 7.2 }} {{ y }}" z-index="42" halign="left" sizen="17 2.6"
+           text="$ccc{{ e.nickname|default('-') }}" textsize="0.82" textfont="GameFontBlack" />
+    <label pos="{{ x + item_w - 1.0 }} {{ y }}" z-index="42" halign="right"
+           text="$fff{{ e.time|default('--:--.---') }}" textsize="0.82" textfont="GameFontBlack" />
+  {% endfor %}
+{% endcall %}

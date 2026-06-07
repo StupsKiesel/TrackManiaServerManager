@@ -42,6 +42,7 @@ class App_Jukebox(AppConfig):
     label = "jukebox"  # shadow the contrib app under the same key
     app_dependencies = ["core.maniaplanet"]
     game_dependencies = ["trackmania", "trackmania_next", "shootmania"]
+    PAGE_SIZE = 8
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -200,7 +201,17 @@ class App_Jukebox(AppConfig):
     # ---- per-player state ---------------------------------------------
 
     def _default_state(self) -> dict[str, Any]:
-        return {"status": "", "status_color": "aaa"}
+        return {"status": "", "status_color": "aaa", "page": 1}
+
+    def _entry_count(self) -> int:
+        count = 0
+        for e in self.jukebox:
+            if not isinstance(e, dict):
+                continue
+            if e.get("map") is None:
+                continue
+            count += 1
+        return count
 
     def _set_status(self, login: str, text: str, color: str = "aaa") -> None:
         st = self._state.setdefault(login, self._default_state())
@@ -242,7 +253,7 @@ class App_Jukebox(AppConfig):
 
         has_maplist = self._maplist_app() is not None
 
-        entries = []
+        entries_all = []
         for i, e in enumerate(self.jukebox, start=1):
             if not isinstance(e, dict):
                 continue
@@ -250,7 +261,7 @@ class App_Jukebox(AppConfig):
             p = e.get("player")
             if m is None:
                 continue
-            entries.append({
+            entries_all.append({
                 "index":      i,
                 "uid":        str(getattr(m, "uid", "") or ""),
                 "name":       str(getattr(m, "name", "") or "(unnamed)"),
@@ -262,11 +273,22 @@ class App_Jukebox(AppConfig):
                                    and getattr(p, "login", None) == login),
             })
 
+        total = len(entries_all)
+        total_pages = max(1, (total + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        page = int(st.get("page", 1) or 1)
+        page = max(1, min(total_pages, page))
+        st["page"] = page
+        start = (page - 1) * self.PAGE_SIZE
+        end = start + self.PAGE_SIZE
+        entries = entries_all[start:end]
+
         return {
             "entries":      entries,
             "current_map":  cur_name,
             "current_uid":  cur_uid,
-            "total":        len(entries),
+            "total":        total,
+            "page":         page,
+            "total_pages":  total_pages,
             "is_admin":     is_admin,
             "allow_juking": allow_juking,
             "has_maplist":  has_maplist,
@@ -278,6 +300,29 @@ class App_Jukebox(AppConfig):
 
     async def _catch_all(self, player, action, values, **kwargs) -> None:
         import re
+
+        if action.startswith("pg__"):
+            st = self._state.setdefault(player.login, self._default_state())
+            verb = action[len("pg__"):]
+            cur = int(st.get("page", 1) or 1)
+            total_items = self._entry_count()
+            total_pages = max(1, (total_items + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+            if verb == "first":
+                cur = 1
+            elif verb == "prev":
+                cur = max(1, cur - 1)
+            elif verb == "next":
+                cur = min(total_pages, cur + 1)
+            elif verb == "last":
+                cur = total_pages
+            elif verb.startswith("page__"):
+                try:
+                    cur = int(verb[len("page__"):])
+                except (TypeError, ValueError):
+                    pass
+            st["page"] = max(1, min(total_pages, cur))
+            await self._refresh_view()
+            return
 
         m = re.match(r"^(top|up|down|bottom|drop)__(\d+)$", action)
         if m:

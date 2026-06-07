@@ -14,9 +14,15 @@
 {% set win_w  = 230 %}
 {% set rows   = entries|length %}
 {% set row_h  = 6 %}
+{% set fixed_rows = 8 %}
+{% set pager_btn_w = 6 %}
+{% set pager_gap = 0.5 %}
+{% set pager_max_cells = 13 %}
+{% set pager_w = pager_max_cells * pager_btn_w + (pager_max_cells - 1) * pager_gap %}
+{% set pager_x = (win_w - pager_w) / 2 %}
 
 {% set table_y  = -27 %}
-{% set table_h  = (rows if rows else 1) * row_h + 6 %}
+{% set table_h  = fixed_rows * row_h + 6 %}
 {% set footer_y = table_y - table_h - 4 %}
 {% set status_y = footer_y - 7 %}
 {% set win_h    = (-status_y) + 6 %}
@@ -106,6 +112,10 @@
                   halign='center', size='sm', color='888') }}
     {% endif %}
   {% endcall %}
+
+  {{ ui.pagination('pg', page=page, total_pages=total_pages,
+                   x=pager_x, y=footer_y, max_visible=7,
+                   btn_w=pager_btn_w, gap=pager_gap) }}
 
   {# ============================ FOOTER ================================ #}
   {{ ui.tool_button('refresh', 'reload',

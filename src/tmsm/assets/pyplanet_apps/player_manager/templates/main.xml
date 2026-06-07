@@ -1,0 +1,65 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{% set W = 156 %}
+{% set H = 92 %}
+
+<frame pos="-78 46" z-index="350">
+  {{ ui.window('Player Manager', icon='users', x=0, y=0, w=W, h=H) }}
+
+  {{ ui.label('Online players: ' ~ players|length|string,
+              x=4, y=-12, color='fff', bold=True) }}
+  {{ ui.search_input('search', value=search, placeholder='Search nickname/login...',
+                     x=38, y=-12, width=62, size='sm') }}
+  {{ ui.push_button('refresh', 'Refresh', icon='reload',
+                    x=W-4, y=-12, halign='right', size='sm',
+                    variant='ghost', width=20) }}
+
+  <quad pos="4 -20" z-index="200" size="148 6" bgcolor="111a" halign="left" valign="top" />
+  {{ ui.label('Player', x=6, y=-23, color='ddd', size='sm') }}
+  {{ ui.label('Level', x=68, y=-23, color='ddd', size='sm') }}
+  {{ ui.label('Actions', x=118, y=-23, color='ddd', size='sm') }}
+
+  {% for p in players %}
+    {% set y = -28 - loop.index0 * 8 %}
+    <quad pos="4 {{ y }}" z-index="190" size="148 7.2"
+          bgcolor="{{ 'fff1' if loop.index0 % 2 else '0000' }}"
+          halign="left" valign="top" />
+
+    {{ ui.label(p.nickname, x=6, y=y-3.4, color='fff', size='sm') }}
+    {{ ui.line_edit('pid__' ~ p.login, value=p.login,
+            x=33, y=y-3.8, width=34, size='sm') }}
+
+    {{ ui.push_button('warn__' ~ p.login, 'Warn', icon='warning',
+                      x=106, y=y-3.8, halign='left', size='sm',
+                      variant='warning', width=14) }}
+    {{ ui.push_button('kick__' ~ p.login, 'Kick', icon='user-times',
+                      x=122, y=y-3.8, halign='left', size='sm',
+                      variant='danger', width=14) }}
+    {{ ui.push_button('ban__' ~ p.login, 'Ban', icon='ban',
+                      x=138, y=y-3.8, halign='left', size='sm',
+                      variant='danger', width=14) }}
+
+    {{ ui.combo_box('lvl__' ~ p.login, level_options,
+                    selected=p.level_selected,
+                    open=p.level_open,
+                    x=68, y=y-3.8, w=26, size='sm', z=260 + loop.index0) }}
+  {% endfor %}
+
+  {{ ui.pagination('pager', page=page, total_pages=total_pages,
+                   x=4, y=-86.5, max_visible=7) }}
+
+  {% if status %}
+    {{ ui.label(status, x=W-4, y=-86.5, color=status_color, size='sm', halign='right') }}
+  {% endif %}
+
+  {{ ui.hover_script() }}
+</frame>
+
+{{ ui.confirm_dialog('confirm_action',
+                     title=confirm_title,
+                     message=confirm_message,
+                     open=confirm_open,
+                     variant=confirm_variant,
+                     ok_label=confirm_ok,
+                     ok_icon=confirm_icon,
+                     cancel_label='Cancel') }}

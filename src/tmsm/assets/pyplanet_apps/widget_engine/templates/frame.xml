@@ -158,7 +158,6 @@
         {% endfor %}
         if (ForceHidden) Concealing = True;
         if (EditorOn) Concealing = False;
-        if (!AnimEnabled) Concealing = False;
         IsConcealed = Concealing;
         if (Concealing) AnimMgr.Add(Holder, TweenHidden, 0, CAnimManager::EAnimManagerEasing::Linear);
       }
@@ -186,7 +185,6 @@
         {% endfor %}
         if (ForceHidden) Concealing = True;
         if (EditorOn) Concealing = False;
-        if (!AnimEnabled) Concealing = False;
 
         if (Concealing != IsConcealed) {
           IsConcealed = Concealing;

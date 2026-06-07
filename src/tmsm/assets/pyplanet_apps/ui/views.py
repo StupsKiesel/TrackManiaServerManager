@@ -30,6 +30,11 @@ class BaseView(TemplateView):
     def __init__(self, app):
         super().__init__(app.context.ui)
         self.app = app
+        # PyPlanet render path expects `self.data` to be a dict. Some
+        # versions/edge-cases can leave it as None, which crashes at
+        # `self.data.update(data)` inside Manialink.render().
+        if getattr(self, "data", None) is None:
+            self.data = {}
         self.id = self._make_id()
         # Tracks whether show() has been called and hide() hasn't been called
         # since. Only when this is True do we re-display to joining players
@@ -67,6 +72,10 @@ class BaseView(TemplateView):
             ctx = {}
         ctx.setdefault("view_crumbs", list(self.breadcrumbs))
         return ctx
+
+    def _ensure_render_data(self) -> None:
+        if getattr(self, "data", None) is None:
+            self.data = {}
 
     def _make_id(self) -> str:
         # PyPlanet's manialink callback dispatcher expects a UUID-like id.
@@ -109,6 +118,7 @@ class BaseView(TemplateView):
     # ---- lifecycle -----------------------------------------------------
 
     async def show(self) -> None:
+        self._ensure_render_data()
         self._visible = True
         if self.audience.is_global:
             try:
@@ -176,6 +186,7 @@ class BaseView(TemplateView):
             logger.exception("BaseView._on_crumb_hub: emit tmsm_hub:show failed")
 
     async def refresh(self) -> None:
+        self._ensure_render_data()
         # Don't push the view to people who haven't asked for it; only
         # re-render for whoever currently has it open.
         if not self._visible:

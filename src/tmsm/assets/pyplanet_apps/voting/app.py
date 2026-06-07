@@ -1,9 +1,9 @@
 ﻿"""Player voting app (frontend/executor) backed by tmsm_voting_engine.
 
 Supported vote types:
-  * skip current map
-  * extend timelimit by +5 or +10 minutes
-  * replay current map as next map
+    * skip current map
+    * extend timelimit by +5, +10 or +15 minutes
+    * replay current map as next map
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ class App_Voting(AppConfig):
         await self.instance.command_manager.register(
             Command(
                 command="vote", target=self.chat_vote,
-                description="Voting commands: skip, extend, replay, yes/no, 5/10, cancel.",
+                description="Voting commands: skip, extend, replay, yes/no, 5/10/15, cancel.",
             ).add_param(name="arg1", required=False)
              .add_param(name="arg2", required=False),
             Command(command="yes", target=self.chat_yes,
@@ -579,8 +579,8 @@ class App_Voting(AppConfig):
     async def _chat_help(self, player) -> None:
         await self._notify(
             "$4d8Voting:$fff /vote$4d8 opens the voting window. Chat commands: "
-            "$fff/vote skip$4d8 | $fff/vote extend 5|10$4d8 | $fff/vote replay$4d8 | "
-            "$fff/vote yes$4d8/$fffno$4d8 | $fff/vote 5$4d8/$fff10$4d8 (when extend vote is active).",
+            "$fff/vote skip$4d8 | $fff/vote extend 5|10|15$4d8 | $fff/vote replay$4d8 | "
+            "$fff/vote yes$4d8/$fffno$4d8 | $fff/vote 5$4d8/$fff10$4d8/$fff15$4d8 (when extend vote is active).",
             player,
         )
 
@@ -611,6 +611,9 @@ class App_Voting(AppConfig):
         if token in ("10", "+10", "extend10"):
             await self._cast(player, "extend_10")
             return
+        if token in ("15", "+15", "extend15"):
+            await self._cast(player, "extend_15")
+            return
 
         if token == "cancel":
             from pyplanet.apps.tmsm.ui import perms as _perms
@@ -624,7 +627,9 @@ class App_Voting(AppConfig):
             await self._start_skip_vote(player)
             return
         if token == "extend":
-            if arg2 in ("10", "+10", "extend10"):
+            if arg2 in ("15", "+15", "extend15"):
+                await self._start_extend_vote(player, minutes=15)
+            elif arg2 in ("10", "+10", "extend10"):
                 await self._start_extend_vote(player, minutes=10)
             else:
                 await self._start_extend_vote(player, minutes=5)
@@ -687,7 +692,13 @@ class App_Voting(AppConfig):
     async def _start_extend_vote(self, player, minutes: int = 5) -> None:
         if not await self._can_start_vote(player):
             return
-        mins = 10 if int(minutes) >= 10 else 5
+        req = int(minutes)
+        if req >= 15:
+            mins = 15
+        elif req >= 10:
+            mins = 10
+        else:
+            mins = 5
         await self._emit_engine("request_start", {
             "key": f"extend_time_{mins}",
             "title": f"Extend timelimit by +{mins} min?",
@@ -737,7 +748,7 @@ class App_Voting(AppConfig):
         opts = [str(o.get("label") or o.get("value")) for o in list(vote.get("options") or []) if isinstance(o, dict)]
         await self._broadcast(
             f"$4d8Vote started:$fff {title}$4d8 ({'/'.join(opts)}). "
-            f"Use $fff/vote yes/no$4d8 or $fff/vote 5|10$4d8 depending on vote."
+            f"Use $fff/vote yes/no$4d8 or $fff/vote 5|10|15$4d8 depending on vote."
         )
         await self._refresh_view()
 

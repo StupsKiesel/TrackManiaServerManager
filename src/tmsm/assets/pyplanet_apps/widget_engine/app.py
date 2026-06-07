@@ -44,6 +44,18 @@ _ENGINE_SIGNALS = (
     "refresh",
 )
 
+_TMSM_WIDGETS_SIGNALS = (
+    "register",
+    "request_register",
+    "refresh",
+    "runtime_override_set",
+    "runtime_override_clear",
+    "runtime_override_clear_owner",
+    "runtime_layout_apply",
+    "runtime_layout_clear_owner",
+    "runtime_layout_clear_all",
+)
+
 
 # Phase signals to listen for (slice 3). Order does not matter; the engine
 # only refreshes when the resolved phase actually changes.
@@ -90,6 +102,9 @@ class WidgetsApp(AppConfig):
         # widget_key -> tuple(ids). Missing key = inherit addon manifest;
         # empty tuple = explicit "hide nothing".
         self._ui_modules_overrides: dict[str, tuple[str, ...]] = {}
+        # owner -> set of (login, key) transient overlays set through
+        # tmsm_widgets:runtime_override_set with a specific login.
+        self._runtime_owner_transients: dict[str, set[tuple[str, str]]] = {}
 
     # ---- monitor compatibility API -----------------------------------
 
@@ -120,10 +135,26 @@ class WidgetsApp(AppConfig):
                 )
             except Exception:
                 logger.debug("widget_engine: signal %s already registered", code)
+        for code in _TMSM_WIDGETS_SIGNALS:
+            try:
+                self.context.signals.register_signal(
+                    Signal(code=code, namespace="tmsm_widgets")
+                )
+            except Exception:
+                logger.debug("widget_engine: legacy signal %s already registered", code)
 
     async def on_start(self) -> None:
         self.context.signals.listen("widget_engine:register", self._on_register)
         self.context.signals.listen("widget_engine:refresh", self._on_refresh)
+        # Legacy/compat namespace bridge.
+        self.context.signals.listen("tmsm_widgets:register", self._on_register)
+        self.context.signals.listen("tmsm_widgets:refresh", self._on_refresh)
+        self.context.signals.listen("tmsm_widgets:runtime_override_set", self._on_runtime_override_set)
+        self.context.signals.listen("tmsm_widgets:runtime_override_clear", self._on_runtime_override_clear)
+        self.context.signals.listen("tmsm_widgets:runtime_override_clear_owner", self._on_runtime_override_clear_owner)
+        self.context.signals.listen("tmsm_widgets:runtime_layout_apply", self._on_runtime_layout_apply)
+        self.context.signals.listen("tmsm_widgets:runtime_layout_clear_owner", self._on_runtime_layout_clear_owner)
+        self.context.signals.listen("tmsm_widgets:runtime_layout_clear_all", self._on_runtime_layout_clear_all)
         # Race phase tracking (slice 3). The handler closes over the Phase
         # value so we don't need one handler per phase.
         for code, ph in _PHASE_SIGNALS:
@@ -190,6 +221,11 @@ class WidgetsApp(AppConfig):
             await sig.send_robust({}, raw=True)
         except Exception:
             logger.exception("widget_engine: emit request_register failed")
+        try:
+            sig = self.context.signals.get_signal("tmsm_widgets:request_register")
+            await sig.send_robust({}, raw=True)
+        except Exception:
+            logger.debug("widget_engine: emit legacy request_register failed")
         # Slice 8: manager view + admin command + hub tile. All three need
         # the tmsm_ui app to be loaded — without it the manager view can't
         # be constructed and `//widget` would have nothing to open.
@@ -530,6 +566,115 @@ class WidgetsApp(AppConfig):
                     await view.display()
             except Exception:
                 logger.exception("widget_engine: refresh '%s' failed", k)
+
+    @staticmethod
+    def _unwrap_payload(kwargs: dict) -> dict:
+        src = kwargs.get("source")
+        if isinstance(src, dict):
+            return src
+        out = dict(kwargs)
+        out.pop("signal", None)
+        out.pop("source", None)
+        return out
+
+    async def _on_runtime_override_set(self, **kwargs):
+        payload = self._unwrap_payload(kwargs)
+        owner = str(payload.get("owner") or "").strip()
+        key = str(payload.get("widget_key") or payload.get("key") or "").strip()
+        login = str(payload.get("login") or "").strip()
+        if not owner or key not in self._entries:
+            return
+        patch: dict[str, object] = {}
+        for col in ("x", "y", "w", "h", "drive_mode", "anim_dir", "anim_duration_ms"):
+            if col in payload and payload[col] is not None:
+                patch[col] = payload[col]
+        delay = payload.get("anim_delay_ms")
+        if delay is not None:
+            patch["anim_in_delay_ms"] = delay
+            patch["anim_out_delay_ms"] = delay
+        if payload.get("enabled") is not None:
+            patch["disabled"] = not bool(payload.get("enabled"))
+        pos = payload.get("pos")
+        if isinstance(pos, dict):
+            for col in ("x", "y", "w", "h"):
+                if pos.get(col) is not None:
+                    patch[col] = pos.get(col)
+        if not patch:
+            return
+
+        if login:
+            await self.engine.set_transient(login, key, patch, ttl_s=None)
+            self._runtime_owner_transients.setdefault(owner, set()).add((login, key))
+            return
+        await self.engine.set_runtime_layout(owner, key, patch)
+
+    async def _on_runtime_override_clear(self, **kwargs):
+        payload = self._unwrap_payload(kwargs)
+        owner = str(payload.get("owner") or "").strip()
+        key = str(payload.get("widget_key") or payload.get("key") or "").strip()
+        login = str(payload.get("login") or "").strip()
+        if not owner or key not in self._entries:
+            return
+        if login:
+            await self.engine.clear_transient(login, key)
+            refs = self._runtime_owner_transients.get(owner)
+            if refs is not None:
+                refs.discard((login, key))
+                if not refs:
+                    self._runtime_owner_transients.pop(owner, None)
+            return
+        await self.engine.clear_runtime_layout(owner, key)
+
+    async def _on_runtime_override_clear_owner(self, **kwargs):
+        payload = self._unwrap_payload(kwargs)
+        owner = str(payload.get("owner") or "").strip()
+        if not owner:
+            return
+        refs = list(self._runtime_owner_transients.pop(owner, set()))
+        for login, key in refs:
+            try:
+                await self.engine.clear_transient(login, key)
+            except Exception:
+                logger.exception(
+                    "widget_engine: clear owner transient '%s' '%s'/'%s' failed",
+                    owner, login, key,
+                )
+        await self.engine.clear_runtime_owner(owner)
+
+    async def _on_runtime_layout_apply(self, **kwargs):
+        payload = self._unwrap_payload(kwargs)
+        owner = str(payload.get("owner") or "").strip()
+        rows = payload.get("widgets") or payload.get("entries") or []
+        if not owner or not isinstance(rows, list):
+            return
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            key = str(row.get("widget_key") or row.get("key") or "").strip()
+            if key not in self._entries:
+                continue
+            patch = {
+                k: v for k, v in row.items()
+                if k in {
+                    "x", "y", "w", "h",
+                    "drive_mode", "anim_dir",
+                    "anim_duration_ms", "anim_in_delay_ms", "anim_out_delay_ms",
+                    "disabled",
+                }
+            }
+            if not patch:
+                continue
+            await self.engine.set_runtime_layout(owner, key, patch)
+
+    async def _on_runtime_layout_clear_owner(self, **kwargs):
+        payload = self._unwrap_payload(kwargs)
+        owner = str(payload.get("owner") or "").strip()
+        if not owner:
+            return
+        await self.engine.clear_runtime_owner(owner)
+
+    async def _on_runtime_layout_clear_all(self, **kwargs):  # noqa: ARG002
+        await self.engine.clear_runtime_all()
 
     async def _redisplay(self, key: str) -> None:
         app = self._widget_apps.get(key)
@@ -886,10 +1031,11 @@ class WidgetsApp(AppConfig):
         for login in targets:
             if not login:
                 continue
+            resolved = self.engine.resolve(key, login)
             # Per-player opt-out OR out-of-phase: send an empty manialink
             # so the override is cleared. The default UI will not
             # necessarily come back until the next mode-script refresh.
-            if out_of_phase or not self.is_replacement_enabled(login, key):
+            if out_of_phase or (resolved is not None and bool(resolved.disabled)) or not self.is_replacement_enabled(login, key):
                 xml = f'<manialink id="{manialink_id}" version="3"></manialink>'
                 if out_of_phase:
                     logger.debug(
@@ -909,7 +1055,6 @@ class WidgetsApp(AppConfig):
                     )
                     continue
                 xml = self._wrap_replacement_xml(body or "", manialink_id)
-                resolved = self.engine.resolve(key, login)
                 if entry.gbx_replace.chrome:
                     xml = self._inject_replacement_chrome(xml, entry, resolved)
             try:
@@ -1201,6 +1346,9 @@ class WidgetsApp(AppConfig):
             "tset":    self._sub_tset,
             "tclear":  self._sub_tclear,
             "tlist":   self._sub_tlist,
+            "rset":    self._sub_rset,
+            "rclear":  self._sub_rclear,
+            "rlist":   self._sub_rlist,
             "debug":   self._sub_debug,
             "edit":    self._sub_edit,
             "done":    self._sub_done,
@@ -1233,6 +1381,9 @@ class WidgetsApp(AppConfig):
             "$fff//widget tset <key> <ttl_s> <x> <y> <w> <h>$888 \u2014 transient overlay for you (TTL seconds, 0=none)",
             "$fff//widget tclear <key>$888 \u2014 clear your transient overlay for this widget",
             "$fff//widget tlist$888 \u2014 list your live transient overlays",
+            "$fff//widget rset <owner> <key> <x> <y> <w> <h> [disabled0|1]$888 \u2014 set temporary runtime layout patch",
+            "$fff//widget rclear <owner> [<key>]$888 \u2014 clear temporary runtime patch (owner or owner+key)",
+            "$fff//widget rlist [<owner>]$888 \u2014 list active temporary runtime layout patches",
             "$fff//widget debug [<key>|all|off]$888 \u2014 toggle per-player debug overlay",
             "$fff//widget edit <key>$888 \u2014 enter edit mode (bypasses hide rules; auto-enables debug)",
             "$fff//widget done$888 \u2014 leave edit mode",
@@ -1357,6 +1508,21 @@ class WidgetsApp(AppConfig):
             return Phase(name.lower())
         except ValueError:
             return None
+
+    def _resolve_widget_key_cmd(self, raw: str) -> str:
+        key = str(raw or "").strip()
+        aliases = {
+            "local_records_widget": "local_rankings",
+            "local_records": "local_rankings",
+            "local_rankings_widget": "local_rankings",
+            "live_records_widget": "live_rankings",
+            "live_records": "live_rankings",
+            "live_rankings_widget": "live_rankings",
+            "best_cps_widget": "best_cps",
+            "best_cps2_widget": "best_cps2",
+            "karma": "karma_widget",
+        }
+        return aliases.get(key, key)
 
     async def _sub_pset(self, player, rest):
         if len(rest) != 6:
@@ -1516,6 +1682,89 @@ class WidgetsApp(AppConfig):
                     cells.append(f"{col}={v}")
             await self.instance.chat(
                 f"$fff{key}$888  " + " ".join(cells), player.login,
+            )
+
+    # ---- runtime layout subcommands (slice 5.5) ----------------------
+
+    async def _sub_rset(self, player, rest):
+        if len(rest) not in (6, 7):
+            await self.instance.chat(
+                "$f80usage: //widget rset <owner> <key> <x> <y> <w> <h> [disabled0|1]",
+                player.login,
+            )
+            return
+        owner, key = rest[0], self._resolve_widget_key_cmd(rest[1])
+        if key not in self._entries:
+            await self.instance.chat(
+                f"$f80widget_engine: unknown widget '{key}'", player.login,
+            )
+            return
+        try:
+            x, y, w, h = (float(v) for v in rest[2:6])
+        except ValueError:
+            await self.instance.chat(
+                "$f80widget_engine: x/y/w/h must be numbers", player.login,
+            )
+            return
+        patch: dict[str, object] = {"x": x, "y": y, "w": w, "h": h}
+        if len(rest) == 7:
+            raw = str(rest[6]).strip().lower()
+            patch["disabled"] = raw in {"1", "true", "yes", "on"}
+        await self.engine.set_runtime_layout(owner, key, patch)
+        await self.instance.chat(
+            f"$0afwidget_engine: runtime[{owner}] '{key}' -> "
+            f"pos={x:.1f},{y:.1f} size={w:.1f}x{h:.1f}",
+            player.login,
+        )
+
+    async def _sub_rclear(self, player, rest):
+        if len(rest) not in (1, 2):
+            await self.instance.chat(
+                "$f80usage: //widget rclear <owner> [<key>]", player.login,
+            )
+            return
+        owner = rest[0]
+        if len(rest) == 1:
+            await self.engine.clear_runtime_owner(owner)
+            await self.instance.chat(
+                f"$0afwidget_engine: runtime owner '{owner}' cleared", player.login,
+            )
+            return
+        key = self._resolve_widget_key_cmd(rest[1])
+        if key not in self._entries:
+            await self.instance.chat(
+                f"$f80widget_engine: unknown widget '{key}'", player.login,
+            )
+            return
+        await self.engine.clear_runtime_layout(owner, key)
+        await self.instance.chat(
+            f"$0afwidget_engine: runtime[{owner}] '{key}' cleared", player.login,
+        )
+
+    async def _sub_rlist(self, player, rest):
+        owner = rest[0] if rest else None
+        rows = self.engine.runtime_layout_all(owner=owner)
+        if not rows:
+            await self.instance.chat(
+                "$0afwidget_engine: no runtime layout patches", player.login,
+            )
+            return
+        await self.instance.chat(
+            f"$0afwidget_engine: {len(rows)} runtime patch(es)", player.login,
+        )
+        for (own, key), patch in sorted(rows.items()):
+            cells = []
+            for col in ("x", "y", "w", "h", "drive_mode", "anim_dir", "disabled"):
+                v = patch.get(col)
+                if v is None:
+                    continue
+                if isinstance(v, float):
+                    cells.append(f"{col}={v:.1f}")
+                else:
+                    cells.append(f"{col}={v}")
+            await self.instance.chat(
+                f"$fff{own}$888/{key}  " + " ".join(cells),
+                player.login,
             )
 
     # ---- debug overlay subcommand (slice 6) ---------------------------

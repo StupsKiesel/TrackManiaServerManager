@@ -107,14 +107,8 @@
                           color=('fff' if f.dirty else 'ccc')) }}
               {% if f.kind == 'bool' %}
                 {% set on = (f.value == '1') %}
-                {% set bcolor = ('0f0' if on else '888') %}
-                <quad pos="{{ cx + col_w - 20 }} {{ fy + 1.5 }}" z-index="202"
-                      size="18 3.5" bgcolor="fff1" halign="left" valign="top"
-                      id="tog_{{ id }}__toggle__{{ f.key }}"
-                      action="{{ id }}__toggle__{{ f.key }}" ScriptEvents="1" />
-                {{ ui.label(('on' if on else 'off'),
-                            x=cx + col_w - 4, y=fy, halign='right',
-                            size='sm', color=bcolor) }}
+                {{ ui.check_box('toggle__' ~ f.key, checked=on,
+                                x=cx + col_w - 4, y=fy, size='sm') }}
               {% else %}
                 {{ ui.line_edit('field__' ~ f.key, value=f.value,
                                 x=cx + col_w - 32, y=fy, width=30, size='sm') }}

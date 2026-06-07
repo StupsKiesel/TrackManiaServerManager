@@ -1,0 +1,22 @@
+{% import 'widget_engine/frame.xml' as widgets with context %}
+
+{% set widget_w = widget_w|default(58.0) %}
+{% set widget_h = widget_h|default(18.0) %}
+
+{% call widgets.frame() %}
+  <label pos="1.4 -1.4" z-index="42" text="$dddRMC RULES" textsize="0.92" textfont="GameFontBlack" />
+  <label pos="45.0 -1.4" z-index="42" text="$aaa{{ title_right|default('inactive') }}" textsize="0.86" textfont="GameFontBlack" />
+
+  <label pos="2.0 -5.0" z-index="42" text="$aaaGoal" textsize="0.82" textfont="GameFontBlack" />
+  <label pos="9.8 -5.0" z-index="42" text="$fff{{ goal_text|default('AT') }}" textsize="0.98" textfont="GameFontBlack" />
+
+  <label pos="2.0 -8.2" z-index="42" sizen="54 3" text="$aaaTimer: $fff{{ timer_text|default('--:--.--- / --:--.---') }}"
+         textsize="0.78" textfont="GameFontBlack" />
+
+  <label pos="2.0 -11.5" z-index="42" sizen="54 3" text="$ccc{{ rules_line_1|default('First clear advances.') }}"
+         textsize="0.76" textfont="GameFontBlack" />
+  <label pos="2.0 -14.2" z-index="42" sizen="54 3" text="$ccc{{ rules_line_2|default('1 free skip vote per run.') }}"
+         textsize="0.76" textfont="GameFontBlack" />
+  <label pos="2.0 -16.9" z-index="42" sizen="54 3" text="$777{{ rules_line_3|default('/rmc status for details') }}"
+         textsize="0.74" textfont="GameFontBlack" />
+{% endcall %}

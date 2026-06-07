@@ -34,6 +34,10 @@
 
 <frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
 
+  {% set show_wprof_window = (is_admin and wprof_window_open and selected_key) %}
+
+  {% if not show_wprof_window %}
+
   {{ ui.window('Game Modes', icon='cogs',
                x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
 
@@ -90,20 +94,36 @@
       {{ ui.label((sel.description or ''),
                   x=right_x, y=-23, size='sm', color='ccc') }}
 
-      {# Action bar: Activate / Stop on the same row. #}
       {% set ay = -30 %}
-      {% if active_key == sel.key %}
-        {{ ui.push_button('mode_stop', 'Stop',
-                          x=right_x, y=ay, halign='left',
-                          icon='stop', variant='danger', size='sm', width=24) }}
+
+      {# Action bar: runtime controls operator-only; admin panel is config-only. #}
+      {% if runtime_controls_enabled %}
+        {% if active_key == sel.key %}
+          {{ ui.push_button('mode_stop', 'Stop',
+                            x=right_x, y=ay, halign='left',
+                            icon='stop', variant='danger', size='sm', width=24) }}
+        {% else %}
+          {{ ui.push_button('mode_start__' ~ sel.key, 'Activate',
+                            x=right_x, y=ay, halign='left',
+                            icon='play', variant='success', size='sm', width=24) }}
+        {% endif %}
+        {{ ui.push_button('mode_save', 'Save config',
+                          x=right_x + 26, y=ay, halign='left',
+                          icon='save', variant='primary', size='sm', width=28) }}
       {% else %}
-        {{ ui.push_button('mode_start__' ~ sel.key, 'Activate',
+        {{ ui.push_button('mode_save', 'Save config',
                           x=right_x, y=ay, halign='left',
-                          icon='play', variant='success', size='sm', width=24) }}
+                          icon='save', variant='primary', size='sm', width=28) }}
       {% endif %}
-      {{ ui.push_button('mode_save', 'Save config',
-                        x=right_x + 26, y=ay, halign='left',
-                        icon='save', variant='primary', size='sm', width=28) }}
+      {% if is_admin %}
+        {{ ui.check_box('opmode__' ~ sel.key,
+                        label='Operator can run this mode',
+                        checked=operator_mode_allowed,
+                        x=right_x + 31, y=ay, size='sm') }}
+        {{ ui.push_button('wprof_open', 'Widget layout',
+                          x=right_x + right_w - 3, y=ay,
+                          halign='right', variant='ghost', size='sm', width=26) }}
+      {% endif %}
 
       {# Active mode status block. #}
       {% if active_key == sel.key %}
@@ -124,100 +144,88 @@
       {% else %}
         {% set cfg_y = ay - 8 %}
       {% endif %}
+      {% set cfg_pag_y = -win_h + 7 %}
+      {% set cfg_pag_btn_h = 4.5 %}
+      {% set cfg_pag_top_gap = 1.0 %}
+      {% set cfg_group_h = (active_config|length) * 7 + 18 %}
 
       {# Config editor. #}
       {% if active_config %}
+        {% set cfg_h_content = (active_config|length) * 7 + 18 %}
+        {% set cfg_h_min_target_y = cfg_pag_y + (cfg_pag_btn_h / 2) - cfg_pag_top_gap %}
+        {% set cfg_h_min = cfg_y - cfg_h_min_target_y %}
+        {% set cfg_group_h = [cfg_h_content, cfg_h_min]|max %}
+        {% set cfg_col1_x = right_x + 3 %}
+        {% set cfg_col2_x = right_x + right_w - 42 %}
+        {% set cfg_col3_x = right_x + right_w - 8 %}
         {% call ui.group_box(title='Configuration',
                              x=right_x, y=cfg_y,
-                             w=right_w, h=(active_config|length) * 7 + 12,
+                             w=right_w, h=cfg_group_h,
                              color='fff', border='fff5') %}
-          {{ ui.push_button('cfgpage__prev', 'Prev',
-                            x=right_x + 3, y=cfg_y - 3.8, halign='left',
-                            variant=('primary' if cfg_has_prev else 'ghost'),
-                            size='sm', width=14) }}
-          {{ ui.label('Page ' ~ cfg_page ~ '/' ~ cfg_pages_total,
-                      x=right_x + right_w / 2, y=cfg_y - 3.2,
-                      halign='center', size='sm', color='aaa') }}
-          {{ ui.push_button('cfgpage__next', 'Next',
-                            x=right_x + right_w - 3, y=cfg_y - 3.8, halign='right',
-                            variant=('primary' if cfg_has_next else 'ghost'),
-                            size='sm', width=14) }}
+          {{ ui.label('Option',
+                      x=cfg_col1_x, y=cfg_y - 7, size='sm', color='888') }}
+          {{ ui.label('Value',
+                      x=cfg_col2_x, y=cfg_y - 7, size='sm', color='888') }}
+          {{ ui.label('Operator editable',
+                      x=cfg_col3_x + 1, y=cfg_y - 7, halign='right',
+                      size='sm', color='888') }}
           {% for field in active_config %}
-            {% set fy = cfg_y - 10 - loop.index0 * 7 %}
+            {% set fy = cfg_y - 13 - loop.index0 * 7 %}
             {{ ui.label(field.label,
-                        x=right_x + 3, y=fy, size='sm', color='ccc') }}
+                        x=cfg_col1_x, y=fy, size='sm', color='ccc') }}
             {% if field.type == 'bool' %}
               {{ ui.check_box('cfg__' ~ field.key, label='',
                               checked=field.value,
-                              x=right_x + right_w - 8, y=fy, size='sm') }}
+                              x=cfg_col2_x + 4, y=fy, size='sm') }}
             {% elif field.type == 'int' %}
               {{ ui.line_edit('cfg__' ~ field.key,
                               value=(field.value|string),
                               placeholder=(field.value|string),
-                              x=right_x + right_w - 28, y=fy - 1.5,
-                              width=24, size='sm') }}
+                              x=cfg_col2_x, y=fy - 1.5,
+                              width=28, size='sm') }}
+            {% elif field.type == 'choice' %}
+              {{ ui.combo_box('cfg__' ~ field.key,
+                              field.choices,
+                              selected=(field.value|string),
+                              open=field.combo_open,
+                              x=cfg_col2_x, y=fy - 0.2,
+                              w=28, size='sm') }}
             {% else %}
               {{ ui.line_edit('cfg__' ~ field.key,
                               value=(field.value|string),
-                              x=right_x + right_w - 38, y=fy - 1.5,
-                              width=34, size='sm') }}
+                              x=cfg_col2_x, y=fy - 1.5,
+                              width=28, size='sm') }}
+            {% endif %}
+            {% if is_admin %}
+              {% set pf = namespace(allowed=False) %}
+              {% for pol in operator_field_policy %}
+                {% if pol.key == field.key %}{% set pf.allowed = pol.allowed %}{% endif %}
+              {% endfor %}
+              {{ ui.check_box('opfield__' ~ selected_key ~ '__' ~ field.key,
+                              label='',
+                              checked=pf.allowed,
+                              x=cfg_col3_x, y=fy, size='sm') }}
+            {% else %}
+              {{ ui.label('-',
+                          x=cfg_col3_x + 1, y=fy, halign='right',
+                          size='sm', color='777') }}
             {% endif %}
           {% endfor %}
         {% endcall %}
       {% endif %}
 
-      {% if mode_widgets_editable %}
-        {% set wy = cfg_y - ((active_config|length) * 7 + 17) %}
-        {% call ui.group_box(title='Mode widgets',
-                             x=right_x, y=wy,
-                             w=right_w, h=24,
-                             color='fff', border='fff5') %}
-          {{ ui.label('Required:', x=right_x + 3, y=wy - 5, size='sm', color='aaa') }}
-          {% for k in mode_required_widgets[:3] %}
-            {% set ry = wy - 8.8 - loop.index0 * 3.3 %}
-            {{ ui.label(k, x=right_x + 3, y=ry, size='sm', color='fff') }}
-            {{ ui.label('required',
-                        x=right_x + right_w - 3, y=ry,
-                        halign='right', size='sm', color='777') }}
-          {% endfor %}
-          {% if not mode_required_widgets %}
-            {{ ui.label('(none)', x=right_x + 3, y=wy - 8.8, size='sm', color='666') }}
-          {% endif %}
-
-          {{ ui.label('Extra:', x=right_x + 28, y=wy - 5, size='sm', color='aaa') }}
-          {% for k in mode_extra_widgets[:3] %}
-            {% set ey = wy - 8.8 - loop.index0 * 3.3 %}
-            {{ ui.label(k, x=right_x + 28, y=ey, size='sm', color='cff') }}
-            {{ ui.push_button('gmw__delextra__' ~ k, '-',
-                              x=right_x + right_w - 13, y=ey - 0.4,
-                              halign='right', variant='danger', size='sm', width=8) }}
-          {% endfor %}
-          {% if not mode_extra_widgets %}
-            {{ ui.label('(none)', x=right_x + 28, y=wy - 8.8, size='sm', color='666') }}
-          {% endif %}
-
-          {{ ui.label('Available:', x=right_x + 3, y=wy - 16.8, size='sm', color='aaa') }}
-          {% if mode_available_widgets %}
-            {% set ak = mode_available_widgets[0] %}
-            {{ ui.label(ak, x=right_x + 19, y=wy - 16.8, size='sm', color='fff') }}
-            {{ ui.push_button('gmw__addreq__' ~ ak, '+Req',
-                              x=right_x + right_w - 22, y=wy - 17.2,
-                              halign='right', variant='primary', size='sm', width=14) }}
-            {{ ui.push_button('gmw__addextra__' ~ ak, '+Extra',
-                              x=right_x + right_w - 3, y=wy - 17.2,
-                              halign='right', variant='success', size='sm', width=16) }}
-            {% if mode_available_widgets|length > 1 %}
-              {{ ui.label('(' ~ (mode_available_widgets|length - 1) ~ ' more; edit csv for precise picks)',
-                          x=right_x + 3, y=wy - 20.6, size='sm', color='777') }}
-            {% endif %}
-          {% else %}
-            {{ ui.label('(none)', x=right_x + 19, y=wy - 16.8, size='sm', color='666') }}
-          {% endif %}
-        {% endcall %}
+      {% if active_config and cfg_pages_total > 1 %}
+        {% set cfg_pag_w = 49.4 %}
+        {% set cfg_pag_x = right_x + (right_w - cfg_pag_w) / 2 %}
+        {{ ui.pagination('cfgpage', page=cfg_page, total_pages=cfg_pages_total,
+                         x=cfg_pag_x, y=cfg_pag_y,
+                         max_visible=5, btn_w=5, btn_h=cfg_pag_btn_h, gap=0.4) }}
       {% endif %}
+
+      {% set next_y = cfg_y - (cfg_group_h + 5) %}
 
       {% if mode_layout_editable %}
-        {% set ly = cfg_y - ((active_config|length) * 7 + (42 if mode_widgets_editable else 17)) %}
+        {% set ly = next_y %}
         {% call ui.group_box(title='Temporary layout (points HUD)',
                              x=right_x, y=ly,
                  w=right_w, h=31,
@@ -337,6 +345,465 @@
                 ~ '   (' ~ vote_snapshot.total
                 ~ ' votes, ' ~ vote_snapshot.remaining ~ 's left)',
                 x=4, y=vy, size='sm', color='fc4') }}
+  {% endif %}
+
+  {% else %}
+
+  {# =========================================================================
+     Widget layout profile · master/detail editor (widget_engine style).
+     Three sub-views share the same window:
+       - list   : rows of saved profile entries + "+ Add widget"
+       - picker : choose which widget key to add
+       - editor : position dpad + W/H steppers + disabled toggle + actions
+     The parent gamemodes window is fully hidden while this overlay is open
+     (single-window rule).
+  ============================================================================ #}
+
+  {% set WP_W = 200 %}
+  {% set WP_H = 110 %}
+  {% set WP_HDR_H = 8 %}
+  {% set WP_BODY_TOP = -WP_HDR_H %}
+  {% set WP_BODY_H = WP_H - WP_HDR_H %}
+
+  {% set ns = namespace(sel=None) %}
+  {% for m in modes %}{% if m.key == selected_key %}{% set ns.sel = m %}{% endif %}{% endfor %}
+  {% set sel = ns.sel %}
+  {% set mode_label = (sel.name if sel else selected_key)|string %}
+
+  {# Title varies per sub-view so the breadcrumb chrome reflects context. #}
+  {% if wprof_view == 'editor' and wprof_editor %}
+    {% set wp_title = 'Widget layout · ' ~ mode_label ~ ' · ' ~ wprof_editor.widget_key %}
+  {% elif wprof_view == 'picker' %}
+    {% set wp_title = 'Widget layout · ' ~ mode_label ~ ' · add widget' %}
+  {% else %}
+    {% set wp_title = 'Widget layout · ' ~ mode_label %}
+  {% endif %}
+
+  {{ ui.window(wp_title, icon='th-large',
+               x=0, y=0, w=WP_W, h=WP_H,
+               crumbs=[
+                 {'key': 'hub',              'label': 'Hub'},
+                 {'key': 'gamemodes_admin',  'label': 'Game modes admin'},
+                 {'key': 'wprof',            'label': 'Widget layout'},
+               ]) }}
+
+  {# Close (×) is wired via wprof_close; the action lives off-frame too. #}
+  {{ ui.push_button('wprof_close', 'Close', icon='times',
+                    x=WP_W - 3, y=WP_BODY_TOP - 2,
+                    halign='right', variant='ghost', size='sm', z=140) }}
+
+  {# ── LIST VIEW =========================================================== #}
+  {% if wprof_view == 'list' %}
+    <label pos="3 {{ WP_BODY_TOP - 4 }}" z-index="135"
+           halign="left" valign="center2"
+           text="$fff{{ widget_profile_rows|length }} widget{{ '' if widget_profile_rows|length == 1 else 's' }} in profile  $888· mode $aaa{{ mode_label }}"
+           textsize="1.1" textfont="GameFontBlack" />
+
+    {{ ui.push_button('wprof_view__picker', '+ Add widget',
+                      x=WP_W - 22, y=WP_BODY_TOP - 4,
+                      halign='right', variant='primary', size='sm', z=140) }}
+
+    {% set WP_LIST_Y = WP_BODY_TOP - 9 %}
+    {% set WP_ROW_H = 6 %}
+    {% set WP_ROW_GAP = 0.4 %}
+    {% set WP_MAX_ROWS = 10 %}
+
+    {% if widget_profile_rows|length == 0 %}
+      <label pos="{{ WP_W/2 }} {{ WP_LIST_Y - 12 }}" z-index="135"
+             halign="center" valign="center2"
+             text="$666No widgets in this mode profile."
+             textsize="1.1" textfont="GameFont" />
+      <label pos="{{ WP_W/2 }} {{ WP_LIST_Y - 16 }}" z-index="135"
+             halign="center" valign="center2"
+             text="$555Use $aaa+ Add widget$555 to override a widget's position for this mode."
+             textsize="0.9" textfont="GameFont" />
+    {% else %}
+      <frame pos="3 {{ WP_LIST_Y }}" z-index="138">
+        {% for wr in wprof_list_rows %}
+          {% set ry = -(loop.index0 * (WP_ROW_H + WP_ROW_GAP)) %}
+          {% set RW = WP_W - 6 %}
+          {# alternating row background, like widget_engine manager #}
+          <quad pos="0 {{ ry }}" size="{{ RW }} {{ WP_ROW_H }}"
+                valign="top" halign="left"
+                bgcolor="{{ '15151588' if loop.index0 % 2 == 0 else '0a0a0a88' }}" />
+          {# left status stripe: green active / dim if disabled #}
+          <quad pos="0 {{ ry }}" size="0.6 {{ WP_ROW_H }}"
+                valign="top" halign="left"
+                bgcolor="{{ '666c' if wr.disabled else '0d8f' }}" />
+          {# name + key #}
+          <label pos="1.6 {{ ry - WP_ROW_H/2 + 1 }}" z-index="139"
+                 halign="left" valign="center2"
+                 text="${{ '888' if wr.disabled else 'fff' }}{{ wr.widget_key }}"
+                 textsize="1.0" textfont="GameFontBlack" />
+          {# geometry read-out #}
+          <label pos="1.6 {{ ry - WP_ROW_H/2 - 1.4 }}" z-index="139"
+                 halign="left" valign="center2"
+                 text="$888x $aaa{{ wr.x }}$888  y $aaa{{ wr.y }}$888  w $aaa{{ wr.w }}$888  h $aaa{{ wr.h }}{% if wr.disabled %}$888  ·  $f84disabled{% endif %}"
+                 textsize="0.85" textfont="GameFont" />
+          {# right-aligned icon buttons (mirrors widget_engine row chrome) #}
+          {% set bw = WP_ROW_H - 0.6 %}
+          {# remove (trash) #}
+          <quad pos="{{ RW - bw - 0.5 }} {{ ry - 0.3 }}"
+                size="{{ bw }} {{ bw }}"
+                valign="top" halign="left" bgcolor="c33b"
+                id="uibtn_danger_{{ id }}__wprof_del__{{ wr.widget_key }}"
+                action="{{ id }}__wprof_del__{{ wr.widget_key }}" scriptevents="1"
+                class="ui-btn ui-btn-danger" />
+          <label pos="{{ RW - bw/2 - 0.5 }} {{ ry - WP_ROW_H/2 }}" z-index="140"
+                 halign="center" valign="center2"
+                 text="$fff{{ '&#xf1f8;'|safe }}"
+                 textsize="1.0" textfont="GameFontBlack" />
+          {# edit (pencil) #}
+          <quad pos="{{ RW - 2*bw - 0.9 }} {{ ry - 0.3 }}"
+                size="{{ bw }} {{ bw }}"
+                valign="top" halign="left" bgcolor="0a6"
+                id="uibtn_primary_{{ id }}__wprof_edit__{{ wr.widget_key }}"
+                action="{{ id }}__wprof_edit__{{ wr.widget_key }}" scriptevents="1"
+                class="ui-btn ui-btn-primary" />
+          <label pos="{{ RW - 2*bw - 0.9 + bw/2 }} {{ ry - WP_ROW_H/2 }}"
+                 z-index="140"
+                 halign="center" valign="center2"
+                 text="$fff{{ '&#xf044;'|safe }}"
+                 textsize="1.0" textfont="GameFontBlack" />
+        {% endfor %}
+      </frame>
+    {% endif %}
+
+    {# bottom action strip: pagination (center) + Clear all (right) #}
+    {% if wprof_list_pages_total > 1 %}
+      {% set wp_pag_btn_w = 5 %}
+      {% set wp_pag_gap = 0.4 %}
+      {% set wp_pag_max = 5 %}
+      {# nav cells (first/prev/next/last) + numbered cells (max_visible) #}
+      {% set wp_pag_cells = wp_pag_max + 4 %}
+      {% set wp_pag_w = wp_pag_cells * wp_pag_btn_w + (wp_pag_cells - 1) * wp_pag_gap %}
+      {% set wp_pag_x = (WP_W - wp_pag_w) / 2 %}
+      {{ ui.pagination('wprof_listpage',
+                       page=wprof_list_page, total_pages=wprof_list_pages_total,
+                       x=wp_pag_x, y=-WP_H + 5,
+                       max_visible=wp_pag_max, btn_w=wp_pag_btn_w,
+                       btn_h=4.5, gap=wp_pag_gap) }}
+    {% else %}
+      <label pos="3 {{ -WP_H + 5 }}" z-index="140"
+             halign="left" valign="center2"
+             text="$888Profile applies automatically when this mode activates."
+             textsize="0.85" textfont="GameFont" />
+    {% endif %}
+    {{ ui.push_button('wprof_clear_all', 'Clear all', icon='trash',
+                      x=WP_W - 3, y=-WP_H + 5,
+                      halign='right', variant='danger', size='sm', z=140) }}
+  {% endif %}
+
+  {# ── PICKER VIEW ========================================================== #}
+  {% if wprof_view == 'picker' %}
+    <label pos="3 {{ WP_BODY_TOP - 4 }}" z-index="135"
+           halign="left" valign="center2"
+           text="$fffPick a widget to override  $888· {{ wprof_picker_rows|length }} available"
+           textsize="1.1" textfont="GameFontBlack" />
+    {{ ui.push_button('wprof_view__list', '← Back', icon='arrow-left',
+                      x=WP_W - 22, y=WP_BODY_TOP - 4,
+                      halign='right', variant='ghost', size='sm', z=140) }}
+
+    {% set PK_LIST_Y = WP_BODY_TOP - 9 %}
+    {% set PK_ROW_H = 5.5 %}
+    {% set PK_ROW_GAP = 0.4 %}
+    {% set PK_MAX = 12 %}
+
+    {% if wprof_picker_rows|length == 0 %}
+      <label pos="{{ WP_W/2 }} {{ PK_LIST_Y - 12 }}" z-index="135"
+             halign="center" valign="center2"
+             text="$666All known widgets are already in the profile."
+             textsize="1.1" textfont="GameFont" />
+    {% else %}
+      <frame pos="3 {{ PK_LIST_Y }}" z-index="138">
+        {% for r in wprof_picker_page_rows %}
+          {% set ry = -(loop.index0 * (PK_ROW_H + PK_ROW_GAP)) %}
+          {% set RW = WP_W - 6 %}
+          <quad pos="0 {{ ry }}" size="{{ RW }} {{ PK_ROW_H }}"
+                valign="top" halign="left"
+                bgcolor="{{ '15151588' if loop.index0 % 2 == 0 else '0a0a0a88' }}" />
+          <label pos="1.5 {{ ry - PK_ROW_H/2 }}" z-index="139"
+                 halign="left" valign="center2"
+                 text="$fff{{ r.name }}  $555{{ r.key }}"
+                 textsize="1.0" textfont="GameFontBlack" />
+          {{ ui.push_button('wprof_pick__' ~ r.key, 'Add', icon='plus',
+                            x=RW - 1, y=ry - PK_ROW_H/2,
+                            halign='right', variant='primary', size='sm', z=140) }}
+        {% endfor %}
+      </frame>
+    {% endif %}
+
+    {% if wprof_picker_pages_total > 1 %}
+      {% set pk_pag_btn_w = 5 %}
+      {% set pk_pag_gap = 0.4 %}
+      {% set pk_pag_max = 5 %}
+      {% set pk_pag_cells = pk_pag_max + 4 %}
+      {% set pk_pag_w = pk_pag_cells * pk_pag_btn_w + (pk_pag_cells - 1) * pk_pag_gap %}
+      {% set pk_pag_x = (WP_W - pk_pag_w) / 2 %}
+      {{ ui.pagination('wprof_pickpage',
+                       page=wprof_picker_page, total_pages=wprof_picker_pages_total,
+                       x=pk_pag_x, y=-WP_H + 5,
+                       max_visible=pk_pag_max, btn_w=pk_pag_btn_w,
+                       btn_h=4.5, gap=pk_pag_gap) }}
+    {% endif %}
+  {% endif %}
+
+  {# ── EDITOR VIEW ========================================================= #}
+  {% if wprof_view == 'editor' and wprof_editor %}
+    {% set ED_FORM_Y0 = WP_BODY_TOP - 4 %}
+    {% set GUT = 3 %}
+    {% set LCOL_W = 70 %}
+    {% set MCOL_W = 76 %}
+    {% set RCOL_W = WP_W - 6 - LCOL_W - MCOL_W - 2 * GUT %}
+    {% set LX = 3 %}
+    {% set MX = LX + LCOL_W + GUT %}
+    {% set RX = MX + MCOL_W + GUT %}
+
+    <label pos="3 {{ ED_FORM_Y0 }}" z-index="135"
+           halign="left" valign="center2"
+           text="$888editing  $aaa{{ wprof_editor.widget_key }}$888 · mode $aaa{{ mode_label }}{% if wprof_editor.is_new %}$888 · $cdfnew{% endif %}"
+           textsize="1.0" textfont="GameFont" />
+
+    {# ── LEFT: Position & size ─────────────────────────────────────────── #}
+    {% set PS_H = 38 %}
+    {% set PS_Y = ED_FORM_Y0 - 4 %}
+    {% call ui.group_box('Position & size', x=LX, y=PS_Y, w=LCOL_W, h=PS_H, color='aaa') %}
+      {% set TILE_W = 6 %}
+      {% set TILE_H = 5.5 %}
+      {% set DPAD_CX = LX + 12 %}
+      {% set DPAD_CY = PS_Y - 14 %}
+      {% set pos_dpad = [
+        ('up',    'arrow_up',    DPAD_CX,                  DPAD_CY + TILE_H + 0.5),
+        ('left',  'arrow_left',  DPAD_CX - TILE_W - 0.5,   DPAD_CY),
+        ('right', 'arrow_right', DPAD_CX + TILE_W + 0.5,   DPAD_CY),
+        ('down',  'arrow_down',  DPAD_CX,                  DPAD_CY - TILE_H - 0.5),
+      ] %}
+      {% for dval, dicon, bx, by in pos_dpad %}
+        <quad pos="{{ bx }} {{ by }}" size="{{ TILE_W }} {{ TILE_H }}"
+              halign="center" valign="center2" z-index="152"
+              bgcolor="ffffff14"
+              id="uibtn_ghost_{{ id }}__wprof_pos__{{ dval }}"
+              action="{{ id }}__wprof_pos__{{ dval }}" scriptevents="1"
+              class="ui-btn ui-btn-ghost" />
+        {{ ui.icon(dicon, x=bx, y=by, color='aaa', font=1.7, z=153) }}
+      {% endfor %}
+      {# center reset (re-anchor to last saved x/y) #}
+      <quad pos="{{ DPAD_CX }} {{ DPAD_CY }}" size="{{ TILE_W }} {{ TILE_H }}"
+            halign="center" valign="center2" z-index="152"
+            bgcolor="f55a"
+            id="uibtn_danger_{{ id }}__wprof_pos__reset"
+            action="{{ id }}__wprof_pos__reset" scriptevents="1"
+            class="ui-btn ui-btn-danger" />
+      {{ ui.icon('undo', x=DPAD_CX, y=DPAD_CY, color='fff', font=1.6, z=153) }}
+
+      {# X/Y read-out below dpad #}
+      <label pos="{{ DPAD_CX }} {{ DPAD_CY - TILE_H * 2 - 1 }}"
+             halign="center" valign="center2" z-index="153"
+             text="$aaaX $fff{{ wprof_editor.fields.x.display }}  $aaaY $fff{{ wprof_editor.fields.y.display }}"
+             textsize="0.85" textfont="GameFont" />
+
+      {# right side: W / H steppers + step-size #}
+      {% set wh_label_w = 4 %}
+      {% set wh_step_w = 22 %}
+      {% set wh_x = LX + 28 %}
+      {% set wh_ctrl_x = wh_x + wh_label_w + 1 %}
+      {% set wh_y0 = PS_Y - 6 %}
+      {% for fname in ['w', 'h'] %}
+        {% set fmeta = wprof_editor.fields[fname] %}
+        {% set ry = wh_y0 - loop.index0 * 7 %}
+        <label pos="{{ wh_x }} {{ ry }}" z-index="151"
+               halign="left" valign="center2"
+               text="$fff{{ fmeta.label }}"
+               textsize="1.0" textfont="GameFontBlack" />
+        {{ ui.stepper('wprof_nudge__' ~ fname,
+                      value=fmeta.display,
+                      x=wh_ctrl_x, y=ry,
+                      w=wh_step_w, size='sm', z=152) }}
+      {% endfor %}
+
+      {% set step_ry = wh_y0 - 2 * 7 - 4 %}
+      <label pos="{{ wh_x }} {{ step_ry }}" z-index="151"
+             halign="left" valign="center2"
+             text="$09fStep"
+             textsize="1.0" textfont="GameFontBlack" />
+      {{ ui.stepper('wprof_posstep',
+                    value=wprof_editor.pos_step_display,
+                    x=wh_ctrl_x, y=step_ry,
+                    w=wh_step_w, size='sm', z=152) }}
+    {% endcall %}
+
+    {# ── LEFT: Behaviour ──────────────────────────────────────────────── #}
+    {% set BH_Y = PS_Y - PS_H - 3 %}
+    {% set BH_H = 14 %}
+    {% call ui.group_box('Behaviour', x=LX, y=BH_Y, w=LCOL_W, h=BH_H, color='aaa') %}
+      {% set dmeta = wprof_editor.fields.disabled %}
+      {% set dy = BH_Y - 6 %}
+      <label pos="{{ LX + 2 }} {{ dy }}" z-index="151"
+             halign="left" valign="center2"
+             text="$fff{{ dmeta.label }}"
+             textsize="1.0" textfont="GameFontBlack" />
+      {{ ui.push_button('wprof_toggle__disabled',
+                        ('ON' if dmeta.value else 'OFF'),
+                        icon=('toggle-on' if dmeta.value else 'toggle-off'),
+                        x=LX + 18, y=dy,
+                        width=24, halign='left',
+                        variant=('danger' if dmeta.value else 'ghost'),
+                        size='sm', z=152) }}
+    {% endcall %}
+
+    {# ── MIDDLE: Animation ───────────────────────────────────────────── #}
+    {% set AN_H = PS_H + BH_H + 3 %}
+    {% set AN_Y = ED_FORM_Y0 - 4 %}
+    {% call ui.group_box('Animation', x=MX, y=AN_Y, w=MCOL_W, h=AN_H, color='aaa') %}
+      {% set amd = wprof_editor.fields.anim_dir %}
+      {% set TILE_W = 6 %}
+      {% set TILE_H = 5.5 %}
+      {% set DPAD_CX = MX + 12 %}
+      {% set DPAD_CY = AN_Y - 14 %}
+      {% set dpad = [
+        ('up',    'arrow_up',    None, DPAD_CX,                  DPAD_CY + TILE_H + 0.5),
+        ('left',  'arrow_left',  None, DPAD_CX - TILE_W - 0.5,   DPAD_CY),
+        ('none',  None,          'X',  DPAD_CX,                  DPAD_CY),
+        ('right', 'arrow_right', None, DPAD_CX + TILE_W + 0.5,   DPAD_CY),
+        ('down',  'arrow_down',  None, DPAD_CX,                  DPAD_CY - TILE_H - 0.5),
+      ] %}
+      {% for dval, dicon, dtext, bx, by in dpad %}
+        {% set is_sel = amd.value == dval %}
+        <quad pos="{{ bx }} {{ by }}" size="{{ TILE_W }} {{ TILE_H }}"
+              halign="center" valign="center2" z-index="152"
+              bgcolor="{{ '15dfa66' if is_sel else 'ffffff14' }}"
+              id="uibtn_ghost_{{ id }}__wprof_setdir__{{ dval }}"
+              action="{{ id }}__wprof_setdir__{{ dval }}" scriptevents="1"
+              class="ui-btn ui-btn-ghost" />
+        {% if dicon %}
+          {{ ui.icon(dicon, x=bx, y=by,
+                     color=('fff' if is_sel else 'aaa'),
+                     font=1.7, z=153) }}
+        {% else %}
+          <label pos="{{ bx }} {{ by }}" halign="center" valign="center2"
+                 z-index="153" textsize="0.85" textfont="GameFontBlack"
+                 text="${{ 'fff' if is_sel else 'aaa' }}{{ dtext }}" />
+        {% endif %}
+      {% endfor %}
+      <label pos="{{ DPAD_CX }} {{ DPAD_CY - TILE_H * 2 - 0.5 }}"
+             halign="center" valign="center2" z-index="153"
+             text="$aaa{{ amd.display }}{% if amd.overridden %} $cdf●{% endif %}"
+             textsize="0.9" textfont="GameFont" />
+
+      {# timing steppers right of dpad #}
+      {% set tim_x = DPAD_CX + TILE_W + 6 %}
+      {% set tim_step_w = 22 %}
+      {% set tim_step_x = tim_x + 6 %}
+      {% set tim_y0 = AN_Y - 6 %}
+      {% set tim_step = 7 %}
+      {% set ms_fields = [('anim_duration_ms', 'Dur'),
+                          ('anim_in_delay_ms',  'In'),
+                          ('anim_out_delay_ms', 'Out')] %}
+      {% for fname, flabel in ms_fields %}
+        {% set fmeta = wprof_editor.fields[fname] %}
+        {% set ry = tim_y0 - loop.index0 * tim_step %}
+        <label pos="{{ tim_x }} {{ ry }}" z-index="151"
+               halign="left" valign="center2"
+               text="$fff{{ flabel }}{% if fmeta.overridden %} $cdf●{% endif %}"
+               textsize="1.0" textfont="GameFontBlack" />
+        {{ ui.stepper('wprof_nudge__' ~ fname,
+                      value=fmeta.display,
+                      x=tim_step_x, y=ry,
+                      w=tim_step_w, size='sm', z=152) }}
+      {% endfor %}
+
+      {# drive mode buttons across bottom of animation group #}
+      {% set dmm = wprof_editor.fields.drive_mode %}
+      {% set drv_y = AN_Y - AN_H + 6 %}
+      <label pos="{{ MX + 2 }} {{ drv_y + 4 }}" z-index="151"
+             halign="left" valign="center2"
+             text="$fff{{ dmm.label }}{% if dmm.overridden %} $cdf●{% endif %}"
+             textsize="1.0" textfont="GameFontBlack" />
+      {{ ui.push_button('wprof_drive__fixed', 'Fixed',
+                        x=MX + 2, y=drv_y,
+                        halign='left', size='sm',
+                        variant=('primary' if dmm.value == 'fixed' else 'ghost'),
+                        width=16, z=152) }}
+      {{ ui.push_button('wprof_drive__hide_while_driving', 'Hide',
+                        x=MX + 19, y=drv_y,
+                        halign='left', size='sm',
+                        variant=('primary' if dmm.value == 'hide_while_driving' else 'ghost'),
+                        width=18, z=152) }}
+      {{ ui.push_button('wprof_drive__only_shown_while_driving', 'Drive',
+                        x=MX + 38, y=drv_y,
+                        halign='left', size='sm',
+                        variant=('primary' if dmm.value == 'only_shown_while_driving' else 'ghost'),
+                        width=18, z=152) }}
+    {% endcall %}
+
+    {# ── RIGHT: Summary panel (mirrors widget_engine right column) ───── #}
+    {% set SM_H = PS_H + BH_H + 3 %}
+    {% set SM_Y = ED_FORM_Y0 - 4 %}
+    {% call ui.group_box('Summary', x=RX, y=SM_Y, w=RCOL_W, h=SM_H, color='aaa') %}
+      <label pos="{{ RX + 3 }} {{ SM_Y - 6 }}" z-index="151"
+             halign="left" valign="center2"
+             text="$888widget   $fff{{ wprof_editor.widget_key }}"
+             textsize="1.0" textfont="GameFont" />
+      <label pos="{{ RX + 3 }} {{ SM_Y - 11 }}" z-index="151"
+             halign="left" valign="center2"
+             text="$888position $fff{{ wprof_editor.fields.x.display }} , {{ wprof_editor.fields.y.display }}"
+             textsize="1.0" textfont="GameFont" />
+      <label pos="{{ RX + 3 }} {{ SM_Y - 15.5 }}" z-index="151"
+             halign="left" valign="center2"
+             text="$888size     $fff{{ wprof_editor.fields.w.display }} × {{ wprof_editor.fields.h.display }}"
+             textsize="1.0" textfont="GameFont" />
+      <label pos="{{ RX + 3 }} {{ SM_Y - 20 }}" z-index="151"
+             halign="left" valign="center2"
+             text="$888state    {{ '$f84disabled' if wprof_editor.fields.disabled.value else '$0d8enabled' }}"
+             textsize="1.0" textfont="GameFont" />
+      <label pos="{{ RX + 3 }} {{ SM_Y - 24.5 }}" z-index="151"
+             halign="left" valign="center2"
+             text="$888nudge    $fff{{ wprof_editor.pos_step_display }}$888 (cycle 1/2/5/10)"
+             textsize="0.9" textfont="GameFont" />
+      <label pos="{{ RX + 3 }} {{ SM_Y - 29 }}" z-index="151"
+             halign="left" valign="center2"
+             text="$888anim     $fff{{ wprof_editor.fields.anim_dir.display }}{% if wprof_editor.fields.anim_dir.overridden %} $cdf●{% endif %}"
+             textsize="0.9" textfont="GameFont" />
+      <label pos="{{ RX + 3 }} {{ SM_Y - 33 }}" z-index="151"
+             halign="left" valign="center2"
+             text="$888timing   $fff{{ wprof_editor.fields.anim_duration_ms.display }}ms$888 dur · $fff{{ wprof_editor.fields.anim_in_delay_ms.display }}ms$888 in · $fff{{ wprof_editor.fields.anim_out_delay_ms.display }}ms$888 out"
+             textsize="0.85" textfont="GameFont" />
+      <label pos="{{ RX + 3 }} {{ SM_Y - 37 }}" z-index="151"
+             halign="left" valign="center2"
+             text="$888drive    $fff{{ wprof_editor.fields.drive_mode.display }}{% if wprof_editor.fields.drive_mode.overridden %} $cdf●{% endif %}"
+             textsize="0.9" textfont="GameFont" />
+
+      {% if wprof_editor.dirty %}
+        <quad pos="{{ RX + 3 }} {{ SM_Y - 44 }}"
+              size="{{ RCOL_W - 6 }} 5"
+              bgcolor="f93a" halign="left" valign="top" z-index="151" />
+        <label pos="{{ RX + 5 }} {{ SM_Y - 46.4 }}" z-index="152"
+               halign="left" valign="center2"
+               text="$000Unsaved changes — press Apply to persist."
+               textsize="0.9" textfont="GameFontBlack" />
+      {% else %}
+        <label pos="{{ RX + 3 }} {{ SM_Y - 45 }}" z-index="151"
+               halign="left" valign="center2"
+               text="$666no unsaved changes"
+               textsize="0.9" textfont="GameFont" />
+      {% endif %}
+    {% endcall %}
+
+    {# ── action row at bottom of window ──────────────────────────────── #}
+    {% set ACT_Y = -WP_H + 6 %}
+    {{ ui.push_button('wprof_editor_reset', 'Reset', icon='undo',
+                      x=WP_W - 50, y=ACT_Y,
+                      halign='right', variant='ghost', size='sm', z=140) }}
+    {{ ui.push_button('wprof_editor_cancel', 'Cancel', icon='times',
+                      x=WP_W - 26, y=ACT_Y,
+                      halign='right', variant='ghost', size='md', z=140) }}
+    {{ ui.push_button('wprof_editor_apply', 'Apply', icon='check',
+                      x=WP_W - 3, y=ACT_Y,
+                      halign='right',
+                      variant=('primary' if wprof_editor.dirty else 'ghost'),
+                      size='md', z=140) }}
+  {% endif %}
+
   {% endif %}
 
   {{ ui.hover_script() }}

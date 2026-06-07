@@ -11,7 +11,7 @@
 
   {{ ui.window('Apps Store', icon='th-large', x=0, y=0, w=W, h=H) }}
 
-  {{ ui.label('Toggle any installed pyplanet addon. Apply rewrites apps.py and the pool reloads.',
+  {{ ui.label('Toggle any installed pyplanet addon. Apply rewrites apps.py and restarts PyPlanet.',
               x=4, y=-12, color='aaa', size='sm') }}
   {{ ui.label(apps_py, x=W - 4, y=-12, halign='right', color='666', size='sm') }}
 

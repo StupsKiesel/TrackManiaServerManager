@@ -133,6 +133,9 @@ class WidgetView(BaseView):
             extra = {}
         if extra:
             ctx.update(extra)
+        # Engine-resolved disable must always win over addon payload.
+        if bool(ctx.get("widget_disabled")):
+            ctx["widget_force_hidden"] = True
         return ctx
 
     async def get_context_data(self):

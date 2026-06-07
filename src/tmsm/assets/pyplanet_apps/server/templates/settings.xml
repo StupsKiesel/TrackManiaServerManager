@@ -1,7 +1,7 @@
 {% import 'tmsm_ui/widgets.xml' as ui with context %}
 
 {# context: fields=[{key,label,kind,value,dirty}], status, status_color,
-   dirty_count, loading #}
+   dirty_count, loading, page, total_pages, total_fields #}
 
 <frame pos="-90 55" z-index="200">
 
@@ -19,15 +19,8 @@
                 bold=f.dirty) }}
     {% if f.kind == 'bool' %}
       {% set on = (f.value == '1') %}
-      {% set color = ('0f0' if on else '888') %}
-      {% set mark = 'check' if on else 'cross' %}
-      <quad pos="80 {{ y + 2 }}" z-index="202" size="20 4.5" bgcolor="fff0"
-            id="togbtn_{{ id }}__toggle__{{ f.key }}"
-            action="{{ id }}__toggle__{{ f.key }}"
-            ScriptEvents="1" />
-      {{ ui.icon(mark, x=82, y=y, color=color, font=2.2) }}
-      {{ ui.label(('true' if on else 'false'), x=88, y=y,
-                  size='sm', color=color) }}
+      {{ ui.check_box('toggle__' ~ f.key, checked=on,
+              x=84, y=y, size='sm') }}
     {% else %}
       {{ ui.line_edit('field__' ~ f.key, value=f.value,
                       x=80, y=y, width=92, size='sm') }}
@@ -37,16 +30,19 @@
     {% endif %}
   {% endfor %}
 
+  {{ ui.pagination('pg', page=page, total_pages=total_pages,
+                   x=42, y=-105, max_visible=7, btn_w=5.5, btn_h=4.5) }}
+
   {# controls #}
   {{ ui.push_button('refresh', 'Reset',
-                    x=180-28, y=-107, variant='ghost',
+                    x=180-28, y=-105, variant='ghost',
                     halign='right', size='md') }}
   {{ ui.push_button('save', 'Save (' ~ dirty_count|string ~ ' changes)',
-                    x=180-4, y=-107,
+                    x=180-4, y=-105,
                     variant=('success' if dirty_count else 'ghost'),
                     halign='right', size='md') }}
 
-  {{ ui.label(status, x=4, y=-107, halign='left',
+  {{ ui.label(status, x=4, y=-105, halign='left',
               color=status_color, size='sm') }}
 
   {{ ui.hover_script() }}

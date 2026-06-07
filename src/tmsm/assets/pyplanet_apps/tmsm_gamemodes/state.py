@@ -24,6 +24,10 @@ def default_state() -> dict[str, Any]:
         "active": None,
         "configs": {},
         "mode_states": {},
+        "operator_policy": {
+            "allowed_modes": [],
+            "allowed_fields": {},
+        },
     }
 
 
@@ -39,11 +43,14 @@ def load() -> dict[str, Any]:
         return out
     if not isinstance(raw, dict):
         return out
-    for k in ("active", "configs", "mode_states"):
+    for k in ("active", "configs", "mode_states", "widget_layout_profiles", "operator_policy"):
         if k in raw:
             out[k] = raw[k]
     out["configs"] = dict(out.get("configs") or {})
     out["mode_states"] = dict(out.get("mode_states") or {})
+    out["operator_policy"] = dict(out.get("operator_policy") or {})
+    # widget_layout_profiles is migrated into gm_widget_config on first start
+    # and then dropped from this file; leave it untouched if still present.
     return out
 
 

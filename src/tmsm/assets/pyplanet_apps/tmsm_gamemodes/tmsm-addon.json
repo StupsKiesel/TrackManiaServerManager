@@ -1,4 +1,4 @@
 {
-    "description": "Custom scripted game modes (Evolution, ...) that drive map rotation autonomously via player votes and a TMX map picker.",
+    "description": "Custom scripted game modes that drive map rotation autonomously via player votes and a TMX map picker.",
     "author": "tmsm"
 }

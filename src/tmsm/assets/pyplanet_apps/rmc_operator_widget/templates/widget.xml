@@ -1,0 +1,88 @@
+{% import 'widget_engine/frame.xml' as widgets with context %}
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{% set widget_w = widget_w|default(42.0) %}
+{% set widget_h = widget_h|default(58.0) %}
+{% set y_off = y_off|default(-2.2) %}
+{% set is_operator = is_operator|default(false) %}
+
+{% call widgets.frame() %}
+  {% if is_operator %}
+  {{ ui.push_button('rmc_action', top_action_text|default('Stop RMC'),
+                    icon='times',
+          x=2, y=-2.8 + y_off,
+                    halign='left',
+                    variant='danger', size='sm',
+                    width=widget_w - 4,
+                    z=142) }}
+
+    {% call ui.group_box('', x=2, y=-7.6 + y_off, w=widget_w - 4, h=0.35,
+                       color='999', border='fff4', z=141) %}{% endcall %}
+  {% endif %}
+
+  {{ ui.label(timer_text|default('00:00'),
+          x=widget_w / 2, y=-11.4 + y_off,
+              halign='center', size='xl', color='fff', bold=True,
+              z=143) }}
+
+    {% call ui.group_box('', x=2, y=-14.4 + y_off, w=widget_w - 4, h=0.35,
+                       color='999', border='fff4', z=141) %}{% endcall %}
+
+  {{ ui.style_quad('MedalsBig', goal_medal_substyle|default('MedalNadeo'),
+            x=3.2, y=-16.6 + y_off,
+                   w=7.2, h=7.2,
+                   halign='left', valign='top', z=142) }}
+  {{ ui.label(goal_count_text|default(maps_text|default('0')),
+              x=11.8, y=-20.2 + y_off,
+              size='xl', color='fff', bold=True,
+              z=143) }}
+
+  {{ ui.style_quad('MedalsBig', goal_prev_medal_substyle|default('MedalGold'),
+            x=22.4, y=-16.6 + y_off,
+                   w=7.2, h=7.2,
+                   halign='left', valign='top', z=142) }}
+  {{ ui.label(goal_prev_count_text|default(broken_text|default('0')),
+              x=31.0, y=-20.2 + y_off,
+              size='xl', color='fff', bold=True,
+              z=143) }}
+
+  {% if is_operator %}
+    {% call ui.group_box('', x=2, y=-24.8 + y_off, w=widget_w - 4, h=0.35,
+                       color='999', border='fff4', z=141) %}{% endcall %}
+
+  {{ ui.push_button('rmc_pause_play', pause_play_btn_text|default('Pause / Play'),
+                    icon='pause',
+          x=2, y=-29.8 + y_off,
+                    halign='left',
+                    variant='primary', size='sm',
+                    width=widget_w - 4,
+                    z=142) }}
+
+  {{ ui.push_button('rmc_free_skip', free_skip_btn_text|default('Free Skip (1 left)'),
+                    icon='redo',
+          x=2, y=-35.8 + y_off,
+                    halign='left',
+                    variant='primary', size='sm',
+                    width=widget_w - 4,
+                    z=142) }}
+
+  {{ ui.push_button('rmc_broken_skip', broken_skip_btn_text|default('Skip broken Map'),
+                    icon='eye',
+          x=2, y=-41.8 + y_off,
+                    halign='left',
+                    variant='warning', size='sm',
+                    width=widget_w - 4,
+                    z=142) }}
+
+  {{ ui.push_button('rmc_secondary_skip', secondary_skip_btn_text|default('Secondary Skip'),
+                    icon='check',
+          x=2, y=-47.8 + y_off,
+                    halign='left',
+                    variant=('success' if secondary_skip_available|default(false) else 'ghost'),
+                    size='sm',
+                    width=widget_w - 4,
+                    z=142) }}
+  {% endif %}
+{% endcall %}
+
+{{ ui.hover_script() }}

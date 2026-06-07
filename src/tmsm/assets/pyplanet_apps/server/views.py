@@ -10,7 +10,15 @@ class ServerSettingsView(BaseView):
 
     async def get_context_data(self):
         ctx = await super().get_context_data()
-        ctx.update(fields=[], status="", status_color="aaa", loading=True)
+        ctx.update(
+            fields=[],
+            status="",
+            status_color="aaa",
+            loading=True,
+            page=1,
+            total_pages=1,
+            total_fields=0,
+        )
         return ctx
 
     async def get_per_player_data(self, login):

@@ -60,8 +60,20 @@ async def _get_tmx_track_id_for_current_map(current_map) -> int | None:
     except Exception:
         return None
 
-    map_id = int(getattr(current_map, "id", 0) or 0)
+    raw_map_id = getattr(current_map, "id", 0)
+    # Some signal paths may pass an object whose `id` is itself a Map-like
+    # object; unwrap one level before casting.
+    if not isinstance(raw_map_id, (int, str, float, bytes)) and hasattr(raw_map_id, "id"):
+        raw_map_id = getattr(raw_map_id, "id", 0)
+    try:
+        map_id = int(raw_map_id or 0)
+    except (TypeError, ValueError):
+        map_id = 0
+
     map_uid = str(getattr(current_map, "uid", "") or "").strip()
+    if not map_uid:
+        nested = getattr(current_map, "id", None)
+        map_uid = str(getattr(nested, "uid", "") or "").strip()
 
     if map_id > 0:
         try:

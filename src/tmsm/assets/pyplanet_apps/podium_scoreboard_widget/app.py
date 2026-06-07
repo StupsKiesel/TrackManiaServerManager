@@ -84,6 +84,35 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _elapsed_ms(raw: Any, race_time: Any, kwargs: dict[str, Any], *, end_race: bool) -> int:
+    candidates: list[int] = []
+    if end_race:
+        for key in ("race_cps", "cps"):
+            seq = kwargs.get(key)
+            if isinstance(seq, (list, tuple)) and seq:
+                try:
+                    last = int(seq[-1] or 0)
+                except (TypeError, ValueError):
+                    last = 0
+                if last > 0:
+                    candidates.append(last)
+    if isinstance(raw, dict):
+        for key in ("racetime", "race_time", "time", "totaltime", "total_time"):
+            v = _to_int(raw.get(key), 0)
+            if v > 0:
+                candidates.append(v)
+    for key in ("race_time", "time", "totaltime", "total_time", "lap_time"):
+        v = _to_int(kwargs.get(key), 0)
+        if v > 0:
+            candidates.append(v)
+    v = _to_int(race_time, 0)
+    if v > 0:
+        candidates.append(v)
+    if not candidates:
+        return 0
+    return max(candidates) if end_race else candidates[0]
+
+
 class PodiumScoreboardWidgetApp(WidgetAppBase):
     name = "pyplanet.apps.tmsm.podium_scoreboard_widget"
     label = "podium_scoreboard_widget"
@@ -113,6 +142,15 @@ class PodiumScoreboardWidgetApp(WidgetAppBase):
         self._scores: dict[str, dict[str, Any]] = {}
         self._is_rounds = False
         self._queued_refresh: asyncio.Task | None = None
+
+    def _is_multi_lap_map(self) -> bool:
+        current_map = getattr(self.instance.map_manager, "current_map", None)
+        if current_map is None:
+            return False
+        try:
+            return int(getattr(current_map, "num_laps", 0) or 0) > 1
+        except (TypeError, ValueError):
+            return False
 
     def build_entry(self) -> WidgetEntry:
         entry = super().build_entry()
@@ -172,6 +210,10 @@ class PodiumScoreboardWidgetApp(WidgetAppBase):
         self._is_rounds = any(
             t in mode for t in ("rounds", "teams", "cup", "laps")
         )
+        # Match local_rankings behavior: on multilap TA-like maps the
+        # score snapshot can carry lap PBs, so rely on finish callbacks.
+        if self._is_multi_lap_map() and not self._is_rounds:
+            return
         new: dict[str, dict[str, Any]] = {}
         for entry in players:
             p = entry.get("player")
@@ -194,18 +236,29 @@ class PodiumScoreboardWidgetApp(WidgetAppBase):
                     "country": _country_from_zone(zone),
                     "score": int(pts),
                     "finish": True,
+                    "official_finish": True,
                     "giveup": False,
                 }
             else:
                 best = entry.get("best_race_time")
                 if best is None or int(best) == -1:
                     continue
+                prev = self._scores.get(login)
+                if prev and bool(prev.get("official_finish")):
+                    prev_score = _to_int(prev.get("score"), 0)
+                    if prev_score > 0:
+                        keep = dict(prev)
+                        keep["nickname"] = nickname
+                        keep["country"] = _country_from_zone(zone)
+                        new[login] = keep
+                        continue
                 new[login] = {
                     "login": login,
                     "nickname": nickname,
                     "country": _country_from_zone(zone),
                     "score": int(best),
                     "finish": True,
+                    "official_finish": False,
                     "giveup": False,
                 }
         if new != self._scores:
@@ -226,8 +279,13 @@ class PodiumScoreboardWidgetApp(WidgetAppBase):
             zone = getattr(getattr(player, "flow", None), "zone", "") or ""
         except Exception:
             zone = ""
-        rt = int(raw.get("racetime", race_time or 0) or 0)
         is_end = bool(raw.get("isendrace", False))
+        if is_end and self._is_multi_lap_map():
+            return
+        rt = _elapsed_ms(raw, race_time, kwargs, end_race=bool(is_end))
+        if rt <= 0:
+            return
+        official = False
         cur = self._scores.get(login)
         if cur is None or is_end:
             if cur is None or not cur.get("finish") or rt < int(cur.get("score") or 0):
@@ -237,6 +295,7 @@ class PodiumScoreboardWidgetApp(WidgetAppBase):
                     "country": _country_from_zone(zone),
                     "score": rt,
                     "finish": is_end,
+                    "official_finish": official,
                     "giveup": False,
                     "cps": int(raw.get("checkpointinrace", -1) or -1) + 1,
                 }
@@ -251,18 +310,21 @@ class PodiumScoreboardWidgetApp(WidgetAppBase):
                 })
                 self._queue_refresh()
 
-    async def _on_finish(self, player=None, race_time=None, **kwargs) -> None:
-        if player is None or race_time is None:
+    async def _on_finish(self, player=None, lap_time=None, race_time=None, is_end_race=None, **kwargs) -> None:
+        if player is None:
+            return
+        if is_end_race is False:
             return
         login = str(getattr(player, "login", "") or "")
         if not login:
             return
-        try:
-            rt = int(race_time)
-        except (TypeError, ValueError):
+        rt = _to_int(race_time or lap_time, 0)
+        if rt <= 0:
+            rt = _elapsed_ms(None, race_time, kwargs, end_race=True)
+        if rt <= 0:
             return
         cur = self._scores.get(login)
-        if cur is None or not cur.get("finish") or rt < int(cur.get("score") or 0):
+        if cur is None or (not cur.get("official_finish")) or rt < int(cur.get("score") or 0):
             nickname = str(getattr(player, "nickname", login) or login)
             zone = ""
             try:
@@ -275,6 +337,7 @@ class PodiumScoreboardWidgetApp(WidgetAppBase):
                 "country": _country_from_zone(zone),
                 "score": rt,
                 "finish": True,
+                "official_finish": True,
                 "giveup": False,
             }
             self._queue_refresh()

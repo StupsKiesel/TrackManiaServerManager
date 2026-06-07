@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any, Awaitable, Callable, Dict
 
@@ -74,6 +75,9 @@ class VoteEngine:
                     options: list[dict[str, Any]],
                     duration_s: int,
                     mode: str = "plurality",
+                    pass_value: Any | None = None,
+                    pass_ratio: float | None = None,
+                    eligible_logins: list[str] | None = None,
                     on_finish: FinishCallback | None = None) -> None:
         if self._vote is not None:
             logger.info("votes: a vote is already active (%s), cancelling first",
@@ -87,6 +91,9 @@ class VoteEngine:
             "started_at": time.time(),
             "ends_at":    time.time() + int(duration_s),
             "mode":       mode,
+            "pass_value": pass_value,
+            "pass_ratio": pass_ratio,
+            "eligible_logins": [str(x) for x in (eligible_logins or []) if str(x)],
             "ballots":    {},          # login -> chosen value
             "on_finish":  on_finish,
         }
@@ -105,6 +112,30 @@ class VoteEngine:
         if match is None:
             return
         self._vote["ballots"][login] = match
+
+        # Threshold mode: pass immediately once the target option reaches
+        # the required share over the eligible participant denominator.
+        ratio = self._vote.get("pass_ratio")
+        pass_value = self._vote.get("pass_value")
+        if ratio is not None and pass_value is not None:
+            try:
+                needed_ratio = max(0.0, float(ratio))
+            except (TypeError, ValueError):
+                needed_ratio = 0.0
+            eligible = [str(x) for x in (self._vote.get("eligible_logins") or []) if str(x)]
+            eligible_total = len(set(eligible))
+            if eligible_total <= 0:
+                try:
+                    online = list(self.app.instance.player_manager.online)
+                except Exception:
+                    online = []
+                eligible_total = len([p for p in online if getattr(p, "login", None)])
+            needed_yes = max(1, int(math.ceil(eligible_total * needed_ratio))) if eligible_total > 0 else 1
+            yes_now = sum(1 for v in self._vote["ballots"].values() if v == pass_value)
+            if yes_now >= needed_yes:
+                await self._finish(force_winner=pass_value)
+                return
+
         # Auto-finish when everyone currently online has voted.
         try:
             online = list(self.app.instance.player_manager.online)
@@ -141,7 +172,7 @@ class VoteEngine:
         except Exception:
             logger.exception("votes: tick loop crashed")
 
-    async def _finish(self) -> None:
+    async def _finish(self, force_winner: Any | None = None) -> None:
         if not self._vote:
             return
         v = self._vote
@@ -156,12 +187,13 @@ class VoteEngine:
                 tally[choice] += 1
         # Plurality with deterministic tie-break (first option in declaration
         # order wins ties so behaviour is repeatable across reloads).
-        winner = None
-        best = -1
-        for opt in v["options"]:
-            if tally.get(opt["value"], 0) > best:
-                best = tally[opt["value"]]
-                winner = opt["value"]
+        winner = force_winner
+        if winner is None:
+            best = -1
+            for opt in v["options"]:
+                if tally.get(opt["value"], 0) > best:
+                    best = tally[opt["value"]]
+                    winner = opt["value"]
         result = {
             "key":     v["key"],
             "winner":  winner,

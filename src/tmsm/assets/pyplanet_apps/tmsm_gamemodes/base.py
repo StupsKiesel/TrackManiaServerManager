@@ -161,6 +161,29 @@ class GameModeContext:
             return
         await sig.send_robust({"owner": self._widget_override_owner}, raw=True)
 
+    async def apply_widget_layout(self, widgets: list[dict[str, Any]]) -> None:
+        """Apply a temporary owner-scoped widget layout profile.
+
+        Each item in ``widgets`` must include ``key`` (or ``widget_key``) and
+        any overlay columns such as x/y/w/h/disabled/anim_* fields.
+        """
+        try:
+            sig = self._app.context.signals.get_signal("tmsm_widgets:runtime_layout_apply")
+        except Exception:
+            return
+        await sig.send_robust({
+            "owner": self._widget_override_owner,
+            "widgets": list(widgets or []),
+        }, raw=True)
+
+    async def clear_widget_layout(self) -> None:
+        """Clear the temporary widget layout profile owned by this mode."""
+        try:
+            sig = self._app.context.signals.get_signal("tmsm_widgets:runtime_layout_clear_owner")
+        except Exception:
+            return
+        await sig.send_robust({"owner": self._widget_override_owner}, raw=True)
+
 
 class GameMode(ABC):
     """Subclass to add a new game mode.

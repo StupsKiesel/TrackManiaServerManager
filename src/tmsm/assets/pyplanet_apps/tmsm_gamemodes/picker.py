@@ -103,11 +103,22 @@ class MapPicker:
         ex = {int(x) for x in (excluded_tmx_ids or [])}
         vlist = list(validators)
         # Each call returns one random row (count=1 via random=True).
-        for _ in range(max(1, int(max_attempts))):
+        for attempt in range(max(1, int(max_attempts))):
             try:
-                data = await tmx_search(self._game(), random=True, **f)
-            except (aiohttp.ClientError, OSError, asyncio.TimeoutError):
-                logger.warning("gamemodes: tmx random search failed", exc_info=True)
+                data = await tmx_search(
+                    self._game(),
+                    random=True,
+                    timeout_s=35,
+                    retries=2,
+                    **f,
+                )
+            except (aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
+                logger.warning(
+                    "gamemodes: tmx random search failed (attempt %s/%s, %s)",
+                    attempt + 1,
+                    max(1, int(max_attempts)),
+                    e.__class__.__name__,
+                )
                 continue
             rows = data.get("results") or []
             if not rows:
@@ -195,6 +206,20 @@ class MapPicker:
                 )
         except Exception:
             logger.exception("gamemodes: GetMapInfo/get_or_create failed (#%s)", tid)
+        # Persist TMX metadata so map_info_widget / tmx_map_info / discord
+        # status can resolve TMX details from the local cache table. Without
+        # this, RMC-installed maps appear "untracked" in those widgets.
+        if uploaded is not None:
+            try:
+                tmx_app = self.app.instance.apps.apps.get("tmsm_tmx_browser")
+                if tmx_app is not None:
+                    try:
+                        server_map_id = int(getattr(uploaded, "id", 0) or 0) or None
+                    except (TypeError, ValueError):
+                        server_map_id = None
+                    await tmx_app._persist_meta_row(row, server_map_id=server_map_id)
+            except Exception:
+                logger.exception("gamemodes: persist tmx meta failed (#%s)", tid)
         if juke_next and uploaded is not None:
             try:
                 await self.app.instance.map_manager.set_next_map(uploaded)

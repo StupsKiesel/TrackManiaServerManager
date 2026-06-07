@@ -9,7 +9,7 @@
 
 <frame pos="-55 35" z-index="500">
 
-  {{ ui.window('Impersonate', icon='user-secret', x=0, y=0, w=WIN_W, h=WIN_H) }}
+       {{ ui.window('Impersonate', icon='eye', x=0, y=0, w=WIN_W, h=WIN_H) }}
 
   {# Header text - current state. #}
   <label pos="4 -11" textsize="1.1" textfont="GameFontBlack" valign="top"

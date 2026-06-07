@@ -49,6 +49,20 @@ _ENTRY_RE = re.compile(
     r"""^[ \t]*(\#[ \t]*)?["']([A-Za-z0-9_.]+)["'][ \t]*,?[ \t]*(?:\#.*)?$""",
 )
 
+
+def _normalize_module_name(module: str) -> str:
+    """Canonicalize module path for tmsm namespace entries.
+
+    PyPlanet import_app treats an uppercase last segment as a class-path
+    hint (module + class name), so keep bundled tmsm addon module leaves
+    lowercase to force pure module import semantics.
+    """
+    prefix = "pyplanet.apps.tmsm."
+    if module.startswith(prefix):
+        leaf = module[len(prefix):]
+        return prefix + leaf.lower()
+    return module
+
 # Legacy markers we may still find in pools created before headers replaced them.
 # Stripped on sync so old pools self-migrate.
 _LEGACY_BLOCK_RE = re.compile(
@@ -134,7 +148,7 @@ def _parse_block_states(block_text: str) -> dict[str, bool]:
         if not m:
             continue
         commented = m.group(1) is not None
-        module = m.group(2)
+        module = _normalize_module_name(m.group(2))
         states[module] = not commented
     return states
 
@@ -148,6 +162,7 @@ def _detect_quote(text: str) -> str:
 
 def _format_block(modules: list[str], states: dict[str, bool], indent: str, q: str) -> str:
     # Group entries by namespace so the block stays organized as it grows.
+    modules = [_normalize_module_name(m) for m in modules]
     tmsm_mods: list[str] = []
     git_mods: list[str] = []
     other_mods: list[str] = []

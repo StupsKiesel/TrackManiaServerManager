@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 
 from pyplanet.apps.tmsm.widget_engine import AnimDir, DriveMode
 from pyplanet.apps.tmsm.widget_engine.widget_base import WidgetAppBase
+
+
+logger = logging.getLogger(__name__)
 
 
 class MapInfoWidget(WidgetAppBase):
@@ -44,6 +49,9 @@ class MapInfoWidget(WidgetAppBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._queued_refresh: asyncio.Task | None = None
+        self._tmx_lookup_lock = asyncio.Lock()
+        self._tmx_last_lookup_by_uid: dict[str, float] = {}
+        self._post_fetch_refresh_task: asyncio.Task | None = None
 
     async def on_start(self) -> None:
         await super().on_start()
@@ -53,6 +61,14 @@ class MapInfoWidget(WidgetAppBase):
             self.context.signals.listen("maniaplanet:loading_map_start", self._on_refresh_signal)
             self.context.signals.listen("maniaplanet:map_begin", self._on_refresh_signal)
             self.context.signals.listen("maniaplanet:map_start", self._on_refresh_signal)
+            # PRE_RACE phase can be entered via multiple callbacks depending
+            # on mode/warmup flow. Force-refresh on all known PRE_RACE
+            # transitions so stale loading-map refresh jobs cannot suppress
+            # fresh TMX metadata fetch for the new map.
+            self.context.signals.listen("trackmania:warmup_end", self._on_pre_race_signal)
+            self.context.signals.listen("trackmania:start_countdown", self._on_pre_race_signal)
+            # IN_RACE phase transition.
+            self.context.signals.listen("trackmania:start_line", self._on_in_race_signal)
             self.context.signals.listen("maniaplanet:player_connect", self._on_refresh_signal)
             self.context.signals.listen("maniaplanet:player_disconnect", self._on_refresh_signal)
         except Exception:
@@ -62,13 +78,50 @@ class MapInfoWidget(WidgetAppBase):
         if self._queued_refresh is not None:
             self._queued_refresh.cancel()
             self._queued_refresh = None
+        if self._post_fetch_refresh_task is not None:
+            self._post_fetch_refresh_task.cancel()
+            self._post_fetch_refresh_task = None
         await super().on_stop()
 
-    def _queue_refresh(self) -> None:
+    def _queue_post_fetch_refresh_all(self) -> None:
+        if self.view is None:
+            return
+        if self._post_fetch_refresh_task is not None and not self._post_fetch_refresh_task.done():
+            return
+
+        async def _run() -> None:
+            try:
+                # Defer by one loop tick so any in-flight DB write commits
+                # before we force a full redraw.
+                await asyncio.sleep(0)
+                if self.view is None:
+                    return
+                try:
+                    online_logins = [
+                        p.login for p in self.instance.player_manager.online
+                        if getattr(p, "login", None)
+                    ]
+                except Exception:
+                    online_logins = []
+                if online_logins:
+                    await self.view.display(player_logins=online_logins)
+                else:
+                    await self.view.display()
+            except Exception:
+                logger.exception("map_info_widget: post-fetch redraw failed")
+            finally:
+                self._post_fetch_refresh_task = None
+
+        self._post_fetch_refresh_task = asyncio.create_task(_run())
+
+    def _queue_refresh(self, *, force: bool = False) -> None:
         if self.view is None:
             return
         if self._queued_refresh is not None and not self._queued_refresh.done():
-            return
+            if not force:
+                return
+            self._queued_refresh.cancel()
+            self._queued_refresh = None
 
         async def _flush() -> None:
             try:
@@ -79,7 +132,17 @@ class MapInfoWidget(WidgetAppBase):
                     await asyncio.sleep(delay_s)
                     if self.view is None:
                         return
-                    await self.view.refresh()
+                    try:
+                        online_logins = [
+                            p.login for p in self.instance.player_manager.online
+                            if getattr(p, "login", None)
+                        ]
+                    except Exception:
+                        online_logins = []
+                    if online_logins:
+                        await self.view.display(player_logins=online_logins)
+                    else:
+                        await self.view.display()
                     try:
                         cm = self.instance.map_manager.current_map
                         uid = str(getattr(cm, "uid", "") or "").strip() if cm is not None else ""
@@ -97,6 +160,12 @@ class MapInfoWidget(WidgetAppBase):
 
     async def _on_refresh_signal(self, **kwargs) -> None:
         self._queue_refresh()
+
+    async def _on_pre_race_signal(self, **kwargs) -> None:
+        self._queue_refresh(force=True)
+
+    async def _on_in_race_signal(self, **kwargs) -> None:
+        self._queue_refresh(force=True)
 
     @staticmethod
     def _truncate(value: str, max_len: int) -> str:
@@ -161,6 +230,21 @@ class MapInfoWidget(WidgetAppBase):
         return ""
 
     @staticmethod
+    def _current_map_id(current_map) -> int:
+        """Return numeric server map id from possibly nested object forms."""
+        if current_map is None:
+            return 0
+        raw = getattr(current_map, "id", 0)
+        # Some runtime contexts expose `current_map.id` as a nested Map-like
+        # object instead of a scalar primary key.
+        if not isinstance(raw, (int, float, str, bytes, bytearray)):
+            raw = getattr(raw, "id", 0)
+        try:
+            return int(raw or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
     async def _get_tmx_meta_for_current_map(current_map):
         """Resolve TMX metadata row for the currently running server map."""
         try:
@@ -168,7 +252,7 @@ class MapInfoWidget(WidgetAppBase):
         except Exception:
             return None
 
-        map_id = int(getattr(current_map, "id", 0) or 0)
+        map_id = MapInfoWidget._current_map_id(current_map)
         map_uid = str(getattr(current_map, "uid", "") or "").strip()
 
         if map_id > 0:
@@ -184,6 +268,128 @@ class MapInfoWidget(WidgetAppBase):
                 pass
 
         return None
+
+    @staticmethod
+    def _game_key(instance) -> str:
+        try:
+            return str(instance.game.game or "tmnext")
+        except Exception:
+            return "tmnext"
+
+    async def _fetch_tmx_row_by_uid(self, map_uid: str) -> dict[str, object] | None:
+        uid = str(map_uid or "").strip()
+        if not uid:
+            return None
+        try:
+            from pyplanet.apps.tmsm.tmx_browser.tmx import search as tmx_search
+            game = self._game_key(self.instance)
+            data = await tmx_search(game, map_uid=uid, limit=5)
+            rows = list(data.get("results") or [])
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("uid") or "").strip() == uid:
+                    return row
+            return None
+        except Exception:
+            return None
+
+    async def _persist_tmx_row(self, row: dict[str, object], current_map) -> None:
+        map_id = self._current_map_id(current_map)
+        tmx_app = getattr(self.instance.apps, "apps", {}).get("tmsm_tmx_browser")
+        if tmx_app is not None and hasattr(tmx_app, "_persist_meta_row"):
+            try:
+                await tmx_app._persist_meta_row(
+                    row,
+                    server_map_id=(map_id if map_id > 0 else None),
+                )
+                return
+            except Exception:
+                pass
+
+        # Fallback path when tmx_browser app instance is unavailable: do a
+        # minimal upsert so this widget can still work standalone.
+        try:
+            import datetime
+            from pyplanet.apps.tmsm.tmx_browser.models import TmxMapMeta
+
+            if not TmxMapMeta.table_exists():
+                TmxMapMeta.create_table(safe=True)
+
+            track_id = int(row.get("track_id") or 0)
+            if track_id <= 0:
+                return
+
+            try:
+                rec = await TmxMapMeta.get(track_id=track_id)
+                created = False
+            except Exception:
+                rec = TmxMapMeta(track_id=track_id)
+                created = True
+
+            tags = row.get("tags")
+            if isinstance(tags, list):
+                tags_csv = ",".join(str(t).strip() for t in tags if str(t).strip())
+            else:
+                tags_csv = str(tags or "").strip()
+
+            rec.uid = str(row.get("uid") or "")[:64] or None
+            rec.name = str(row.get("name") or "")[:255] or None
+            rec.author = str(row.get("author") or "")[:150] or None
+            rec.length = str(row.get("length") or "")[:32] or None
+            rec.difficulty = str(row.get("difficulty") or "")[:64] or None
+            rec.awards = int(row.get("awards") or 0)
+            rec.style = str(row.get("style") or "")[:64] or None
+            rec.uploaded = str(row.get("uploaded") or "")[:64] or None
+            rec.filename = str(row.get("filename") or "")[:255] or None
+            rec.map_type = str(row.get("map_type") or "")[:96] or None
+            rec.title_pack = str(row.get("title_pack") or "")[:128] or None
+            rec.environment = str(row.get("environment") or "")[:64] or None
+            rec.vehicle = str(row.get("vehicle") or "")[:64] or None
+            rec.mood = str(row.get("mood") or "")[:64] or None
+            rec.route = str(row.get("route") or "")[:64] or None
+            rec.tags_csv = tags_csv or None
+            rec.comment_count = int(row.get("comment_count") or 0)
+            rec.replay_count = int(row.get("replay_count") or 0)
+            rec.track_value = int(row.get("track_value") or 0)
+            rec.display_cost = int(row.get("display_cost") or 0)
+            rec.laps = int(row.get("laps") or 0)
+            rec.has_thumbnail = bool(row.get("has_thumbnail", False))
+            rec.downloadable = bool(row.get("downloadable", True))
+            rec.author_time = int(row.get("author_time") or 0)
+            rec.comments = str(row.get("comments") or "") or None
+            if map_id > 0:
+                rec.server_map_id = map_id
+            rec.updated_at = datetime.datetime.utcnow()
+            await rec.save(force_insert=created)
+        except Exception:
+            return
+
+    async def _ensure_tmx_meta_for_current_map(self, current_map):
+        map_uid = str(getattr(current_map, "uid", "") or "").strip()
+        if not map_uid:
+            return None
+
+        now = time.monotonic()
+        last = float(self._tmx_last_lookup_by_uid.get(map_uid, 0.0) or 0.0)
+        if (now - last) < 30.0:
+            return await self._get_tmx_meta_for_current_map(current_map)
+
+        async with self._tmx_lookup_lock:
+            now = time.monotonic()
+            last = float(self._tmx_last_lookup_by_uid.get(map_uid, 0.0) or 0.0)
+            if (now - last) < 30.0:
+                return await self._get_tmx_meta_for_current_map(current_map)
+            self._tmx_last_lookup_by_uid[map_uid] = now
+
+        row = await self._fetch_tmx_row_by_uid(map_uid)
+        if row is None:
+            return await self._get_tmx_meta_for_current_map(current_map)
+        await self._persist_tmx_row(row, current_map)
+        meta = await self._get_tmx_meta_for_current_map(current_map)
+        if meta is not None:
+            self._queue_post_fetch_refresh_all()
+        return meta
 
     @staticmethod
     def _format_time_ms(ms_value: int | None) -> str:
@@ -256,6 +462,8 @@ class MapInfoWidget(WidgetAppBase):
             map_mgr = self.instance.map_manager
             current_map = map_mgr.current_map
             meta = await self._get_tmx_meta_for_current_map(current_map)
+            if meta is None and current_map is not None:
+                meta = await self._ensure_tmx_meta_for_current_map(current_map)
 
             # Prefer TMX metadata values only when present; otherwise keep
             # reliable live map fallback so sparse rows never blank the widget.
@@ -323,6 +531,7 @@ class MapInfoWidget(WidgetAppBase):
                 "difficulty_color": sig_color,
             }
         except Exception:
+            logger.exception("map_info_widget: get_widget_data failed")
             return {
                 "map_name": "-",
                 "map_author": "-",

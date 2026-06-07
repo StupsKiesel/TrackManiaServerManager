@@ -88,7 +88,7 @@ class ImpersonateApp(AppConfig):
         entry = HubAppEntry(
             key="impersonate",
             name="Impersonate",
-            icon="user-secret",
+            icon="eye",
             color="b6f",
             role=Role.MASTER,
             order=50,

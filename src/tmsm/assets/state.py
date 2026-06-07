@@ -20,7 +20,10 @@ class InstalledAddon:
 
     @property
     def module_name(self) -> str:
-        return f"pyplanet.apps.{self.namespace}.{self.install_dir}"
+        leaf = str(self.install_dir or "")
+        if self.namespace == "tmsm":
+            leaf = leaf.lower()
+        return f"pyplanet.apps.{self.namespace}.{leaf}"
 
 
 @dataclass

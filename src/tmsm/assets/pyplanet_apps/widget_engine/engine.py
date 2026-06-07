@@ -34,6 +34,13 @@ _TRANSIENT_COLUMNS: frozenset = frozenset({
     "disabled",
 })
 
+_RUNTIME_LAYOUT_COLUMNS: frozenset = frozenset({
+    "x", "y", "w", "h",
+    "drive_mode", "anim_dir",
+    "anim_duration_ms", "anim_in_delay_ms", "anim_out_delay_ms",
+    "disabled",
+})
+
 
 class WidgetEngine:
     def __init__(self, host: "WidgetsApp") -> None:
@@ -49,6 +56,11 @@ class WidgetEngine:
         self._transient: dict[tuple[str, str], tuple[dict[str, Any], Optional[float]]] = {}
         # (login, key) -> asyncio.Task scheduled to clear the entry at TTL.
         self._transient_tasks: dict[tuple[str, str], asyncio.Task] = {}
+        # Slice 5.5: owner-scoped runtime layout overlays (global, non-persistent).
+        # owner -> key -> patch_dict
+        self._runtime_layouts: dict[str, dict[str, dict[str, Any]]] = {}
+        # precedence order (later wins).
+        self._runtime_layout_order: list[str] = []
         # Slice 6: per-player debug overlay toggles.
         # login -> set of widget keys (the sentinel "*" means all widgets).
         self._debug: dict[str, set[str]] = {}
@@ -145,6 +157,18 @@ class WidgetEngine:
             if effective_phase is not None else None
         )
         transient_row = self.get_transient(login, key)
+        runtime_row = self.get_runtime_layout(key)
+        if runtime_row:
+            # Respect explicit phase-level disabled overrides. Runtime layout
+            # is used by gamemodes/profile overlays and should not re-enable a
+            # widget that the operator disabled for the current phase.
+            if phase_row is not None and bool(phase_row.get("disabled")):
+                runtime_row = dict(runtime_row)
+                runtime_row.pop("disabled", None)
+            merged = dict(runtime_row)
+            if transient_row:
+                merged.update(transient_row)
+            transient_row = merged
         resolved = resolve(
             entry,
             row=row,
@@ -318,6 +342,84 @@ class WidgetEngine:
         if self._transient.pop(ck, None) is None:
             return
         await self._host._redisplay_for(key, login)
+
+    # ---- runtime layout overlays (slice 5.5) -------------------------
+
+    def get_runtime_layout(self, key: str) -> Optional[dict[str, Any]]:
+        out: dict[str, Any] = {}
+        for owner in self._runtime_layout_order:
+            rows = self._runtime_layouts.get(owner) or {}
+            patch = rows.get(key)
+            if patch:
+                out.update(patch)
+        return out or None
+
+    async def set_runtime_layout(
+        self,
+        owner: str,
+        key: str,
+        patch: dict[str, Any],
+    ) -> None:
+        owner = str(owner or "").strip()
+        if not owner or key not in self._host._entries:
+            return
+        clean = {k: v for k, v in (patch or {}).items() if k in _RUNTIME_LAYOUT_COLUMNS}
+        if not clean:
+            return
+        bucket = self._runtime_layouts.setdefault(owner, {})
+        bucket[key] = clean
+        if owner in self._runtime_layout_order:
+            self._runtime_layout_order.remove(owner)
+        self._runtime_layout_order.append(owner)
+        await self._host._redisplay(key)
+
+    async def clear_runtime_layout(
+        self,
+        owner: str,
+        key: str,
+    ) -> None:
+        owner = str(owner or "").strip()
+        if not owner:
+            return
+        bucket = self._runtime_layouts.get(owner)
+        if not bucket or key not in bucket:
+            return
+        bucket.pop(key, None)
+        if not bucket:
+            self._runtime_layouts.pop(owner, None)
+            if owner in self._runtime_layout_order:
+                self._runtime_layout_order.remove(owner)
+        await self._host._redisplay(key)
+
+    async def clear_runtime_owner(self, owner: str) -> None:
+        owner = str(owner or "").strip()
+        if not owner:
+            return
+        bucket = self._runtime_layouts.pop(owner, None)
+        if owner in self._runtime_layout_order:
+            self._runtime_layout_order.remove(owner)
+        if not bucket:
+            return
+        for key in list(bucket.keys()):
+            await self._host._redisplay(key)
+
+    async def clear_runtime_all(self) -> None:
+        keys: set[str] = set()
+        for bucket in self._runtime_layouts.values():
+            keys.update(bucket.keys())
+        self._runtime_layouts.clear()
+        self._runtime_layout_order.clear()
+        for key in sorted(keys):
+            await self._host._redisplay(key)
+
+    def runtime_layout_all(self, owner: Optional[str] = None) -> dict[tuple[str, str], dict[str, Any]]:
+        out: dict[tuple[str, str], dict[str, Any]] = {}
+        for own, rows in self._runtime_layouts.items():
+            if owner is not None and own != owner:
+                continue
+            for key, patch in rows.items():
+                out[(own, key)] = dict(patch)
+        return out
 
     def transient_all(
         self, login: Optional[str] = None,

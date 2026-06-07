@@ -207,7 +207,7 @@ def install_addon(addon: Addon, log: Log) -> list[InstalledAddon]:
     if addon.source is AddonSource.BUNDLED:
         if addon.bundled_path is None or not addon.bundled_path.is_dir():
             raise RuntimeError(f"bundled addon source missing for {addon.name}")
-        install_dir = addon.install_name or addon.name
+        install_dir = str(addon.install_name or addon.name).lower()
         _ensure_namespace_init("tmsm")
         target = _pyplanet_apps_root() / "tmsm" / install_dir
         log(f"Installing bundled addon '{addon.name}'")

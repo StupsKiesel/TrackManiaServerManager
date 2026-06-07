@@ -318,7 +318,7 @@ class App_Apps(AppConfig):
         n = len(pending)
         self._pending.pop(player.login, None)
         self._status[player.login] = (
-            f"saved {n} change(s) — pool will reload", "0f0")
+            f"saved {n} change(s) — restarting PyPlanet...", "0f0")
         await self._open(player)
         try:
             APPS_PY.touch()
@@ -333,16 +333,63 @@ class App_Apps(AppConfig):
                 sig = None
         try:
             if sig is None:
+                pass
+            else:
+                await sig.send_robust({
+                    "message": f"Apps updated: {n} change(s)",
+                    "severity": "success",
+                    "login": player.login,
+                    "source": "apps",
+                    "duration_ms": 3500,
+                })
+        except KeyError:
+            pass
+
+        restarted = await self._trigger_pyplanet_restart(player)
+        if restarted:
+            return
+
+        self._status[player.login] = (
+            f"saved {n} change(s) — restart app not loaded, restart manually", "fa0")
+        await self._open(player)
+        try:
+            if sig is None:
                 return
             await sig.send_robust({
-                "message": f"Apps updated: {n} change(s)",
-                "severity": "success",
+                "message": "Apps updated, but PyPlanet restart app is unavailable. Restart manually.",
+                "severity": "warning",
                 "login": player.login,
                 "source": "apps",
                 "duration_ms": 3500,
             })
         except KeyError:
             pass
+
+    def _find_restart_app(self):
+        try:
+            apps = list(self.instance.apps.apps.values())
+        except Exception:
+            return None
+        for app in apps:
+            if getattr(app, "name", "") == "pyplanet.apps.tmsm.restart":
+                return app
+            if getattr(app, "label", "") == "tmsm_restart":
+                return app
+        return None
+
+    async def _trigger_pyplanet_restart(self, player) -> bool:
+        restart_app = self._find_restart_app()
+        if restart_app is None:
+            return False
+        handler = getattr(restart_app, "_on_restart_pp", None)
+        if handler is None:
+            return False
+        try:
+            await handler(player)
+            return True
+        except Exception:
+            logger.exception("apps: failed to trigger restart app")
+            return False
 
     async def _catch_all(self, player, action, values, **kwargs):
         # The view-id prefix is stripped by TemplateView before dispatch, so

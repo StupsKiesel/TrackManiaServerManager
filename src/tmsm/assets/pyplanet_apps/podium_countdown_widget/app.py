@@ -72,6 +72,9 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         # time). Used by the reconcile loop to detect time-extend votes.
         self._baseline_total_seconds: int | None = None
         self._reconcile_task: asyncio.Task | None = None
+        self._resync_task: asyncio.Task | None = None
+        self._extend_vote_triggers_by_min: dict[int, int] = {5: 0, 10: 0, 15: 0}
+        self._extend_vote_lock = asyncio.Lock()
 
         self.setting_delay_seconds = Setting(
             "podium_delay_seconds",
@@ -81,6 +84,155 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
             default=self.DEFAULT_DELAY_SECONDS,
             description="Fallback seconds used when map_end does not expose countdown data.",
         )
+        self.setting_sync_enabled = Setting(
+            "sync_enabled",
+            "Sync Countdown To Server Time",
+            Setting.CAT_BEHAVIOUR,
+            type=bool,
+            default=True,
+            description="When enabled, periodically re-sync countdown display with server time.",
+        )
+        self.setting_button_plus5_enabled = Setting(
+            "button_plus5_enabled",
+            "Enable +5 Button",
+            Setting.CAT_BEHAVIOUR,
+            type=bool,
+            default=True,
+            description="Show the +5 time extension vote button.",
+        )
+        self.setting_button_plus10_enabled = Setting(
+            "button_plus10_enabled",
+            "Enable +10 Button",
+            Setting.CAT_BEHAVIOUR,
+            type=bool,
+            default=True,
+            description="Show the +10 time extension vote button.",
+        )
+        self.setting_button_plus15_enabled = Setting(
+            "button_plus15_enabled",
+            "Enable +15 Button",
+            Setting.CAT_BEHAVIOUR,
+            type=bool,
+            default=True,
+            description="Show the +15 time extension vote button.",
+        )
+        self.setting_button_plus5_max_per_map = Setting(
+            "button_plus5_max_per_map",
+            "+5 Button Max Triggers Per Map",
+            Setting.CAT_BEHAVIOUR,
+            type=int,
+            default=1,
+            description="How often the +5 vote button can be triggered per map (0 hides it).",
+        )
+        self.setting_button_plus10_max_per_map = Setting(
+            "button_plus10_max_per_map",
+            "+10 Button Max Triggers Per Map",
+            Setting.CAT_BEHAVIOUR,
+            type=int,
+            default=1,
+            description="How often the +10 vote button can be triggered per map (0 hides it).",
+        )
+        self.setting_button_plus15_max_per_map = Setting(
+            "button_plus15_max_per_map",
+            "+15 Button Max Triggers Per Map",
+            Setting.CAT_BEHAVIOUR,
+            type=int,
+            default=1,
+            description="How often the +15 vote button can be triggered per map (0 hides it).",
+        )
+
+    @staticmethod
+    def _signal_payload(kwargs: dict[str, Any]) -> dict[str, Any]:
+        src = kwargs.get("source")
+        if isinstance(src, dict):
+            return src
+        out = dict(kwargs)
+        out.pop("signal", None)
+        out.pop("source", None)
+        return out
+
+    @staticmethod
+    def _extend_minutes_from_result(result: dict[str, Any]) -> int | None:
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        action = str(metadata.get("action") or "")
+        if action != "extend_time":
+            return None
+        raw = metadata.get("extend_minutes")
+        try:
+            mins = int(raw)
+        except (TypeError, ValueError):
+            mins = 0
+        if mins in (5, 10, 15):
+            return mins
+        winner = str(result.get("winner") or "")
+        if winner == "extend_5":
+            return 5
+        if winner == "extend_10":
+            return 10
+        if winner == "extend_15":
+            return 15
+        return None
+
+    async def _setting_bool(self, setting: Setting, default: bool) -> bool:
+        try:
+            raw = await setting.get_value()
+        except Exception:
+            return default
+        if raw is None:
+            return default
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        txt = str(raw).strip().lower()
+        if txt in ("1", "true", "yes", "on"):
+            return True
+        if txt in ("0", "false", "no", "off"):
+            return False
+        return default
+
+    async def _enabled_extend_minutes(self) -> list[int]:
+        enabled: list[int] = []
+        if await self._setting_bool(self.setting_button_plus5_enabled, True):
+            enabled.append(5)
+        if await self._setting_bool(self.setting_button_plus10_enabled, True):
+            enabled.append(10)
+        if await self._setting_bool(self.setting_button_plus15_enabled, True):
+            enabled.append(15)
+        return enabled
+
+    async def _setting_int(self, setting: Setting, default: int, *, minimum: int = 0, maximum: int = 999) -> int:
+        try:
+            raw = await setting.get_value()
+        except Exception:
+            raw = default
+        try:
+            val = int(raw)
+        except (TypeError, ValueError):
+            val = int(default)
+        if val < minimum:
+            return minimum
+        if val > maximum:
+            return maximum
+        return val
+
+    async def _extend_trigger_limits_per_map(self) -> dict[int, int]:
+        return {
+            5: await self._setting_int(self.setting_button_plus5_max_per_map, 1),
+            10: await self._setting_int(self.setting_button_plus10_max_per_map, 1),
+            15: await self._setting_int(self.setting_button_plus15_max_per_map, 1),
+        }
+
+    async def _visible_extend_minutes(self) -> list[int]:
+        enabled = await self._enabled_extend_minutes()
+        limits = await self._extend_trigger_limits_per_map()
+        out: list[int] = []
+        for mins in enabled:
+            limit = int(limits.get(mins, 0) or 0)
+            used = int(self._extend_vote_triggers_by_min.get(mins, 0) or 0)
+            if limit > 0 and used < limit:
+                out.append(mins)
+        return out
 
     async def _timelimit_unit_hint(self) -> str:
         """Return one of: 'minutes', 'seconds', 'milliseconds', or ''."""
@@ -224,6 +376,48 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         # Legacy alias: prefer the race time limit for main countdown.
         return await self._time_limit_from_mode_settings()
 
+    async def _timelimit_disabled_in_matchsettings(self) -> bool:
+        """Return True when timelimit is explicitly configured to 0.
+
+        We intentionally only treat explicit non-positive values as disabled;
+        missing/unknown values are handled by normal fallback logic.
+        """
+        try:
+            settings = await self.instance.gbx("GetModeScriptSettings")
+        except Exception:
+            settings = None
+
+        if isinstance(settings, dict):
+            preferred_keys = (
+                "S_TimeLimit",
+                "TimeLimit",
+                "S_TimeLimitSeconds",
+            )
+            for key in preferred_keys:
+                if key in settings:
+                    try:
+                        return float(settings.get(key) or 0.0) <= 0.0
+                    except (TypeError, ValueError):
+                        return False
+            for key, value in settings.items():
+                if "timelimit" not in str(key or "").lower():
+                    continue
+                try:
+                    return float(value or 0.0) <= 0.0
+                except (TypeError, ValueError):
+                    return False
+
+        try:
+            gi = await self.instance.gbx("GetCurrentGameInfo")
+        except Exception:
+            gi = None
+        if isinstance(gi, dict) and "TimeLimit" in gi:
+            try:
+                return float(gi.get("TimeLimit") or 0.0) <= 0.0
+            except (TypeError, ValueError):
+                return False
+        return False
+
     def build_entry(self) -> WidgetEntry:
         entry = super().build_entry()
         return replace(
@@ -243,22 +437,42 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         await super().on_start()
 
         await self.context.setting.register(self.setting_delay_seconds)
+        await self.context.setting.register(self.setting_sync_enabled)
+        await self.context.setting.register(self.setting_button_plus5_enabled)
+        await self.context.setting.register(self.setting_button_plus10_enabled)
+        await self.context.setting.register(self.setting_button_plus15_enabled)
+        await self.context.setting.register(self.setting_button_plus5_max_per_map)
+        await self.context.setting.register(self.setting_button_plus10_max_per_map)
+        await self.context.setting.register(self.setting_button_plus15_max_per_map)
 
-        try:
-            self.context.signals.listen("maniaplanet:map_end", self._on_map_end)
-            self.context.signals.listen("maniaplanet:podium_start", self._on_podium_start)
-            self.context.signals.listen("maniaplanet:map_start", self._on_map_start)
-            self.context.signals.listen("maniaplanet:map_begin", self._on_map_start)
-            self.context.signals.listen("maniaplanet:player_connect", self._on_player_connect)
-        except Exception:
-            pass
+        self.setting_delay_seconds.on_change = self._on_setting_change
+        self.setting_sync_enabled.on_change = self._on_setting_change
+        self.setting_button_plus5_enabled.on_change = self._on_setting_change
+        self.setting_button_plus10_enabled.on_change = self._on_setting_change
+        self.setting_button_plus15_enabled.on_change = self._on_setting_change
+        self.setting_button_plus5_max_per_map.on_change = self._on_setting_change
+        self.setting_button_plus10_max_per_map.on_change = self._on_setting_change
+        self.setting_button_plus15_max_per_map.on_change = self._on_setting_change
+
+        self.context.signals.listen("maniaplanet:map_end", self._on_map_end)
+        self.context.signals.listen("maniaplanet:podium_start", self._on_podium_start)
+        self.context.signals.listen("maniaplanet:map_start", self._on_map_start)
+        self.context.signals.listen("maniaplanet:map_begin", self._on_map_start)
+        self.context.signals.listen("maniaplanet:player_connect", self._on_player_connect)
+        self.context.signals.listen("maniaplanet:manialink_answer", self._on_manialink_action)
+        self.context.signals.listen("tmsm_voting_engine:ended", self._on_vote_engine_ended)
+        self._listen_if_exists("maniaplanet:manialink_page_answer", self._on_manialink_action)
 
         self._reconcile_task = asyncio.create_task(self._reconcile_loop())
+        self._resync_task = asyncio.create_task(self._resync_loop())
 
     async def on_stop(self) -> None:
         if self._reconcile_task is not None:
             self._reconcile_task.cancel()
             self._reconcile_task = None
+        if self._resync_task is not None:
+            self._resync_task.cancel()
+            self._resync_task = None
         await super().on_stop()
 
     async def _reconcile_loop(self) -> None:
@@ -269,7 +483,18 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         try:
             while True:
                 await asyncio.sleep(5.0)
+                if await self._timelimit_disabled_in_matchsettings():
+                    if self._podium_eta_monotonic is not None or self._baseline_total_seconds is not None:
+                        self._podium_eta_monotonic = None
+                        self._baseline_total_seconds = None
+                        await self._push_replacement()
+                    continue
+
+                # Timelimit may have just switched from 0 -> positive value.
+                # Rebuild countdown state and redraw immediately.
                 if self._podium_eta_monotonic is None or self._baseline_total_seconds is None:
+                    if await self._ensure_countdown_state():
+                        await self._push_replacement()
                     continue
                 phase = self.engine.current_phase if self.engine else None
                 if phase == Phase.POST_RACE:
@@ -285,6 +510,23 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         except asyncio.CancelledError:
             pass
 
+    async def _resync_loop(self) -> None:
+        """Periodic server-time resync for long countdowns.
+
+        The client-side script decrements locally; on long durations this can
+        drift slightly. Re-push once per minute while a countdown is active.
+        """
+        try:
+            while True:
+                await asyncio.sleep(60.0)
+                if self._podium_eta_monotonic is None:
+                    continue
+                if not await self._setting_bool(self.setting_sync_enabled, True):
+                    continue
+                await self._push_replacement()
+        except asyncio.CancelledError:
+            pass
+
     async def _push_replacement(self, logins: list[str] | None = None) -> None:
         if self.engine is None:
             return
@@ -292,6 +534,18 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
             await self.engine.push_replacement(self.WIDGET_KEY, logins=logins)
         except Exception:
             pass
+
+    def _listen_if_exists(self, signal_name: str, callback) -> None:
+        try:
+            self.context.signals.get_signal(signal_name)
+        except Exception:
+            return
+        self.context.signals.listen(signal_name, callback)
+
+    async def _on_setting_change(self, *args, **kwargs) -> None:
+        # AppConfig setting updates should immediately reflect in-game for all
+        # players (button visibility/sync behavior/countdown source).
+        await self._push_replacement()
 
     async def _configured_delay(self) -> int:
         mode_delay = await self._time_limit_from_mode_settings()
@@ -304,6 +558,11 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         return max(1, min(86400, value))
 
     async def _on_map_end(self, **kwargs) -> None:
+        if await self._timelimit_disabled_in_matchsettings():
+            self._baseline_total_seconds = None
+            self._podium_eta_monotonic = None
+            await self._push_replacement()
+            return
         total = await self._post_race_from_mode_settings()
         if total is None:
             total = await self._configured_delay()
@@ -317,25 +576,140 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         await self._push_replacement()
 
     async def _on_map_start(self, **kwargs) -> None:
+        self._extend_vote_triggers_by_min = {5: 0, 10: 0, 15: 0}
+        if await self._timelimit_disabled_in_matchsettings():
+            self._baseline_total_seconds = None
+            self._podium_eta_monotonic = None
+            await self._push_replacement()
+            return
         total = await self._configured_delay()
         self._baseline_total_seconds = int(total)
         self._podium_eta_monotonic = time.monotonic() + float(total)
         await self._push_replacement()
 
+    async def _on_vote_engine_ended(self, **kwargs) -> None:
+        payload = self._signal_payload(kwargs)
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else None
+        if result is None:
+            return
+        if bool(result.get("cancelled", False)):
+            return
+
+        mins = self._extend_minutes_from_result(result)
+        if mins not in (5, 10, 15):
+            return
+
+        winner = str(result.get("winner") or "")
+        if winner not in ("yes", f"extend_{mins}"):
+            return
+
+        async with self._extend_vote_lock:
+            self._extend_vote_triggers_by_min[mins] = int(
+                self._extend_vote_triggers_by_min.get(mins, 0) or 0
+            ) + 1
+        await self._push_replacement()
+
     async def _on_player_connect(self, player=None, **kwargs) -> None:
         login = getattr(player, "login", None) if player is not None else None
-        if not login or self._podium_eta_monotonic is None:
+        if not login:
             return
+        if self._podium_eta_monotonic is None:
+            await self._ensure_countdown_state()
+            if self._podium_eta_monotonic is None:
+                return
         await self._push_replacement(logins=[login])
+
+    async def _on_manialink_action(self, player=None, action=None, **kwargs) -> None:
+        action_raw = str(action or kwargs.get("action") or "")
+        prefix = f"{self._MANIALINK_ID}__extend__"
+        if not action_raw.startswith(prefix):
+            return
+        try:
+            minutes = int(action_raw.split("__")[-1])
+        except (TypeError, ValueError):
+            return
+        if minutes not in (5, 10, 15):
+            return
+
+        enabled_minutes = await self._enabled_extend_minutes()
+        if minutes not in enabled_minutes:
+            return
+
+        limits = await self._extend_trigger_limits_per_map()
+        limit = int(limits.get(minutes, 0) or 0)
+        if limit <= 0:
+            await self._push_replacement()
+            return
+
+        p = player
+        if p is None:
+            login = str(kwargs.get("login") or "")
+            if login:
+                try:
+                    p = await self.instance.player_manager.get_player(login=login)
+                except Exception:
+                    p = None
+        if p is None:
+            return
+
+        voting = getattr(self.instance.apps, "apps", {}).get("voting")
+        starter = getattr(voting, "_start_extend_vote", None) if voting is not None else None
+        if not callable(starter):
+            try:
+                await self.instance.chat("$f80Voting app unavailable.", p.login)
+            except Exception:
+                pass
+            return
+
+        used = int(self._extend_vote_triggers_by_min.get(minutes, 0) or 0)
+        if used >= limit:
+            try:
+                await self.instance.chat(
+                    f"$fa0+{minutes} vote reached its per-map limit ({limit}).",
+                    p.login,
+                )
+            except Exception:
+                pass
+            await self._push_replacement(logins=[p.login])
+            return
+
+        await starter(p, minutes)
+        await self._push_replacement()
 
     def _remaining_ms(self) -> int | None:
         if self._podium_eta_monotonic is None:
             return None
         return int(max(0.0, self._podium_eta_monotonic - time.monotonic()) * 1000.0)
 
+    async def _ensure_countdown_state(self) -> bool:
+        """Recover countdown state when lifecycle events were missed."""
+        if self._podium_eta_monotonic is not None:
+            return True
+        if await self._timelimit_disabled_in_matchsettings():
+            self._baseline_total_seconds = None
+            self._podium_eta_monotonic = None
+            return False
+        phase = self.engine.current_phase if self.engine is not None else None
+        if phase is None:
+            return False
+        if phase == Phase.POST_RACE:
+            total = await self._post_race_from_mode_settings()
+            if total is None:
+                total = await self._configured_delay()
+        elif phase in (Phase.WARMUP, Phase.PRE_RACE, Phase.IN_RACE):
+            total = await self._configured_delay()
+        else:
+            return False
+        self._baseline_total_seconds = int(total)
+        self._podium_eta_monotonic = time.monotonic() + float(total)
+        return True
+
     async def build_replacement_xml(self, login: str) -> str:
         if self.engine is None:
             return ""
+
+        if self._podium_eta_monotonic is None:
+            await self._ensure_countdown_state()
 
         remaining_ms = self._remaining_ms()
         if remaining_ms is None:
@@ -350,9 +724,35 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         w = float(getattr(resolved, "w", self.WIDGET_DEFAULT_W) or self.WIDGET_DEFAULT_W)
         h = float(getattr(resolved, "h", self.WIDGET_DEFAULT_H) or self.WIDGET_DEFAULT_H)
 
-        time_size = (h * 0.46) if h > 7 else (h * 0.42)
-        time_pos_x = w * 0.5
-        time_pos_y = h * 0.62
+        enabled_minutes = await self._visible_extend_minutes()
+
+        # Responsive single-row layout: [time] [ +N ] [ +N ] ...
+        # Derive all sizes from resolved widget width/height so controls
+        # stay non-overlapping on custom dimensions.
+        pad = max(0.8, h * 0.08)
+        gap = max(0.6, h * 0.08)
+        row_y = h * 0.50
+        inside_w = max(1.0, w - (2.0 * pad))
+
+        btn_count = len(enabled_minutes)
+        min_time_w = 8.0
+        max_btn_w_fit = max(
+            3.2,
+            (inside_w - (btn_count * gap) - min_time_w) / max(1.0, float(btn_count)),
+        )
+        btn_w_pref = max(4.8, h * 1.05)
+        btn_w = min(btn_w_pref, max_btn_w_fit) if btn_count > 0 else 0.0
+        btn_h = max(1.0, h - (2.0 * pad))
+
+        buttons_total_w = (btn_count * btn_w) + (max(0, btn_count - 1) * gap)
+        time_w = max(6.0, inside_w - buttons_total_w - (gap if btn_count > 0 else 0.0))
+        time_pos_x = pad + (time_w * 0.5)
+        time_pos_y = row_y
+
+        button_start_x = pad + time_w + (gap if btn_count > 0 else 0.0)
+
+        time_size = max(1.2, min(h * 0.42, time_w * 0.18))
+        btn_text_size = 1.2
 
         # Client-side ticking: bake the remaining-ms into the manialink and
         # let ManiaScript decrement once per second using CurrentTime as the
@@ -388,14 +788,23 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         return (
             f'<frame pos="{x:.2f} {y:.2f}" z-index="40">'
             f'<quad pos="0 0" size="{w:.2f} {h:.2f}" bgcolor="1b1f2a88" />'
-            f'<label pos="2 -2.1" z-index="40" '
-            f'text="$dddPODIUM IN" textsize="1.35" textfont="GameFont" '
-            f'halign="left" valign="top" />'
             f'<label id="podium_countdown_value" pos="{time_pos_x:.2f} -{time_pos_y:.2f}" z-index="42" '
             f'text="$fff--:--" textsize="{time_size:.2f}" '
             f'textfont="GameFontBlack" halign="center" valign="center2" />'
-            f'</frame>'
-            f'{script}'
+            + "".join(
+                (
+                    f'<quad pos="{(button_start_x + (idx * (btn_w + gap))):.2f} -{row_y:.2f}" '
+                    f'z-index="42" size="{btn_w:.2f} {btn_h:.2f}" '
+                    f'halign="left" valign="center2" bgcolor="1b1f2a88" bgcolorfocus="3d6a94ff" '
+                    f'action="{self._MANIALINK_ID}__extend__{mins}" scriptevents="1" />'
+                    f'<label pos="{(button_start_x + (idx * (btn_w + gap)) + (btn_w / 2.0)):.2f} -{row_y:.2f}" '
+                    f'z-index="43" text="$fff+{mins}" textsize="{btn_text_size:.2f}" '
+                    f'textfont="GameFontBlack" halign="center" valign="center2" />'
+                )
+                for idx, mins in enumerate(enabled_minutes)
+            )
+            + f'</frame>'
+            + f'{script}'
         )
 
     async def get_widget_data(self, login: str) -> dict[str, Any]:

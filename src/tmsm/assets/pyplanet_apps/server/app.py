@@ -106,6 +106,7 @@ class ServerApp(AppConfig):
         self._draft: dict[str, dict[str, str]] = {}
         self._mode_draft: dict[str, dict[str, str]] = {}
         self._status: dict[str, tuple[str, str]] = {}
+        self._settings_state: dict[str, dict[str, Any]] = {}
         self._mode_status: dict[str, tuple[str, str]] = {}
         # last-rendered baseline of mode script setting values per login
         # (so we can tell a typed value from an unchanged echo)
@@ -165,6 +166,7 @@ class ServerApp(AppConfig):
 
     async def _open_settings(self, player) -> None:
         self._draft.pop(player.login, None)
+        self._settings_state.pop(player.login, None)
         await self._open(self.settings_view, player)
 
     async def _open_game(self, player) -> None:
@@ -199,6 +201,7 @@ class ServerApp(AppConfig):
     # ================================================================
 
     async def server_settings_context(self, login: str) -> dict[str, Any]:
+        st = self._settings_state.setdefault(login, {"page": 1})
         try:
             current = await self.instance.gbx("GetServerOptions")
         except Exception as e:
@@ -208,43 +211,103 @@ class ServerApp(AppConfig):
             return {"fields": [], "loading": False,
                     "status": "unexpected response", "status_color": "f44"}
         draft = self._draft.get(login, {})
-        fields = []
+        fields_all = []
+        dirty_count = 0
         for key, label, kind in SERVER_FIELDS:
             if key not in current:
                 continue
             cur = current[key]
-            val = draft.get(key, _render(cur, kind))
-            fields.append({
+            cur_rendered = _render(cur, kind)
+            val = draft.get(key, cur_rendered)
+            dirty = val != cur_rendered
+            if dirty:
+                dirty_count += 1
+            fields_all.append({
                 "key": key, "label": label, "kind": kind,
-                "value": val, "dirty": key in draft,
+                "value": val, "dirty": dirty,
             })
+        total_fields = len(fields_all)
+        total_pages = max(1, (total_fields + self.SETTINGS_PAGE_SIZE - 1) // self.SETTINGS_PAGE_SIZE)
+        page = int(st.get("page", 1) or 1)
+        page = max(1, min(total_pages, page))
+        st["page"] = page
+        start = (page - 1) * self.SETTINGS_PAGE_SIZE
+        end = start + self.SETTINGS_PAGE_SIZE
+        fields = fields_all[start:end]
         status_text, status_color = self._status.get(login, ("", "aaa"))
         return {"fields": fields, "loading": False,
                 "status": status_text, "status_color": status_color,
-                "dirty_count": len([f for f in fields if f["dirty"]])}
+            "dirty_count": dirty_count,
+                "page": page,
+                "total_pages": total_pages,
+                "total_fields": total_fields}
 
     async def _settings_catch_all(self, player, action, values):
         # capture edits as the user types: any entry_<id>__field__<key> in values
         prefix = f"entry_{self.settings_view.id}__field__"
         draft = self._draft.setdefault(player.login, {})
+        st = self._settings_state.setdefault(player.login, {"page": 1})
         for k, v in (values or {}).items():
             if k.startswith(prefix):
-                draft[k[len(prefix):]] = str(v or "")
-        # toggle__<key> for booleans
-        if "__toggle__" in action:
+                field_key = k[len(prefix):]
+                draft[field_key] = str(v or "")
+        if action.startswith("pg__"):
+            verb = action[len("pg__"):]
+            total_fields = 0
+            try:
+                current = await self.instance.gbx("GetServerOptions")
+                if isinstance(current, dict):
+                    total_fields = sum(1 for key, _label, _kind in SERVER_FIELDS if key in current)
+            except Exception:
+                total_fields = len(SERVER_FIELDS)
+            total_pages = max(1, (total_fields + self.SETTINGS_PAGE_SIZE - 1) // self.SETTINGS_PAGE_SIZE)
+            cur = int(st.get("page", 1) or 1)
+            if verb == "first":
+                cur = 1
+            elif verb == "prev":
+                cur = max(1, cur - 1)
+            elif verb == "next":
+                cur = min(total_pages, cur + 1)
+            elif verb == "last":
+                cur = total_pages
+            elif verb.startswith("page__"):
+                try:
+                    cur = int(verb[len("page__"):])
+                except (TypeError, ValueError):
+                    pass
+            st["page"] = max(1, min(total_pages, cur))
+            await self._open(self.settings_view, player)
+            return
+        # toggle__<key> for booleans (accept both stripped and prefixed actions)
+        if action.startswith("toggle__") or "__toggle__" in action:
             key = action.rsplit("__", 1)[-1]
             kind = next((kn for kk, _l, kn in SERVER_FIELDS if kk == key), "str")
             if kind == "bool":
-                cur_raw = draft.get(key)
-                if cur_raw is None:
-                    # no draft yet, fetch current
-                    try:
-                        current = await self.instance.gbx("GetServerOptions")
-                        cur_raw = _render(current.get(key, False), "bool")
-                    except Exception:
-                        cur_raw = "0"
-                draft[key] = "0" if _coerce(cur_raw, "bool") else "1"
+                # Toggle against effective current value (draft if present,
+                # otherwise live server value), then keep draft only if it
+                # differs from live server value.
+                base_raw = "0"
+                try:
+                    current = await self.instance.gbx("GetServerOptions")
+                    if isinstance(current, dict):
+                        base_raw = _render(current.get(key, False), "bool")
+                except Exception:
+                    pass
+
+                cur_raw = draft.get(key, base_raw)
+                next_raw = "0" if _coerce(cur_raw, "bool") else "1"
+                if next_raw == base_raw:
+                    draft.pop(key, None)
+                else:
+                    draft[key] = next_raw
+
+            if not draft:
+                self._draft.pop(player.login, None)
             await self._open(self.settings_view, player)
+            return
+
+        if not draft:
+            self._draft.pop(player.login, None)
 
     async def _on_settings_save(self, player, values=None, **kwargs) -> None:
         # absorb any pending entry values first
@@ -281,6 +344,7 @@ class ServerApp(AppConfig):
     async def _on_settings_refresh(self, player, **kwargs) -> None:
         self._draft.pop(player.login, None)
         self._status.pop(player.login, None)
+        self._settings_state.pop(player.login, None)
         await self._open(self.settings_view, player)
 
     # ================================================================
@@ -310,6 +374,7 @@ class ServerApp(AppConfig):
     LEVEL_ADMIN = 2
     LEVEL_MASTER = 3
     PAGE_SIZE = 12
+    SETTINGS_PAGE_SIZE = 13
 
     @staticmethod
     def _mode_kind(t: str) -> str:
@@ -356,8 +421,11 @@ class ServerApp(AppConfig):
         out: list[dict[str, str]] = []
         for p in sorted(modes_root.rglob("*.Script.txt")):
             rel = p.relative_to(modes_root).as_posix()
-            out.append({"path": rel, "name": p.stem.replace(".Script", ""),
-                        "group": rel.split("/", 1)[0] if "/" in rel else ""})
+            out.append({
+                "path": rel,
+                "name": p.stem.replace(".Script", ""),
+                "group": rel.split("/", 1)[0] if "/" in rel else "",
+            })
         return out
 
     async def _list_match_profiles(self) -> list[dict[str, Any]]:

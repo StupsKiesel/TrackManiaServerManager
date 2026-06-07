@@ -35,6 +35,7 @@ The result dicts are normalized to a small shared shape::
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any, Optional
@@ -283,10 +284,13 @@ async def search(
     difficulty: int | None = None,
     routes: int | None = None,
     tags: list[int] | None = None,
+    map_uid: str = "",
     length_min_ms: int | None = None,
     length_max_ms: int | None = None,
     order2: int | None = None,
     collection: str | None = None,
+    timeout_s: float | None = None,
+    retries: int = 0,
 ) -> dict[str, Any]:
     """Search/list maps via the v2 ``/api/maps`` endpoint.
 
@@ -330,6 +334,9 @@ async def search(
         params["routes"] = str(int(routes))
     if tags:
         params["tag"] = ",".join(str(int(t)) for t in tags)
+    if map_uid.strip():
+        # MX v2 Search Maps expects `uid` (String[]), not `mapuid`.
+        params["uid"] = map_uid.strip()
     if length_min_ms is not None and length_min_ms > 0:
         params["lengthop"] = "1"  # >=
         params["length"] = str(int(length_min_ms))
@@ -346,12 +353,28 @@ async def search(
 
     url = f"{base}/api/maps"
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
-    timeout = aiohttp.ClientTimeout(total=TIMEOUT_S)
+    timeout = aiohttp.ClientTimeout(total=float(timeout_s or TIMEOUT_S))
 
-    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-        async with session.get(url, params=params) as resp:
-            resp.raise_for_status()
-            data = await resp.json(content_type=None)
+    attempts = max(0, int(retries)) + 1
+    data = None
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(url, params=params) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json(content_type=None)
+                    last_exc = None
+                    break
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            last_exc = e
+            if attempt + 1 >= attempts:
+                raise
+            # Tiny backoff for transient MX/network hiccups.
+            await asyncio.sleep(0.35 * (attempt + 1))
+
+    if data is None and last_exc is not None:
+        raise last_exc
 
     items: list[dict[str, Any]] = []
     more = False

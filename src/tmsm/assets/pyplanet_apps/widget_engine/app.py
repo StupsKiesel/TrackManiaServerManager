@@ -48,6 +48,7 @@ _TMSM_WIDGETS_SIGNALS = (
     "register",
     "request_register",
     "refresh",
+    "position_changed",
     "runtime_override_set",
     "runtime_override_clear",
     "runtime_override_clear_owner",

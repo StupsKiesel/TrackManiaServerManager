@@ -460,7 +460,7 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         self.context.signals.listen("maniaplanet:map_begin", self._on_map_start)
         self.context.signals.listen("maniaplanet:player_connect", self._on_player_connect)
         self.context.signals.listen("maniaplanet:manialink_answer", self._on_manialink_action)
-        self.context.signals.listen("tmsm_voting_engine:ended", self._on_vote_engine_ended)
+        self._listen_if_exists("tmsm_voting_engine:ended", self._on_vote_engine_ended)
         self._listen_if_exists("maniaplanet:manialink_page_answer", self._on_manialink_action)
 
         self._reconcile_task = asyncio.create_task(self._reconcile_loop())

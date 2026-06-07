@@ -17,7 +17,7 @@ from .. import paths
 Runner = Callable[[Callable[[str], None]], None]
 
 
-class InstallScreen(ModalScreen[None]):
+class InstallScreen(ModalScreen[bool]):
     BINDINGS = [Binding("escape", "close_if_done", "Close")]
 
     DEFAULT_CSS = """
@@ -39,6 +39,7 @@ class InstallScreen(ModalScreen[None]):
         self.title_text = title
         self.runner = runner
         self._done = False
+        self._ok = False
         logs_dir = paths.LOGS_DIR
         logs_dir.mkdir(parents=True, exist_ok=True)
         slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", title).strip("-").lower() or "install"
@@ -69,10 +70,12 @@ class InstallScreen(ModalScreen[None]):
             self.runner(self._log)
             self._log("")
             self._log("--- done ---")
+            self._ok = True
         except Exception as e:
             self._log("")
             self._log(f"ERROR: {e}")
             self._log(traceback.format_exc())
+            self._ok = False
         finally:
             self._done = True
             try:
@@ -89,8 +92,8 @@ class InstallScreen(ModalScreen[None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close" and self._done:
-            self.dismiss(None)
+            self.dismiss(self._ok)
 
     def action_close_if_done(self) -> None:
         if self._done:
-            self.dismiss(None)
+            self.dismiss(self._ok)

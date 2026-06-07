@@ -63,6 +63,42 @@ def _normalize_module_name(module: str) -> str:
         return prefix + leaf.lower()
     return module
 
+
+_TMSM_ENTRY_LINE_RE = re.compile(
+    r"""^(?P<pre>[ \t]*(?:\#[ \t]*)?)(?P<q>["'])(?P<mod>pyplanet\.apps\.tmsm\.[A-Za-z0-9_.]+)(?P=q)(?P<post>.*)$"""
+)
+
+
+def _normalize_tmsm_entries_in_text(text: str) -> str:
+    """Rewrite any `pyplanet.apps.tmsm.<UpperLeaf>` lines to lowercase leaves.
+
+    Also drops a line if its lowercase form already appears earlier in the
+    file, so we never end up with duplicate active/inactive entries that
+    differ only by case.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        m = _TMSM_ENTRY_LINE_RE.match(line.rstrip("\n").rstrip("\r"))
+        if not m:
+            out.append(line)
+            continue
+        mod = m.group("mod")
+        norm = _normalize_module_name(mod)
+        if norm in seen:
+            # Drop duplicate (case-only variant) entirely, keep the newline
+            # so block detection offsets are not perturbed unexpectedly.
+            continue
+        seen.add(norm)
+        if norm == mod:
+            out.append(line)
+            continue
+        eol = line[len(line.rstrip("\n").rstrip("\r")):]
+        out.append(
+            f"{m.group('pre')}{m.group('q')}{norm}{m.group('q')}{m.group('post')}{eol}"
+        )
+    return "".join(out)
+
 # Legacy markers we may still find in pools created before headers replaced them.
 # Stripped on sync so old pools self-migrate.
 _LEGACY_BLOCK_RE = re.compile(
@@ -215,6 +251,11 @@ def sync_apps_py(apps_py: Path, modules: list[str]) -> None:
     text = _LEGACY_START_RE.sub("", text)
     text = _LEGACY_END_RE.sub("", text)
 
+    # Self-heal: normalize any uppercase tmsm.* leaf entries anywhere in the
+    # file. PyPlanet's import_app treats an uppercase last segment as
+    # "module.Class", which breaks for our pure-module tmsm addons.
+    text = _normalize_tmsm_entries_in_text(text)
+
     # Capture per-module state from either a header-style block or any
     # surviving legacy block fragment.
     span = _find_block_span(text)
@@ -240,7 +281,8 @@ def sync_apps_py(apps_py: Path, modules: list[str]) -> None:
     for line in outside.splitlines():
         em = _ENTRY_RE.match(line)
         if em:
-            pre_existing.add(em.group(2))
+            pre_existing.add(_normalize_module_name(em.group(2)))
+    modules = [_normalize_module_name(m) for m in modules]
     modules = [m for m in modules if m not in pre_existing]
 
     # Indent inside the default list — fall back to 8 spaces (template default).

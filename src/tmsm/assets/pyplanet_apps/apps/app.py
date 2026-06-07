@@ -109,7 +109,10 @@ def _read_active_modules() -> set[str]:
     for line in APPS_PY.read_text(encoding="utf-8").splitlines():
         m = _ENTRY_RE.match(line)
         if m and m.group(1) is None and m.group(2).startswith("pyplanet.apps."):
-            out.add(m.group(2))
+            mod = m.group(2)
+            if mod.startswith("pyplanet.apps.tmsm."):
+                mod = "pyplanet.apps.tmsm." + mod[len("pyplanet.apps.tmsm."):].lower()
+            out.add(mod)
     _ACTIVE_CACHE = out
     return out
 
@@ -187,17 +190,30 @@ def _write_apps_state(enabled: set[str]) -> None:
     except Exception:
         apps_py_mod = None  # type: ignore
     installed = {r["module"] for r in _discover_installed()}
+
+    def _norm(mod: str) -> str:
+        prefix = "pyplanet.apps.tmsm."
+        if mod.startswith(prefix):
+            return prefix + mod[len(prefix):].lower()
+        return mod
+
+    enabled = {_norm(m) for m in enabled}
     tracked = installed | enabled
     if apps_py_mod is not None:
         apps_py_mod.sync_apps_py(APPS_PY, sorted(tracked))
 
     out_lines: list[str] = []
+    seen_modules: set[str] = set()
     for line in APPS_PY.read_text(encoding="utf-8").splitlines():
         m = _ENTRY_RE.match(line)
         if not m or not m.group(2).startswith("pyplanet.apps."):
             out_lines.append(line)
             continue
-        module = m.group(2)
+        module = _norm(m.group(2))
+        if module in seen_modules:
+            # Drop case-only or exact duplicates.
+            continue
+        seen_modules.add(module)
         indent = re.match(r"^([ \t]*)", line).group(1)  # type: ignore[union-attr]
         inline_comment = ""
         line_after = re.sub(

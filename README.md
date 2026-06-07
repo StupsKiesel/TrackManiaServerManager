@@ -6,6 +6,13 @@ A Linux/WSL terminal UI for running and managing:
 - PyPlanet pools
 - a portable MariaDB instance
 
+## Game Support Scope
+
+- TrackMania 2020 is the primary and officially supported target.
+- The system is built and tested around TrackMania 2020 only.
+- ManiaPlanet dedicated servers should work, but are currently 0% tested.
+- ManiaPlanet testing is planned only after the TrackMania 2020 server side is considered stable.
+
 ## Stability Notice
 
 ### TUI core status: usable

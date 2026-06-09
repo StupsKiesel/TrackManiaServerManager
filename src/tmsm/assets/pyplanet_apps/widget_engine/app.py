@@ -484,14 +484,11 @@ class WidgetsApp(AppConfig):
             if repl.manialink_id and self.get_effective_hide_ui_modules(entry.key):
                 try:
                     asyncio.ensure_future(
-                        self._apply_ui_modules_visibility(
-                            self.get_effective_hide_ui_modules(entry.key),
-                            visible=False,
-                        )
+                        self._reconcile_all_ui_modules()
                     )
                 except Exception:
                     logger.exception(
-                        "widget_engine: schedule hide UI modules for '%s' failed",
+                        "widget_engine: schedule UI modules reconcile for '%s' failed",
                         entry.key,
                     )
 
@@ -762,18 +759,13 @@ class WidgetsApp(AppConfig):
                 logger.exception(
                     "widget_engine: refresh push replacement '%s' failed", key,
                 )
-            entry = self._entries.get(key)
-            ids = self.get_effective_hide_ui_modules(key) if entry else ()
-            if ids:
-                try:
-                    await self._apply_ui_modules_visibility(
-                        ids, visible=False,
-                    )
-                except Exception:
-                    logger.exception(
-                        "widget_engine: refresh hide UI modules for '%s' failed",
-                        key,
-                    )
+            try:
+                await self._reconcile_all_ui_modules()
+            except Exception:
+                logger.exception(
+                    "widget_engine: refresh reconcile UI modules for '%s' failed",
+                    key,
+                )
 
     async def _refresh_phase_change(
         self, outgoing: set[str], incoming: set[str],
@@ -802,18 +794,13 @@ class WidgetsApp(AppConfig):
                     "widget_engine: phase-change push replacement '%s' failed",
                     key,
                 )
-            entry = self._entries.get(key)
-            ids = self.get_effective_hide_ui_modules(key) if entry else ()
-            if ids:
-                try:
-                    await self._apply_ui_modules_visibility(
-                        ids, visible=False,
-                    )
-                except Exception:
-                    logger.exception(
-                        "widget_engine: phase-change hide UI modules for '%s' failed",
-                        key,
-                    )
+            try:
+                await self._reconcile_all_ui_modules()
+            except Exception:
+                logger.exception(
+                    "widget_engine: phase-change reconcile UI modules for '%s' failed",
+                    key,
+                )
 
     # ---- gbx manialink-id replacement --------------------------------
 
@@ -890,6 +877,9 @@ class WidgetsApp(AppConfig):
             await self._apply_ui_modules_visibility(to_show, visible=True)
         if to_hide and any_enabled:
             await self._apply_ui_modules_visibility(to_hide, visible=False)
+        # Normalize globally in case multiple replacement keys overlap on
+        # the same UI module ids.
+        await self._reconcile_all_ui_modules()
 
     async def set_replacement_enabled(
         self, login: str, key: str, enabled: bool,
@@ -916,7 +906,7 @@ class WidgetsApp(AppConfig):
                 )
         await self.push_replacement(key, logins=[login])
         if self.get_effective_hide_ui_modules(key):
-            await self._reconcile_ui_modules_for(key)
+            await self._reconcile_all_ui_modules()
 
     async def _on_player_connect(self, player=None, **kwargs):  # noqa: ARG002
         login = getattr(player, "login", None)
@@ -935,22 +925,13 @@ class WidgetsApp(AppConfig):
                 )
         if not self._replacements:
             return
-        # Re-assert module-visibility overrides too — some title packs
-        # restore default UI module visibility per-player on join.
-        hide_ids: list[str] = []
-        for key in self._replacements.values():
-            ids = self.get_effective_hide_ui_modules(key)
-            if ids:
-                hide_ids.extend(ids)
-        if hide_ids:
-            try:
-                await self._apply_ui_modules_visibility(
-                    tuple(dict.fromkeys(hide_ids)), visible=False,
-                )
-            except Exception:
-                logger.exception(
-                    "widget_engine: on_connect hide UI modules failed",
-                )
+        # Re-assert visibility policy too. Do not blindly hide: some widgets
+        # may be disabled for all online players and their modules must stay
+        # visible in that case.
+        try:
+            await self._reconcile_all_ui_modules()
+        except Exception:
+            logger.exception("widget_engine: on_connect reconcile UI modules failed")
         # Push each replacement after its own delay so the original
         # manialink lands first and our XML overwrites it client-side.
         for key in list(self._replacements.values()):
@@ -1320,6 +1301,40 @@ class WidgetsApp(AppConfig):
         )
         await self._apply_ui_modules_visibility(ids, visible=not any_enabled)
 
+    async def _reconcile_all_ui_modules(self) -> None:
+        """Compute desired visibility for every known module id globally.
+
+        `Common.UIModules.SetProperties` is server-wide, so per-key toggles can
+        race when multiple replacements reference the same module id. We hide an
+        id iff at least one replacement that lists it is enabled for any online
+        player; otherwise we show it.
+        """
+        online = self._online_logins()
+        desired_hidden: dict[str, bool] = {}
+        keys = tuple(dict.fromkeys(self._replacements.values()))
+        for key in keys:
+            entry = self._entries.get(key)
+            if entry is None or not entry.gbx_replace:
+                continue
+            ids = self.get_effective_hide_ui_modules(key)
+            if not ids:
+                continue
+            any_enabled = any(self.is_replacement_enabled(login, key) for login in online)
+            for mid in ids:
+                if not mid:
+                    continue
+                desired_hidden[mid] = bool(desired_hidden.get(mid, False) or any_enabled)
+
+        if not desired_hidden:
+            return
+
+        to_show = tuple(mid for mid, hidden in desired_hidden.items() if not hidden)
+        to_hide = tuple(mid for mid, hidden in desired_hidden.items() if hidden)
+        if to_show:
+            await self._apply_ui_modules_visibility(to_show, visible=True)
+        if to_hide:
+            await self._apply_ui_modules_visibility(to_hide, visible=False)
+
     # ---- phase --------------------------------------------------------
 
     def _make_phase_handler(self, phase: Phase):
@@ -1350,6 +1365,8 @@ class WidgetsApp(AppConfig):
             "rset":    self._sub_rset,
             "rclear":  self._sub_rclear,
             "rlist":   self._sub_rlist,
+            "umap":    self._sub_umap,
+            "ushow":   self._sub_ushow,
             "debug":   self._sub_debug,
             "edit":    self._sub_edit,
             "done":    self._sub_done,
@@ -1810,6 +1827,80 @@ class WidgetsApp(AppConfig):
         await self.engine.set_debug(player.login, key, on)
         await self.instance.chat(
             f"$0afwidget_engine: debug '{key}' {'on' if on else 'off'}", player.login,
+        )
+
+    # ---- UI modules diagnostics --------------------------------------
+
+    async def _sub_umap(self, player, rest):
+        """List which replacement widgets currently hide specific UI modules.
+
+        Usage:
+          //widget umap
+          //widget umap Race_Chrono Race_Chrono2 Race_ChronoTable
+        """
+        modules = tuple(rest) if rest else (
+            "Race_Chrono",
+            "Race_Chrono2",
+            "Race_ChronoTable",
+            "Race_Checkpoint",
+            "Race_Countdown",
+            "Race_HUD",
+            "Race_HUD_BigMessage",
+        )
+        await self.instance.chat(
+            "$0afwidget_engine: checking UI module owners for $fff"
+            + ", ".join(modules),
+            player.login,
+        )
+        online = self._online_logins()
+        hits = 0
+        for key in sorted(self._entries.keys()):
+            entry = self._entries.get(key)
+            if entry is None or not entry.gbx_replace:
+                continue
+            effective = tuple(self.get_effective_hide_ui_modules(key) or ())
+            if not effective:
+                continue
+            matched = tuple(m for m in modules if m in effective)
+            if not matched:
+                continue
+            hits += 1
+            source = "override" if self.has_ui_modules_override(key) else "default"
+            enabled_logins = [lg for lg in online if self.is_replacement_enabled(lg, key)]
+            enabled_info = (
+                f"enabled_for={len(enabled_logins)}/{len(online)}"
+                if online else "enabled_for=0/0"
+            )
+            active = "active_hide=yes" if bool(enabled_logins) else "active_hide=no"
+            await self.instance.chat(
+                f"$fff{key}$888 source={source} {enabled_info} {active} hides="
+                + ",".join(matched),
+                player.login,
+            )
+        if hits == 0:
+            await self.instance.chat(
+                "$0afwidget_engine: no registered replacement currently hides those modules",
+                player.login,
+            )
+
+    async def _sub_ushow(self, player, rest):
+        """Force-show UI modules server-wide once.
+
+        Useful to validate whether hidden title-pack modules are the root cause.
+        """
+        modules = tuple(rest) if rest else (
+            "Race_Chrono",
+            "Race_Chrono2",
+            "Race_ChronoTable",
+            "Race_Checkpoint",
+            "Race_Countdown",
+            "Race_HUD",
+            "Race_HUD_BigMessage",
+        )
+        await self._apply_ui_modules_visibility(modules, visible=True)
+        await self.instance.chat(
+            "$0afwidget_engine: forced visible (once): $fff" + ", ".join(modules),
+            player.login,
         )
 
     # ---- edit mode subcommands (slice 7) ------------------------------

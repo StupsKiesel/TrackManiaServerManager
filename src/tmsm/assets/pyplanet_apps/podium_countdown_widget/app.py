@@ -58,7 +58,7 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
 
     DEFAULT_DELAY_SECONDS = 8
     _MANIALINK_ID = "tmsm_podium_countdown"
-    _HIDE_UI_MODULES = (
+    _LEGACY_HIDE_UI_MODULES = (
         "Race_Chrono",
         "Race_Chrono2",
         "Race_ChronoTable",
@@ -71,6 +71,9 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         # Most recently observed total duration (race time limit or chat
         # time). Used by the reconcile loop to detect time-extend votes.
         self._baseline_total_seconds: int | None = None
+        # Phase anchors for more accurate periodic re-alignment.
+        self._race_start_monotonic: float | None = None
+        self._postrace_start_monotonic: float | None = None
         self._reconcile_task: asyncio.Task | None = None
         self._resync_task: asyncio.Task | None = None
         self._extend_vote_triggers_by_min: dict[int, int] = {5: 0, 10: 0, 15: 0}
@@ -91,6 +94,14 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
             type=bool,
             default=True,
             description="When enabled, periodically re-sync countdown display with server time.",
+        )
+        self.setting_sync_interval_seconds = Setting(
+            "sync_interval_seconds",
+            "Sync Interval Seconds",
+            Setting.CAT_BEHAVIOUR,
+            type=int,
+            default=10,
+            description="How often to re-sync the countdown anchor (seconds).",
         )
         self.setting_button_plus5_enabled = Setting(
             "button_plus5_enabled",
@@ -299,6 +310,94 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
             return None
         return max(1, min(3600, out))
 
+    @staticmethod
+    def _normalize_remaining_seconds(raw: Any) -> int | None:
+        """Normalize a remaining-time value (seconds or milliseconds)."""
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if val <= 0:
+            return None
+        secs = (val / 1000.0) if val >= 1000.0 else val
+        out = int(round(secs))
+        if out <= 0:
+            return None
+        return max(1, min(86400, out))
+
+    async def _remaining_from_game_info(self, phase: Phase | None) -> int | None:
+        """Best-effort probe for authoritative *remaining* seconds.
+
+        Some modes expose explicit remaining-time fields in
+        GetCurrentGameInfo; when present they are more accurate than a long-
+        lived local anchor.
+        """
+        try:
+            gi = await self.instance.gbx("GetCurrentGameInfo")
+        except Exception:
+            gi = None
+        if not isinstance(gi, dict):
+            return None
+
+        if phase == Phase.POST_RACE:
+            preferred = (
+                "ChatTimeLeft",
+                "FinishTimeoutLeft",
+                "PostRaceTimeLeft",
+                "PostRaceRemaining",
+            )
+        else:
+            preferred = (
+                "TimeLimitLeft",
+                "TimeLeft",
+                "RemainingTime",
+                "RemainingTimeLimit",
+                "RaceTimeLeft",
+            )
+
+        for key in preferred:
+            if key in gi:
+                parsed = self._normalize_remaining_seconds(gi.get(key))
+                if parsed is not None:
+                    return parsed
+
+        # Generic fallback for titles that use different key names.
+        for key, value in gi.items():
+            kl = str(key or "").lower()
+            if "left" not in kl and "remain" not in kl:
+                continue
+            if "time" not in kl and "limit" not in kl and "timeout" not in kl:
+                continue
+            parsed = self._normalize_remaining_seconds(value)
+            if parsed is not None:
+                return parsed
+        return None
+
+    async def _resync_anchor_from_server(self) -> bool:
+        """Re-anchor ETA from authoritative server remaining-time.
+
+        Returns True only when the local countdown drift exceeds 1 second and
+        we actually adjusted the anchor. This avoids periodic redraw flicker.
+        """
+        if self.engine is None:
+            return False
+        phase = self.engine.current_phase
+        remaining = await self._remaining_from_game_info(phase)
+        if remaining is None:
+            return False
+
+        local_remaining_ms = self._remaining_ms()
+        remote_remaining_ms = int(remaining * 1000)
+        if local_remaining_ms is not None:
+            if abs(local_remaining_ms - remote_remaining_ms) <= 1000:
+                return False
+
+        self._podium_eta_monotonic = time.monotonic() + float(remaining)
+        # Keep baseline aligned for reconcile logic and vote delta-shifts.
+        if self._baseline_total_seconds is None or remaining > self._baseline_total_seconds:
+            self._baseline_total_seconds = int(remaining)
+        return True
+
     async def _time_limit_from_mode_settings(self) -> int | None:
         unit_hint = await self._timelimit_unit_hint()
         try:
@@ -424,7 +523,6 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
             entry,
             gbx_replace=GbxReplacement(
                 manialink_id=self._MANIALINK_ID,
-                hide_ui_modules=self._HIDE_UI_MODULES,
                 # Widget paints its own background and ships its own
                 # ManiaScript for client-side ticking; the engine chrome
                 # would nest our <script> inside frames and ManiaScript
@@ -436,8 +534,13 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
     async def on_start(self) -> None:
         await super().on_start()
 
+        # One-time compatibility migration: older builds hid Race_Chrono*
+        # modules server-wide, which suppresses checkpoint split popups.
+        await self._migrate_legacy_ui_hide_override()
+
         await self.context.setting.register(self.setting_delay_seconds)
         await self.context.setting.register(self.setting_sync_enabled)
+        await self.context.setting.register(self.setting_sync_interval_seconds)
         await self.context.setting.register(self.setting_button_plus5_enabled)
         await self.context.setting.register(self.setting_button_plus10_enabled)
         await self.context.setting.register(self.setting_button_plus15_enabled)
@@ -447,6 +550,7 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
 
         self.setting_delay_seconds.on_change = self._on_setting_change
         self.setting_sync_enabled.on_change = self._on_setting_change
+        self.setting_sync_interval_seconds.on_change = self._on_setting_change
         self.setting_button_plus5_enabled.on_change = self._on_setting_change
         self.setting_button_plus10_enabled.on_change = self._on_setting_change
         self.setting_button_plus15_enabled.on_change = self._on_setting_change
@@ -458,6 +562,7 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         self.context.signals.listen("maniaplanet:podium_start", self._on_podium_start)
         self.context.signals.listen("maniaplanet:map_start", self._on_map_start)
         self.context.signals.listen("maniaplanet:map_begin", self._on_map_start)
+        self._listen_if_exists("trackmania:start_line", self._on_start_line)
         self.context.signals.listen("maniaplanet:player_connect", self._on_player_connect)
         self.context.signals.listen("maniaplanet:manialink_answer", self._on_manialink_action)
         self._listen_if_exists("tmsm_voting_engine:ended", self._on_vote_engine_ended)
@@ -465,6 +570,25 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
 
         self._reconcile_task = asyncio.create_task(self._reconcile_loop())
         self._resync_task = asyncio.create_task(self._resync_loop())
+
+    async def _migrate_legacy_ui_hide_override(self) -> None:
+        host = getattr(self.instance.apps, "apps", {}).get("widget_engine")
+        if host is None:
+            return
+        getter = getattr(host, "get_effective_hide_ui_modules", None)
+        setter = getattr(host, "set_ui_modules_override", None)
+        if not callable(getter) or not callable(setter):
+            return
+        try:
+            effective = tuple(getter(self.WIDGET_KEY) or ())
+        except Exception:
+            return
+        if effective != self._LEGACY_HIDE_UI_MODULES:
+            return
+        try:
+            await setter(self.WIDGET_KEY, None)
+        except Exception:
+            return
 
     async def on_stop(self) -> None:
         if self._reconcile_task is not None:
@@ -476,10 +600,11 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         await super().on_stop()
 
     async def _reconcile_loop(self) -> None:
-        """Periodically re-read the active duration from mode settings so
-        that a mid-race time-extend vote (which raises S_TimeLimit) is
-        picked up and the on-screen countdown is shifted accordingly.
-        Polling is cheap and avoids depending on a vote-specific signal."""
+        """Reconcile countdown with mode settings.
+
+        Handles dynamic timelimit changes (for example vote-based extensions)
+        and recovers state if lifecycle events were missed.
+        """
         try:
             while True:
                 await asyncio.sleep(5.0)
@@ -490,12 +615,12 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
                         await self._push_replacement()
                     continue
 
-                # Timelimit may have just switched from 0 -> positive value.
-                # Rebuild countdown state and redraw immediately.
+                # Timelimit may have switched from 0 -> positive value.
                 if self._podium_eta_monotonic is None or self._baseline_total_seconds is None:
                     if await self._ensure_countdown_state():
                         await self._push_replacement()
                     continue
+
                 phase = self.engine.current_phase if self.engine else None
                 if phase == Phase.POST_RACE:
                     new_total = await self._post_race_from_mode_settings()
@@ -503,6 +628,7 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
                     new_total = await self._time_limit_from_mode_settings()
                 if new_total is None or new_total == self._baseline_total_seconds:
                     continue
+
                 delta = new_total - self._baseline_total_seconds
                 self._podium_eta_monotonic += float(delta)
                 self._baseline_total_seconds = new_total
@@ -514,16 +640,23 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         """Periodic server-time resync for long countdowns.
 
         The client-side script decrements locally; on long durations this can
-        drift slightly. Re-push once per minute while a countdown is active.
+        drift. Re-anchor from server state whenever possible and redraw.
         """
         try:
             while True:
-                await asyncio.sleep(60.0)
+                interval = await self._setting_int(
+                    self.setting_sync_interval_seconds,
+                    10,
+                    minimum=2,
+                    maximum=120,
+                )
+                await asyncio.sleep(float(interval))
                 if self._podium_eta_monotonic is None:
                     continue
                 if not await self._setting_bool(self.setting_sync_enabled, True):
                     continue
-                await self._push_replacement()
+                if await self._resync_anchor_from_server():
+                    await self._push_replacement()
         except asyncio.CancelledError:
             pass
 
@@ -561,22 +694,29 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         if await self._timelimit_disabled_in_matchsettings():
             self._baseline_total_seconds = None
             self._podium_eta_monotonic = None
+            self._postrace_start_monotonic = None
             await self._push_replacement()
             return
         total = await self._post_race_from_mode_settings()
         if total is None:
             total = await self._configured_delay()
+        self._postrace_start_monotonic = time.monotonic()
+        self._race_start_monotonic = None
         self._baseline_total_seconds = int(total)
-        self._podium_eta_monotonic = time.monotonic() + float(total)
+        self._podium_eta_monotonic = self._postrace_start_monotonic + float(total)
         await self._push_replacement()
 
     async def _on_podium_start(self, **kwargs) -> None:
         self._podium_eta_monotonic = None
         self._baseline_total_seconds = None
+        self._race_start_monotonic = None
+        self._postrace_start_monotonic = None
         await self._push_replacement()
 
     async def _on_map_start(self, **kwargs) -> None:
         self._extend_vote_triggers_by_min = {5: 0, 10: 0, 15: 0}
+        self._race_start_monotonic = None
+        self._postrace_start_monotonic = None
         if await self._timelimit_disabled_in_matchsettings():
             self._baseline_total_seconds = None
             self._podium_eta_monotonic = None
@@ -585,6 +725,18 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         total = await self._configured_delay()
         self._baseline_total_seconds = int(total)
         self._podium_eta_monotonic = time.monotonic() + float(total)
+        await self._push_replacement()
+
+    async def _on_start_line(self, **kwargs) -> None:
+        # The actual race clock starts here. Re-anchor so pre-race countdown
+        # time does not make the displayed timelimit run early.
+        if await self._timelimit_disabled_in_matchsettings():
+            return
+        total = await self._configured_delay()
+        self._race_start_monotonic = time.monotonic()
+        self._postrace_start_monotonic = None
+        self._baseline_total_seconds = int(total)
+        self._podium_eta_monotonic = self._race_start_monotonic + float(total)
         await self._push_replacement()
 
     async def _on_vote_engine_ended(self, **kwargs) -> None:
@@ -696,8 +848,12 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
             total = await self._post_race_from_mode_settings()
             if total is None:
                 total = await self._configured_delay()
+            self._postrace_start_monotonic = time.monotonic()
+            self._race_start_monotonic = None
         elif phase in (Phase.WARMUP, Phase.PRE_RACE, Phase.IN_RACE):
             total = await self._configured_delay()
+            self._race_start_monotonic = time.monotonic()
+            self._postrace_start_monotonic = None
         else:
             return False
         self._baseline_total_seconds = int(total)

@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 
 _MANIALINK_ID = "tmsm_tab_scoreboard"
-_HIDE_UI_MODULES = ("Race_ScoresTable3", "Race_ScoresTable2", "Race_ScoresTable")
 
 _ROW_LIMIT = 14
 _REFRESH_DEBOUNCE_S = 0.2
@@ -153,7 +152,6 @@ class TabScoreboard(AppConfig):
             animation=Animation(direction=AnimDir.UP, duration_ms=200),
             gbx_replace=GbxReplacement(
                 manialink_id=_MANIALINK_ID,
-                hide_ui_modules=_HIDE_UI_MODULES,
                 hotkey="Tab",
             ),
             # The podium_scoreboard_widget owns the screen during the

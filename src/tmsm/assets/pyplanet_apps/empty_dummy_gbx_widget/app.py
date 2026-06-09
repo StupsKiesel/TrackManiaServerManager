@@ -50,9 +50,6 @@ class EmptyDummyGbxWidgetApp(WidgetAppBase):
             entry,
             gbx_replace=GbxReplacement(
                 manialink_id=_MANIALINK_ID,
-                # No defaults: operator picks the ids via the MODULES
-                # editor (server-wide override persists in we_setting).
-                hide_ui_modules=(),
                 hotkey=None,
                 # No chrome / animation: there is nothing to draw.
                 chrome=False,

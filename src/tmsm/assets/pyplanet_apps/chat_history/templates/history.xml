@@ -1,0 +1,61 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{% set W = 300 %}
+{% set H = 165 %}
+{% set LEFT_W = 94 %}
+{% set RIGHT_X = LEFT_W + 4 %}
+{% set RIGHT_W = W - RIGHT_X - 2 %}
+{% set LIST_MAX = 24 %}
+
+<frame pos="-150 82" z-index="200">
+  {{ ui.window('Chat History', icon='comments', x=0, y=0, w=W, h=H) }}
+
+  <quad pos="2 -12" z-index="201" size="{{ LEFT_W }} 138" bgcolor="0006" />
+  {{ ui.label('Targets', x=4, y=-14, size='sm', color='8af', bold=True) }}
+
+  {% for row in players[:LIST_MAX] %}
+    {% set i = loop.index0 %}
+    {% set y = -20 - i * 5.1 %}
+    <quad pos="3 {{ y + 2 }}" z-index="202" size="{{ LEFT_W - 2 }} 4.6"
+          bgcolor="{% if row.active %}1568{% else %}0000{% endif %}" />
+    <quad pos="3 {{ y + 2 }}" z-index="203" size="{{ LEFT_W - 2 }} 4.6" bgcolor="fff0"
+          id="sel_{{ id }}__sel__{{ row.key }}"
+          action="{{ id }}__sel__{{ row.key }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
+    {{ ui.label(row.label, x=4, y=y, size='sm', color=('fff' if row.active else 'ccc')) }}
+    {{ ui.label(row.count|string, x=LEFT_W - 3, y=y, size='sm', color='888', halign='right') }}
+  {% endfor %}
+
+  {% if players|length > LIST_MAX %}
+    {{ ui.label('(+ ' ~ (players|length - LIST_MAX) ~ ' more)',
+                x=4, y=-20 - LIST_MAX * 5.1, size='sm', color='666') }}
+  {% endif %}
+
+  <quad pos="{{ RIGHT_X }} -18" z-index="201" size="{{ RIGHT_W }} 122" bgcolor="0008" />
+  {{ ui.label('Selected: ' ~ selected_label, x=RIGHT_X, y=-14, size='sm', color='8af', bold=True) }}
+
+  {% if messages|length == 0 %}
+    {{ ui.label('(no messages yet)', x=RIGHT_X + RIGHT_W / 2, y=-74,
+                halign='center', color='666') }}
+  {% else %}
+    {% for m in messages|reverse %}
+      {% set y = -22 - loop.index0 * 3.4 %}
+      <label pos="{{ RIGHT_X + 1 }} {{ y }}" z-index="203"
+             halign="left" valign="center2"
+             text="${{ m.color }}{{ m.line }}" textsize="0.80" textfont="GameFont" />
+    {% endfor %}
+  {% endif %}
+
+  {{ ui.push_button('refresh', 'Refresh', icon='reload',
+                    x=2, y=-H + 6, variant='ghost', halign='left', size='md') }}
+  {{ ui.push_button('clear_selected', 'Clear Selected', icon='trash',
+                    x=176, y=-H + 6, variant='warning', halign='left', size='md') }}
+  {{ ui.push_button('clear_all', 'Clear All', icon='times',
+                    x=234, y=-H + 6, variant='danger', halign='left', size='md') }}
+
+  <label pos="{{ RIGHT_X }} {{ -H + 3 }}" z-index="210"
+         halign="left" valign="center2"
+         text="${{ status_color }}{{ status }}" textsize="0.8" textfont="GameFont" />
+
+  {{ ui.hover_script() }}
+</frame>

@@ -37,10 +37,6 @@ logger = logging.getLogger(__name__)
 
 
 _MANIALINK_ID = "tmsm_podium_scoreboard"
-# Title-pack scoreboard UI modules. Hiding them keeps the default
-# in-race scoreboard from briefly flashing on top of our manialink if it
-# is still mounted when podium starts.
-_HIDE_UI_MODULES = ("Race_ScoresTable3", "Race_ScoresTable2", "Race_ScoresTable")
 
 _ROW_LIMIT = 14
 _REFRESH_DEBOUNCE_S = 0.2
@@ -158,7 +154,6 @@ class PodiumScoreboardWidgetApp(WidgetAppBase):
             entry,
             gbx_replace=GbxReplacement(
                 manialink_id=_MANIALINK_ID,
-                hide_ui_modules=_HIDE_UI_MODULES,
                 # No hold-to-show key: widget should be permanently
                 # visible while the podium phase is active.
                 hotkey=None,

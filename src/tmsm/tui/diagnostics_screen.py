@@ -135,6 +135,114 @@ def _read_pool_port(pool: PyPlanetPoolInstance) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _fetch_wan_ip(timeout: float = 4.0) -> tuple[str | None, str]:
+    """Return (wan_ip, error_msg). Tries a couple of providers."""
+    from urllib.request import urlopen, Request
+
+    providers = (
+        "https://api.ipify.org",
+        "https://ifconfig.me/ip",
+        "https://icanhazip.com",
+    )
+    last_err = ""
+    for url in providers:
+        try:
+            req = Request(url, headers={"User-Agent": "tmsm-diagnostics/1.0"})
+            with urlopen(req, timeout=timeout) as r:
+                ip = r.read().decode("utf-8", errors="replace").strip()
+            if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", ip):
+                return ip, ""
+            last_err = f"{url} returned unexpected payload"
+        except Exception as e:  # noqa: BLE001 — best-effort
+            last_err = f"{url}: {e}"
+    return None, last_err or "no provider reachable"
+
+
+def _checkhost_tcp_probe(host: str, port: int,
+                         max_nodes: int = 3,
+                         poll_timeout: float = 12.0) -> tuple[str | None, list[tuple[str, bool, str]]]:
+    """Ask check-host.net to probe a TCP port from external nodes.
+
+    Returns (error_or_None, [(node_label, reachable, detail), ...]).
+    Free public API, no key required. Used for *external* reachability —
+    don't replace local socket checks with it.
+    """
+    from urllib.request import urlopen, Request
+    import json
+
+    try:
+        url = f"https://check-host.net/check-tcp?host={host}:{port}&max_nodes={max_nodes}"
+        req = Request(url, headers={"Accept": "application/json",
+                                    "User-Agent": "tmsm-diagnostics/1.0"})
+        with urlopen(req, timeout=5) as r:
+            init = json.loads(r.read().decode("utf-8", errors="replace"))
+    except Exception as e:  # noqa: BLE001
+        return (f"check-host.net init failed: {e}", [])
+
+    req_id = init.get("request_id")
+    nodes = init.get("nodes") or {}
+    if not req_id:
+        return ("check-host.net did not return a request_id", [])
+
+    def _node_label(node_id: str) -> str:
+        meta = nodes.get(node_id)
+        if isinstance(meta, list) and len(meta) >= 3:
+            country = meta[0] or "?"
+            city = meta[2] or node_id
+            return f"{city} ({country})"
+        return node_id
+
+    deadline = time.monotonic() + poll_timeout
+    result: dict | None = None
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(
+                Request(
+                    f"https://check-host.net/check-result/{req_id}",
+                    headers={"Accept": "application/json",
+                             "User-Agent": "tmsm-diagnostics/1.0"},
+                ),
+                timeout=5,
+            ) as r:
+                result = json.loads(r.read().decode("utf-8", errors="replace"))
+        except Exception:  # noqa: BLE001
+            result = None
+        # done when every node has a non-null value
+        if result and all(v is not None for v in result.values()):
+            break
+        time.sleep(1.5)
+
+    if not result:
+        return ("check-host.net never returned any results", [])
+
+    out: list[tuple[str, bool, str]] = []
+    for node_id, samples in result.items():
+        label = _node_label(node_id)
+        reachable = False
+        detail = ""
+        if samples is None:
+            detail = "node timed out"
+        elif isinstance(samples, list):
+            for s in samples:
+                if isinstance(s, dict):
+                    if "time" in s:
+                        reachable = True
+                        detail = f"connected in {s.get('time'):.3f}s"
+                        break
+                    if "error" in s:
+                        detail = str(s["error"])
+                elif isinstance(s, list) and s and isinstance(s[0], dict):
+                    s0 = s[0]
+                    if "time" in s0:
+                        reachable = True
+                        detail = f"connected in {s0.get('time'):.3f}s"
+                        break
+                    if "error" in s0:
+                        detail = str(s0["error"])
+        out.append((label, reachable, detail or ("ok" if reachable else "closed/filtered")))
+    return (None, out)
+
+
 # ── checks ────────────────────────────────────────────────────────────────────
 
 def check_stale_screen_sockets() -> CheckResult:
@@ -794,6 +902,160 @@ def check_time_sync() -> CheckResult:
     )
 
 
+def check_wan_ip(state: dict) -> CheckResult:
+    """Detect the host's public IPv4 and stash it in `state` for downstream
+    external-reachability checks."""
+    ip, err = _fetch_wan_ip()
+    if not ip:
+        state["wan_ip"] = None
+        return CheckResult(
+            "wan_ip", "Public IP detection", STATUS_WARN,
+            "could not detect WAN IP",
+            detail=(f"All public-IP providers failed.\n  {err}\n\n"
+                    "External port-reachability checks will be skipped.\n"
+                    "If you're behind a corporate proxy or fully air-gapped,\n"
+                    "this is expected."),
+        )
+    state["wan_ip"] = ip
+    return CheckResult(
+        "wan_ip", "Public IP detection", STATUS_OK,
+        f"WAN IPv4: {ip}",
+        detail=(f"Players outside your network reach the server at\n"
+                f"  {ip}:<game-port>\n"
+                f"…provided your router/firewall forwards that port."),
+    )
+
+
+def check_external_game_port_reachable(instances: list[Instance],
+                                       managed: dict[str, int],
+                                       wan_ip: str | None) -> list[CheckResult]:
+    """For each running gameserver: probe its game port from external nodes
+    via check-host.net. TrackmaniaServer opens TCP on the game port for
+    laddering, so a TCP probe is a strong proxy for full reachability."""
+    results: list[CheckResult] = []
+    if not wan_ip:
+        return results
+    for inst in instances:
+        if not isinstance(inst, GameServerInstance):
+            continue
+        if inst.name not in managed:
+            continue
+        port = inst.meta.game_port
+        err, nodes = _checkhost_tcp_probe(wan_ip, port)
+        check_id = f"ext_game_{inst.name}"
+        title = f"External game-port reachability — '{inst.name}'"
+        if err:
+            results.append(CheckResult(
+                check_id, title, STATUS_SKIP,
+                f"could not run external probe: {err}",
+                detail="check-host.net was unreachable or rate-limited.\n"
+                       "Try again later or test manually with a friend.",
+            ))
+            continue
+        if not nodes:
+            results.append(CheckResult(
+                check_id, title, STATUS_SKIP,
+                "no external probe nodes responded",
+            ))
+            continue
+        reachable = [(n, d) for n, ok, d in nodes if ok]
+        unreachable = [(n, d) for n, ok, d in nodes if not ok]
+        node_lines = "\n".join(f"  • {n} — {d}" for n, _ok, d in nodes)
+        common_note = ("\n\nNote: check-host.net probes TCP only. TrackmaniaServer\n"
+                       "opens both TCP and UDP on its game port, so an open TCP\n"
+                       "probe strongly implies UDP is forwarded too. If TCP fails,\n"
+                       "UDP almost certainly fails as well.")
+        if reachable and not unreachable:
+            results.append(CheckResult(
+                check_id, title, STATUS_OK,
+                f"TCP {wan_ip}:{port} reachable from {len(reachable)} external node(s)",
+                detail=("Players on the public internet should be able to join.\n\n"
+                        f"Probed nodes:\n{node_lines}{common_note}"),
+            ))
+        elif not reachable:
+            results.append(CheckResult(
+                check_id, title, STATUS_FAIL,
+                f"TCP {wan_ip}:{port} NOT reachable from any external node",
+                detail=("No external node could reach the game port.\n\n"
+                        "Likely causes:\n"
+                        "  • Router is not forwarding the port to this host\n"
+                        "  • Windows / WSL firewall blocks inbound traffic\n"
+                        "  • ISP CGNAT (router's WAN IP differs from your real WAN IP)\n"
+                        "  • Server is not actually listening on that port\n\n"
+                        f"Probed nodes:\n{node_lines}{common_note}"),
+            ))
+        else:
+            results.append(CheckResult(
+                check_id, title, STATUS_WARN,
+                f"TCP {wan_ip}:{port} reachable from {len(reachable)}/{len(nodes)} node(s)",
+                detail=("Some external nodes reached the port, others didn't.\n"
+                        "Usually transient packet loss or one slow node, not a real\n"
+                        "problem. If it persists, check ISP routing.\n\n"
+                        f"Probed nodes:\n{node_lines}{common_note}"),
+            ))
+    return results
+
+
+def check_external_xmlrpc_closed(instances: list[Instance],
+                                 managed: dict[str, int],
+                                 wan_ip: str | None) -> list[CheckResult]:
+    """Security check: XML-RPC must NOT be reachable from the public internet.
+
+    Anyone who reaches it can take over the server (kick/ban/script). It
+    should bind to 127.0.0.1 or at minimum be firewalled at the WAN edge.
+    """
+    results: list[CheckResult] = []
+    if not wan_ip:
+        return results
+    for inst in instances:
+        if not isinstance(inst, GameServerInstance):
+            continue
+        if inst.name not in managed:
+            continue
+        port = inst.meta.xmlrpc_port
+        err, nodes = _checkhost_tcp_probe(wan_ip, port)
+        check_id = f"ext_xmlrpc_{inst.name}"
+        title = f"XML-RPC not public — '{inst.name}'"
+        if err:
+            results.append(CheckResult(
+                check_id, title, STATUS_SKIP,
+                f"could not run external probe: {err}",
+            ))
+            continue
+        if not nodes:
+            results.append(CheckResult(
+                check_id, title, STATUS_SKIP,
+                "no external probe nodes responded",
+            ))
+            continue
+        reachable = [(n, d) for n, ok, d in nodes if ok]
+        if not reachable:
+            results.append(CheckResult(
+                check_id, title, STATUS_OK,
+                f"TCP {wan_ip}:{port} not reachable externally (correct)",
+                detail="XML-RPC is firewalled / not port-forwarded from the WAN.\n"
+                       "This is the safe configuration.",
+            ))
+        else:
+            node_lines = "\n".join(f"  • {n} — {d}" for n, d in reachable)
+            results.append(CheckResult(
+                check_id, title, STATUS_FAIL,
+                f"XML-RPC port {port} REACHABLE from the public internet",
+                detail=("[red]SECURITY ISSUE[/red]\n\n"
+                        "The XML-RPC port lets anyone holding the SuperAdmin/Admin\n"
+                        "password fully control the server (kick, ban, change maps,\n"
+                        "run ManiaScript). It MUST NOT be reachable from outside\n"
+                        "your local network.\n\n"
+                        "How to fix:\n"
+                        "  • Remove any router port-forward pointing at this port\n"
+                        "  • Block it on the WAN-facing firewall\n"
+                        "  • Bind XML-RPC to 127.0.0.1 in dedicated_cfg.txt\n"
+                        "    (PyPlanet on the same host still works)\n\n"
+                        f"External nodes that reached it:\n{node_lines}"),
+            ))
+    return results
+
+
 def check_master_registration(instances: list[Instance],
                               managed: dict[str, int]) -> list[CheckResult]:
     """For each running TM2020 gameserver: check the public TM master list.
@@ -907,6 +1169,240 @@ def check_master_registration(instances: list[Instance],
     return results
 
 
+def check_addon_runtime_integrity() -> CheckResult:
+    """Detect a broken PyPlanet runtime after upgrades / in-game `//upgrade`.
+
+    Three failure modes are all repaired by the same fix:
+
+      1. PyPlanet got reinstalled as a wheel into site-packages, so the
+         `pyplanet.apps.tmsm` namespace dir we ship into the editable
+         source tree is invisible to imports.
+      2. The editable source tree was wiped (or partially wiped) and one
+         or more addon symlinks under `pyplanet/apps/{tmsm,contrib}/`
+         are missing.
+      3. `state.json` still lists addons whose bundled source no longer
+         ships in this tmsm release, so apps.py references modules that
+         do not exist.
+
+    Fix: re-install PyPlanet editable from `PYPLANET_SRC` (if needed),
+    rebuild every symlink in `state.json` whose source still exists,
+    drop the rest, and re-sync every pool's apps.py.
+    """
+    try:
+        from ..assets import load_state, reconcile_installed, list_bundled
+        from ..assets.installer import _pyplanet_apps_root, _link_target_ok
+    except ImportError as e:
+        return CheckResult(
+            "addon_runtime", "PyPlanet runtime integrity", STATUS_SKIP,
+            f"tmsm.assets import failed: {e}",
+        )
+
+    py = paths.PYPLANET_VENV / "bin" / "python"
+    pip = paths.PYPLANET_VENV / "bin" / "pip"
+    src_root = paths.PYPLANET_SRC
+    if not py.is_file() or not pip.is_file() or not (src_root / "pyplanet").is_dir():
+        return CheckResult(
+            "addon_runtime", "PyPlanet runtime integrity", STATUS_SKIP,
+            "PyPlanet venv / source not present",
+        )
+
+    problems: list[str] = []
+
+    # 1. pyplanet install mode: editable should resolve to PYPLANET_SRC.
+    wheel_install = False
+    location = ""
+    try:
+        r = subprocess.run([str(pip), "show", "pyplanet"], capture_output=True,
+                           text=True, timeout=10, check=False)
+        for line in r.stdout.splitlines():
+            if line.startswith("Location:"):
+                location = line.split(":", 1)[1].strip()
+                break
+        if location:
+            loc = Path(location).resolve()
+            try:
+                expected = (src_root / "pyplanet").parent.resolve()
+            except OSError:
+                expected = src_root
+            if loc != expected:
+                wheel_install = True
+                problems.append(
+                    f"pyplanet is installed from '{loc}', not the editable "
+                    f"source tree '{expected}'. The in-game //upgrade command "
+                    f"replaces editable installs with a PyPI wheel, which "
+                    f"makes the tmsm addon namespace invisible. Repair will "
+                    f"sync the local clone to the same release tag before "
+                    f"reinstalling editable, so the wheel's version is kept."
+                )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        problems.append(f"could not query pip: {e}")
+
+    # 2. Per-addon symlink integrity.
+    state = load_state()
+    apps_root = _pyplanet_apps_root()
+    bundled = {a.name: a for a in list_bundled()}
+    missing_links: list[str] = []
+    stale_state: list[str] = []
+    for name, record in state.installed.items():
+        target = apps_root / record.namespace / record.install_dir
+        if _link_target_ok(target):
+            continue
+        if record.source == "bundled":
+            src = bundled.get(name)
+            if src is None or src.bundled_path is None or not src.bundled_path.is_dir():
+                stale_state.append(record.module_name)
+                continue
+        missing_links.append(record.module_name)
+
+    if not problems and not missing_links and not stale_state:
+        return CheckResult(
+            "addon_runtime", "PyPlanet runtime integrity", STATUS_OK,
+            f"editable install OK, {len(state.installed)} addon(s) linked",
+        )
+
+    summary_bits = []
+    if wheel_install:
+        summary_bits.append("wheel install")
+    if missing_links:
+        summary_bits.append(f"{len(missing_links)} missing symlink(s)")
+    if stale_state:
+        summary_bits.append(f"{len(stale_state)} stale state entry/entries")
+    summary = ", ".join(summary_bits) or "needs repair"
+
+    detail_lines = list(problems)
+    if missing_links:
+        detail_lines.append("")
+        detail_lines.append("Missing addon symlinks (will be rebuilt from bundled source):")
+        for m in missing_links:
+            detail_lines.append(f"  - {m}")
+    if stale_state:
+        detail_lines.append("")
+        detail_lines.append(
+            "State entries with no bundled source in this tmsm release "
+            "(will be removed from state.json and from every pool's apps.py):"
+        )
+        for m in stale_state:
+            detail_lines.append(f"  - {m}")
+    detail_lines.append("")
+    detail_lines.append(
+        "The fix:\n"
+        "  1. If PyPlanet is a wheel install, fetch tags in the source\n"
+        "     clone, check out the same release as the wheel (or the\n"
+        "     configured ref / newest tag if that tag is missing), then\n"
+        f"     reinstall editable from {src_root}.\n"
+        "  2. Rebuild every missing symlink from bundled source.\n"
+        "  3. Drop stale state entries and re-sync each pool's apps.py.\n"
+        "Safe to re-run; idempotent."
+    )
+
+    def _fix() -> tuple[bool, str]:
+        log_lines: list[str] = []
+
+        def log(msg: str) -> None:
+            log_lines.append(msg)
+
+        try:
+            if wheel_install:
+                # The wheel install (from in-game //upgrade or a manual
+                # pip install) is usually newer than whatever tag the
+                # editable source clone is currently checked out at.
+                # Reinstalling editable from the stale clone would
+                # silently downgrade pyplanet — so first sync the clone
+                # to the newest tag (or whatever ref the user configured)
+                # and only then reinstall editable.
+                if (src_root / ".git").is_dir():
+                    log("Fetching newest PyPlanet tags…")
+                    subprocess.run(["git", "-C", str(src_root), "fetch", "--tags", "--all"],
+                                   capture_output=True, text=True, timeout=120, check=False)
+
+                    target_ref = ""
+                    # Prefer the exact version that's installed as a wheel.
+                    wheel_version = ""
+                    try:
+                        rv = subprocess.run([str(pip), "show", "pyplanet"],
+                                            capture_output=True, text=True, timeout=10, check=False)
+                        for ln in rv.stdout.splitlines():
+                            if ln.startswith("Version:"):
+                                wheel_version = ln.split(":", 1)[1].strip()
+                                break
+                    except (subprocess.TimeoutExpired, OSError):
+                        pass
+                    if wheel_version:
+                        rv = subprocess.run(["git", "-C", str(src_root), "rev-parse",
+                                             "--verify", f"refs/tags/{wheel_version}"],
+                                            capture_output=True, text=True, timeout=10, check=False)
+                        if rv.returncode == 0:
+                            target_ref = wheel_version
+
+                    # Otherwise honour the configured ref; resolve "latest-release"
+                    # to the newest semver-sorted tag.
+                    if not target_ref:
+                        try:
+                            from .. import config as _cfg_mod
+                            cfg_ref = _cfg_mod.load().downloads.pyplanet_ref
+                        except Exception:
+                            cfg_ref = "latest-release"
+                        if cfg_ref == "latest-release":
+                            rv = subprocess.run(
+                                ["git", "-C", str(src_root), "tag", "--sort=-v:refname"],
+                                capture_output=True, text=True, timeout=10, check=False,
+                            )
+                            tags = [t for t in rv.stdout.splitlines() if t.strip()]
+                            target_ref = tags[0] if tags else ""
+                        else:
+                            target_ref = cfg_ref
+
+                    if target_ref:
+                        log(f"Checking out PyPlanet source @ {target_ref}…")
+                        rv = subprocess.run(["git", "-C", str(src_root), "checkout", target_ref],
+                                            capture_output=True, text=True, timeout=60, check=False)
+                        if rv.returncode != 0:
+                            return (False,
+                                    f"git checkout {target_ref} failed:\n"
+                                    + (rv.stderr or rv.stdout)[-2000:])
+                    else:
+                        log("warn: could not determine a target ref; reinstalling editable "
+                            "from current HEAD as-is.")
+
+                log("Reinstalling PyPlanet editable from source…")
+                subprocess.run([str(pip), "uninstall", "-y", "pyplanet"],
+                               capture_output=True, text=True, timeout=120, check=False)
+                r = subprocess.run([str(pip), "install", "-e", str(src_root)],
+                                   capture_output=True, text=True, timeout=600, check=False)
+                if r.returncode != 0:
+                    return (False,
+                            "pip install -e failed:\n" + (r.stderr or r.stdout)[-2000:])
+
+            report = reconcile_installed(log)
+        except Exception as e:  # noqa: BLE001
+            return (False, f"{type(e).__name__}: {e}\n\n" + "\n".join(log_lines))
+
+        msg = (
+            f"rebuilt {len(report.rebuilt)}, "
+            f"dropped {len(report.dropped)}, "
+            f"failed {len(report.failed)}, "
+            f"already-ok {len(report.already_ok)}"
+        )
+        if report.failed:
+            msg += "\n\nFailures:\n" + "\n".join(f"  {m}: {e}" for m, e in report.failed)
+        return (not report.failed, msg)
+
+    return CheckResult(
+        "addon_runtime", "PyPlanet runtime integrity", STATUS_FAIL,
+        summary, detail="\n".join(detail_lines),
+        fix_label="Repair PyPlanet runtime",
+        fix_confirm_title="Repair PyPlanet runtime?",
+        fix_confirm_body=(
+            "This will reinstall PyPlanet editable from your source tree "
+            "if needed, rebuild missing addon symlinks, prune stale state "
+            "entries, and re-sync every pool's apps.py.\n\n"
+            "Stop running pools before applying so they pick up the change "
+            "on next start."
+        ),
+        fix=_fix,
+    )
+
+
 def check_addon_importability() -> list[CheckResult]:
     """For each tmsm-installed addon: smoke-test that its module imports
     inside the PyPlanet venv. Catches broken symlinks, missing deps, and
@@ -980,6 +1476,10 @@ def plan_checks(cfg: Config) -> list[tuple[str, Callable[[], list[CheckResult]]]
     """
     instances = discover_all(cfg)
     managed = _managed_inner_pids()
+    # Shared mutable state passed between steps that need to feed each other
+    # (e.g. WAN IP probe → external port checks, WSL probes → port-relay checks).
+    state: dict = {"instances": instances, "managed": managed}
+
     steps: list[tuple[str, Callable[[], list[CheckResult]]]] = [
         ("Checking for stale screen sockets",
          lambda: [check_stale_screen_sockets()]),
@@ -999,18 +1499,49 @@ def plan_checks(cfg: Config) -> list[tuple[str, Callable[[], list[CheckResult]]]
          lambda: check_pool_superadmin(instances)),
         ("Probing pool database credentials",
          lambda: check_pool_db_creds(instances)),
+        ("Verifying PyPlanet runtime integrity (post-upgrade)",
+         lambda: [check_addon_runtime_integrity()]),
         ("Smoke-testing installed addon imports",
          lambda: check_addon_importability()),
         ("Querying master-server registration (trackmania.io)",
          lambda: check_master_registration(instances, managed)),
+        ("Detecting public WAN IP",
+         lambda: [check_wan_ip(state)]),
     ]
+
+    # External-reachability probes — one pair (game-port, XML-RPC) per
+    # running gameserver. Each one hits check-host.net, so they get their
+    # own step for visible progress.
+    running_servers = [
+        i for i in instances
+        if isinstance(i, GameServerInstance) and i.name in managed
+    ]
+    for srv in running_servers:
+        def _probe_game(srv=srv) -> list[CheckResult]:
+            return check_external_game_port_reachable(
+                [srv], managed, state.get("wan_ip"),
+            )
+
+        def _probe_xmlrpc(srv=srv) -> list[CheckResult]:
+            return check_external_xmlrpc_closed(
+                [srv], managed, state.get("wan_ip"),
+            )
+
+        steps.append((
+            f"External game-port probe — '{srv.name}' (port {srv.meta.game_port})",
+            _probe_game,
+        ))
+        steps.append((
+            f"External XML-RPC probe — '{srv.name}' (port {srv.meta.xmlrpc_port})",
+            _probe_xmlrpc,
+        ))
+
     if not wsl_host.is_wsl():
         return steps
 
     # WSL: split host probes into multiple steps. We pre-fetch the per-step
     # state via a shared mutable dict so each step only does the one thing
     # its label promises.
-    state: dict = {"instances": instances, "managed": managed}
 
     def _probe_host_env() -> list[CheckResult]:
         state["host"] = wsl_host.windows_host_info()

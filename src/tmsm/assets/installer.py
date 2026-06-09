@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -326,3 +327,116 @@ def remove_addon(name: str, log: Log) -> None:
 def sync_pools() -> None:
     """Idempotent — refresh every pool's tmsm-managed block from current state."""
     _sync_all_pools(load_state())
+
+
+@dataclass
+class ReconcileReport:
+    rebuilt: list[str] = field(default_factory=list)
+    dropped: list[str] = field(default_factory=list)
+    failed: list[tuple[str, str]] = field(default_factory=list)
+    already_ok: list[str] = field(default_factory=list)
+
+
+def _link_target_ok(target: Path) -> bool:
+    """True if `target` is a working dir/symlink (resolves to an existing dir)."""
+    if target.is_symlink():
+        try:
+            return target.resolve(strict=True).is_dir()
+        except (FileNotFoundError, OSError):
+            return False
+    return target.is_dir()
+
+
+def reconcile_installed(log: Log) -> ReconcileReport:
+    """Rebuild missing addon symlinks and prune stale state entries.
+
+    Used after a PyPlanet reinstall / in-game //upgrade wipes the source
+    tree's pyplanet/apps/{tmsm,contrib}/ directory. For every record in
+    `state.json`:
+
+      * If the install target exists -> leave alone.
+      * If missing and the bundled source dir still ships in tmsm
+        (or the community cache dir still has a .git clone) -> re-symlink.
+      * If missing and the source is gone too -> drop from state so the
+        next pool sync prunes it from every apps.py.
+
+    Always calls `_sync_all_pools` at the end so apps.py reflects reality.
+    """
+    if not (paths.PYPLANET_SRC / "pyplanet" / "apps").is_dir():
+        raise RuntimeError(
+            "PyPlanet source not found — install PyPlanet first "
+            f"(expected {paths.PYPLANET_SRC})."
+        )
+
+    state = load_state()
+    report = ReconcileReport()
+    bundled_by_name = {a.name: a for a in list_bundled()}
+
+    # Make sure the two namespace dirs exist so we can drop links into them.
+    _ensure_namespace_init("tmsm")
+    _ensure_namespace_init("contrib")
+
+    for name, record in list(state.installed.items()):
+        target = _pyplanet_apps_root() / record.namespace / record.install_dir
+        if _link_target_ok(target):
+            report.already_ok.append(record.module_name)
+            continue
+
+        # Clean up a dangling symlink/dir at the target before rebuilding.
+        try:
+            if target.is_symlink() or target.exists():
+                if target.is_symlink():
+                    target.unlink()
+                else:
+                    shutil.rmtree(target)
+        except OSError as e:
+            log(f"  warn: could not clean stale target {target}: {e}")
+
+        if record.source == "bundled":
+            addon = bundled_by_name.get(name)
+            if addon is None or addon.bundled_path is None or not addon.bundled_path.is_dir():
+                log(f"  drop: bundled source for '{name}' no longer ships in tmsm")
+                report.dropped.append(record.module_name)
+                state.installed.pop(name, None)
+                continue
+            try:
+                _link(addon.bundled_path, target, log)
+                report.rebuilt.append(record.module_name)
+            except OSError as e:
+                report.failed.append((record.module_name, str(e)))
+            continue
+
+        # community
+        cache = Path(record.cache_path) if record.cache_path else None
+        if not cache or not (cache / ".git").is_dir():
+            log(f"  drop: community cache for '{name}' missing at {cache}")
+            report.dropped.append(record.module_name)
+            state.installed.pop(name, None)
+            continue
+        # Re-resolve the source dir inside the cache, same logic as install.
+        candidates = [cache] if _has_app_config(cache) else _detect_app_dirs(cache)
+        src = None
+        for c in candidates:
+            if c.name == record.install_dir or len(candidates) == 1:
+                src = c
+                break
+        if src is None:
+            log(f"  drop: could not relocate app dir for '{name}' in {cache}")
+            report.dropped.append(record.module_name)
+            state.installed.pop(name, None)
+            continue
+        try:
+            _link(src, target, log)
+            report.rebuilt.append(record.module_name)
+        except OSError as e:
+            report.failed.append((record.module_name, str(e)))
+
+    save_state(state)
+    _sync_all_pools(state)
+
+    log(
+        f"Reconcile done: rebuilt={len(report.rebuilt)} "
+        f"dropped={len(report.dropped)} failed={len(report.failed)} "
+        f"ok={len(report.already_ok)}"
+    )
+    return report

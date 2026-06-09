@@ -52,6 +52,7 @@ class App_Voting(AppConfig):
         self.view: VotingView | None = None
         self.widget_view: VotingWidgetView | None = None
         self._widget_binding: Any = None
+        self._timelimit_restore_seconds: int | None = None
 
     async def on_start(self) -> None:
         self.view = VotingView(self)
@@ -89,6 +90,8 @@ class App_Voting(AppConfig):
         await self._register_widget_with_engine()
         self.context.signals.listen("widget_engine:request_register", self._on_widget_request_register)
         self.context.signals.listen("maniaplanet:player_connect", self._on_player_connect)
+        self.context.signals.listen("maniaplanet:map_end", self._on_map_end)
+        self.context.signals.listen("maniaplanet:map_begin", self._on_map_begin)
         await self._refresh_vote_widget()
 
     async def on_stop(self) -> None:
@@ -882,6 +885,53 @@ class App_Voting(AppConfig):
         return ""
 
     @staticmethod
+    def _find_timelimit_key(settings: dict[str, Any]) -> str | None:
+        for k in ("S_TimeLimit", "TimeLimit", "S_TimeLimitSeconds"):
+            if k in settings:
+                return k
+        for k in settings.keys():
+            if "timelimit" in str(k).lower():
+                return str(k)
+        return None
+
+    async def _on_map_end(self, **kwargs) -> None:
+        await self._restore_timelimit_if_needed("map_end")
+
+    async def _on_map_begin(self, **kwargs) -> None:
+        await self._restore_timelimit_if_needed("map_begin")
+
+    async def _restore_timelimit_if_needed(self, phase: str) -> None:
+        # Votes should only extend the current map. Restore the pre-vote
+        # baseline at map_end (preferred) and map_begin (fallback).
+        restore_seconds = self._timelimit_restore_seconds
+        if restore_seconds is None:
+            return
+        ok = await self._set_timelimit_seconds(restore_seconds)
+        if ok:
+            self._timelimit_restore_seconds = None
+        else:
+            logger.warning("voting: failed to restore timelimit baseline on %s", phase)
+
+    async def _set_timelimit_seconds(self, seconds: int) -> bool:
+        try:
+            settings = await self.instance.gbx("GetModeScriptSettings")
+        except Exception:
+            settings = None
+        if not isinstance(settings, dict):
+            return False
+        key = self._find_timelimit_key(settings)
+        if key is None:
+            return False
+        hint = await self._timelimit_unit_hint()
+        payload = {key: self._encode_timelimit_value(max(1, min(86400, int(seconds))), hint)}
+        try:
+            await self.instance.gbx("SetModeScriptSettings", payload)
+            return True
+        except Exception:
+            logger.exception("voting: SetModeScriptSettings failed while restoring timelimit")
+            return False
+
+    @staticmethod
     def _normalize_timelimit_seconds(raw: Any, unit_hint: str = "") -> int | None:
         try:
             val = float(raw)
@@ -916,16 +966,7 @@ class App_Voting(AppConfig):
         if not isinstance(settings, dict):
             return False
 
-        key = None
-        for k in ("S_TimeLimit", "TimeLimit", "S_TimeLimitSeconds"):
-            if k in settings:
-                key = k
-                break
-        if key is None:
-            for k in settings.keys():
-                if "timelimit" in str(k).lower():
-                    key = str(k)
-                    break
+        key = self._find_timelimit_key(settings)
         if key is None:
             return False
 
@@ -933,11 +974,15 @@ class App_Voting(AppConfig):
         cur_s = self._normalize_timelimit_seconds(settings.get(key), hint)
         if cur_s is None:
             return False
+        if self._timelimit_restore_seconds is None:
+            self._timelimit_restore_seconds = cur_s
         new_s = max(1, min(86400, cur_s + int(add_minutes) * 60))
         payload = {key: self._encode_timelimit_value(new_s, hint)}
         try:
             await self.instance.gbx("SetModeScriptSettings", payload)
             return True
         except Exception:
+            if self._timelimit_restore_seconds == cur_s:
+                self._timelimit_restore_seconds = None
             logger.exception("voting: SetModeScriptSettings failed for timelimit extend")
             return False

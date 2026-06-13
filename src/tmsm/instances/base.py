@@ -13,6 +13,7 @@ class Kind(str, Enum):
     SERVER = "server"
     POOL = "pool"
     SERVICE = "service"
+    BOT = "bot"
 
 
 class Instance(ABC):

@@ -318,7 +318,9 @@ class MainScreen(Screen):
         if inst is None:
             return
         running = inst.is_running
-        is_db_target = inst.kind in (Kind.POOL, Kind.SERVICE)
+        is_db_target = inst.kind in (Kind.POOL, Kind.SERVICE) or (
+            inst.kind is Kind.BOT and bool(getattr(getattr(inst, "meta", None), "db_name", ""))
+        )
         is_server = inst.kind is Kind.SERVER
         items = [
             MenuItem("start",   "▶  Start",        enabled=not running),
@@ -465,8 +467,14 @@ class MainScreen(Screen):
 
     def action_db_tool(self) -> None:
         inst = self._selected()
-        if inst is None or inst.kind not in (Kind.POOL, Kind.SERVICE):
-            self.notify("Select a pool or the mariadb service.", severity="warning")
+        is_bot_with_db = (
+            inst is not None
+            and inst.kind is Kind.BOT
+            and bool(getattr(getattr(inst, "meta", None), "db_name", ""))
+        )
+        if inst is None or (inst.kind not in (Kind.POOL, Kind.SERVICE) and not is_bot_with_db):
+            self.notify("Select a pool, the mariadb service, or a bot with a database.",
+                        severity="warning")
             return
         from .. import dbtool
         err = dbtool.launch(inst, self.app)
@@ -539,6 +547,7 @@ class MainScreen(Screen):
     def action_delete(self) -> None:
         from .confirm import ConfirmScreen
         from .install_screen import InstallScreen
+        from ..installers import bot as bot_installer
         from ..installers import pyplanet as pyplanet_installer
         from ..installers import server as server_installer
         from ..installers import mariadb as mariadb_installer
@@ -566,8 +575,15 @@ class MainScreen(Screen):
                     server_installer.delete_server(name, log)
                 elif kind is Kind.POOL:
                     pyplanet_installer.delete_pool(name, log)
+                elif kind is Kind.BOT:
+                    bot_installer.delete_bot(name, log)
                 elif kind is Kind.SERVICE and name == "mariadb":
                     mariadb_installer.delete_mariadb(log)
+
+            self.app.push_screen(
+                InstallScreen(title=title, runner=runner),
+                lambda _r: self.refresh_instances(),
+            )
 
             self.app.push_screen(
                 InstallScreen(title=title, runner=runner),

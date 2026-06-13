@@ -34,6 +34,17 @@ def _conn_for(inst: Instance, cfg: config.Config) -> dict | None:
             "password": meta.db_password or "",
             "database": meta.db_name,
         }
+    if inst.kind is Kind.BOT:
+        meta = inst.meta  # type: ignore[attr-defined]
+        if not meta.db_name or not meta.db_user:
+            return None
+        return {
+            "user": meta.db_user,
+            "host": cfg.mariadb.host,
+            "port": cfg.mariadb.port,
+            "password": meta.db_password or "",
+            "database": meta.db_name,
+        }
     return None
 
 

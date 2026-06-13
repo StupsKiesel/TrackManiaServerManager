@@ -9,12 +9,13 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Select, Static
+from textual.widgets import Button, Checkbox, Input, Label, Select, Static
 
 from .. import paths
 from ..instances import discover_all
 from ..instances.base import Kind
 from ..instances.server import GameType
+from ..installers import bot as bot_installer
 from ..installers import mariadb as mariadb_installer
 from ..installers import pyplanet as pp_installer
 from ..installers import server as server_installer
@@ -26,6 +27,7 @@ KIND_OPTIONS = [
     ("ManiaPlanet server", "maniaplanet"),
     ("PyPlanet (shared install)", "pyplanet"),
     ("PyPlanet pool", "pool"),
+    ("Discord bot (from zip / URL)", "bot"),
     ("MariaDB (portable, shared)", "mariadb"),
 ]
 
@@ -173,6 +175,15 @@ class WizardScreen(ModalScreen[None]):
         self.name_input = Input(placeholder="name (lowercase, [a-z0-9_-])", id="name")
         self.target_select: Select = Select(options=[], id="target", allow_blank=True,
                                             prompt="(no servers yet)")
+        self.bot_source_input = Input(
+            placeholder="path to .zip OR https://… URL",
+            id="bot-source",
+        )
+        self.bot_db_checkbox = Checkbox(
+            "Provision MariaDB database & user (writes DB_* into .env)",
+            value=False,
+            id="bot-db",
+        )
 
     def compose(self) -> ComposeResult:
         with Container(id="wizard-box"):
@@ -183,6 +194,9 @@ class WizardScreen(ModalScreen[None]):
             yield self.name_input
             yield Label("Attach to server (pool only):")
             yield self.target_select
+            yield Label("Bot source (zip path or URL):", id="bot-source-label")
+            yield self.bot_source_input
+            yield self.bot_db_checkbox
             with Horizontal():
                 yield Button("Cancel", id="cancel")
                 yield Button("Create", id="create", variant="primary")
@@ -202,6 +216,13 @@ class WizardScreen(ModalScreen[None]):
         kind = self.kind_select.value
         self.target_select.display = (kind == "pool")
         self.name_input.display = kind not in ("pyplanet", "mariadb")
+        is_bot = (kind == "bot")
+        self.bot_source_input.display = is_bot
+        self.bot_db_checkbox.display = is_bot
+        try:
+            self.query_one("#bot-source-label").display = is_bot
+        except Exception:
+            pass
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select is self.kind_select:
@@ -306,6 +327,28 @@ class WizardScreen(ModalScreen[None]):
             def runner(log, _n=name, _t=str(target), _pw=super_pw, _p=xmlrpc_port):
                 pp_installer.create_pool(_n, _t, _pw, _p, log)
             self._launch(f"Create PyPlanet pool '{name}'", runner)
+            return
+
+        if kind == "bot":
+            source = (self.bot_source_input.value or "").strip()
+            if not source:
+                self.app.notify("Provide a zip path or URL.", severity="error")
+                return
+            provision_db = bool(self.bot_db_checkbox.value)
+            if provision_db and not mariadb_installer.is_installed():
+                self.app.notify(
+                    "MariaDB is not installed; uncheck DB provisioning or install MariaDB first.",
+                    severity="error",
+                )
+                return
+            if (paths.BOTS_DIR / name).exists():
+                self.app.notify(f"Bot '{name}' already exists.", severity="error")
+                return
+
+            def runner(log, _n=name, _s=source, _db=provision_db):
+                bot_installer.install_bot(_n, _s, _db, log)
+
+            self._launch(f"Install Discord bot '{name}'", runner)
             return
 
     def _launch(self, title: str, runner, *, after_install=None) -> None:

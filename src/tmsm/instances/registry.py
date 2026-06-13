@@ -5,6 +5,7 @@ from typing import List
 from .. import paths
 from ..config import Config
 from .base import Instance
+from .bot import DiscordBotInstance
 from .pool import PyPlanetPoolInstance
 from .server import GameServerInstance
 from .service import MariaDBInstance
@@ -31,6 +32,14 @@ def discover_all(cfg: Config) -> List[Instance]:
             if (sub / "pool.toml").is_file():
                 try:
                     out.append(PyPlanetPoolInstance(sub))
+                except Exception:
+                    continue
+
+    if paths.BOTS_DIR.exists():
+        for sub in sorted(paths.BOTS_DIR.iterdir()):
+            if (sub / "bot.toml").is_file():
+                try:
+                    out.append(DiscordBotInstance(sub))
                 except Exception:
                     continue
 

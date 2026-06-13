@@ -17,6 +17,7 @@ LOGS_DIR = HOME / "logs"
 BACKUPS_DIR = HOME / "backups"
 
 SERVERS_DIR = HOME / "servers"
+BOTS_DIR = HOME / "bots"
 PYPLANET_DIR = HOME / "pyplanet"
 PYPLANET_SRC = PYPLANET_DIR / "src"
 PYPLANET_VENV = PYPLANET_DIR / "venv"
@@ -37,7 +38,7 @@ SCREEN_DIR = HOME / "screen"
 def ensure_home() -> None:
     for p in (
         HOME, RUN_DIR, LOGS_DIR, BACKUPS_DIR,
-        SERVERS_DIR, PYPLANET_DIR, PYPLANET_POOLS, MARIADB_DIR,
+        SERVERS_DIR, BOTS_DIR, PYPLANET_DIR, PYPLANET_POOLS, MARIADB_DIR,
     ):
         p.mkdir(parents=True, exist_ok=True)
     SCREEN_DIR.mkdir(parents=True, exist_ok=True)

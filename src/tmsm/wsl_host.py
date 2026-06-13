@@ -250,35 +250,83 @@ Write-Host '------------------------------------------------------------'
 try {
     $front = New-Object System.Net.Sockets.UdpClient $Port
 } catch {
-    Write-Host ('[ERROR] Cannot bind UDP 0.0.0.0:{0} — is another relay already running?' -f $Port) -ForegroundColor Red
+    Write-Host ('[ERROR] Cannot bind UDP 0.0.0.0:{0} - is another relay already running?' -f $Port) -ForegroundColor Red
     Write-Host $_.Exception.Message
     Read-Host 'Press Enter to close'
     exit 1
 }
-$back = New-Object System.Net.Sockets.UdpClient
 $wslEp = [System.Net.IPEndPoint]::new([System.Net.IPAddress]::Parse($wsl), $Port)
-$any = [System.Net.IPEndPoint]::new([System.Net.IPAddress]::Any, 0)
-$clientEp = $null
+$any   = [System.Net.IPEndPoint]::new([System.Net.IPAddress]::Any, 0)
 
-Write-Host ('[relay] running: 0.0.0.0:{0} <-> {1}:{0}' -f $Port, $wsl) -ForegroundColor Green
+# Per-client demux. TrackMania's dedicated server uses one UDP flow per player,
+# so a single shared back-end socket would let the dedicated's replies all land
+# at the same NAT 5-tuple — and only the most recent client would ever see them.
+# We keep one back-end UdpClient per remote (ip:port) and reap idle entries.
+$clients     = New-Object System.Collections.Hashtable
+$idleTimeout = [TimeSpan]::FromMinutes(2)
+$nextReap    = (Get-Date).AddSeconds(15)
+
+Write-Host ('[relay] running: 0.0.0.0:{0} <-> {1}:{0}  (per-client demux)' -f $Port, $wsl) -ForegroundColor Green
 
 while ($true) {
     $idle = $true
+
+    # Front -> backend(s). Each unique remote endpoint gets its own
+    # back-end UdpClient so the dedicated sees N distinct source ports.
     if ($front.Available -gt 0) {
         $ep = $any
         $d = $front.Receive([ref]$ep)
-        $script:clientEp = $ep
-        [void]$back.Send($d, $d.Length, $wslEp)
-        $idle = $false
-    }
-    if ($back.Available -gt 0) {
-        $ep = $any
-        $d = $back.Receive([ref]$ep)
-        if ($script:clientEp) {
-            [void]$front.Send($d, $d.Length, $script:clientEp)
+        $key = '{0}:{1}' -f $ep.Address, $ep.Port
+        $c = $clients[$key]
+        if (-not $c) {
+            try {
+                $back = New-Object System.Net.Sockets.UdpClient
+            } catch {
+                Write-Host ('[relay] failed to allocate back-end for {0}: {1}' -f $key, $_.Exception.Message) -ForegroundColor Yellow
+                continue
+            }
+            $c = @{ Back = $back; Ep = $ep; Last = Get-Date }
+            $clients[$key] = $c
+            Write-Host ('[relay] +client {0}  (active={1})' -f $key, $clients.Count) -ForegroundColor DarkGray
         }
+        try {
+            [void]$c.Back.Send($d, $d.Length, $wslEp)
+        } catch {
+            Write-Host ('[relay] send to dedicated failed for {0}: {1}' -f $key, $_.Exception.Message) -ForegroundColor Yellow
+        }
+        $c.Last = Get-Date
         $idle = $false
     }
+
+    # Backend(s) -> front. Poll every per-client socket.
+    foreach ($key in @($clients.Keys)) {
+        $c = $clients[$key]
+        try {
+            while ($c.Back.Available -gt 0) {
+                $ep = $any
+                $d = $c.Back.Receive([ref]$ep)
+                [void]$front.Send($d, $d.Length, $c.Ep)
+                $c.Last = Get-Date
+                $idle = $false
+            }
+        } catch {
+            Write-Host ('[relay] backend read failed for {0}: {1}' -f $key, $_.Exception.Message) -ForegroundColor Yellow
+        }
+    }
+
+    # Reap idle clients so we don't leak sockets when players disconnect.
+    if ((Get-Date) -ge $nextReap) {
+        $now = Get-Date
+        foreach ($key in @($clients.Keys)) {
+            if (($now - $clients[$key].Last) -gt $idleTimeout) {
+                try { $clients[$key].Back.Close() } catch {}
+                [void]$clients.Remove($key)
+                Write-Host ('[relay] -client {0} (idle)  (active={1})' -f $key, $clients.Count) -ForegroundColor DarkGray
+            }
+        }
+        $nextReap = (Get-Date).AddSeconds(15)
+    }
+
     if ($idle) { Start-Sleep -Milliseconds 1 }
 }
 """

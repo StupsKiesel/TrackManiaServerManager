@@ -1,0 +1,132 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context:
+   tabs_list=[{key,label}], active_tab,
+   fields=[{key,label,kind,value,value_bool,dirty,choices,desc}],
+   dirty_count, status, status_color, pending, pending_cap,
+   recent=[{level,text}]
+#}
+
+{% set W = 220 %}
+{% set H = 160 %}
+
+<frame pos="-110 80" z-index="200">
+
+  {{ ui.window('Twitch Map Requests', x=0, y=0, w=W, h=H,
+               crumbs=view_crumbs) }}
+
+  {# header status line #}
+  {{ ui.label('Status:', x=4, y=-11, size='sm', color='888') }}
+  {{ ui.label(status, x=20, y=-11, size='sm', color=status_color) }}
+  {{ ui.label('Pending: ' ~ pending|string ~ '/' ~ pending_cap|string,
+              x=W-4, y=-11, halign='right', size='sm', color='aaa') }}
+
+  {% set LW = 138 %}
+  {% set RW = W - LW - 6 %}
+  {% set RX = LW + 4 %}
+
+  {# ============================================================
+     LEFT: tab strip + active panel
+     ============================================================ #}
+  {% set TAB_Y = -17 %}
+  {% set TAB_H = 5 %}
+  {% set PANEL_H = H - 25 - TAB_H %}
+
+  {% call(tkey, t) ui.tabs('groups', tabs_list, active=active_tab,
+                            x=2, y=TAB_Y, w=LW, tab_h=TAB_H,
+                            body_h=PANEL_H) %}
+
+    {# panel contents — single column of fields belonging to the active tab #}
+    {% set row_h = 7 %}
+    {% set base_y = TAB_Y - TAB_H - 3 %}
+
+    {% for f in fields %}
+      {% set yy = base_y - loop.index0 * row_h %}
+
+      {# dirty marker #}
+      {% if f.dirty %}
+        {{ ui.label('*', x=4, y=yy, size='sm', color='fc4', bold=True) }}
+      {% endif %}
+
+      {# label #}
+      {{ ui.label(f.label[:32], x=8, y=yy, size='sm',
+                  color=('fff' if f.dirty else 'ccc')) }}
+
+      {# editor (right side) #}
+      {% if f.kind == 'bool' %}
+        {% set on = f.value_bool %}
+        <quad pos="{{ LW - 28 }} {{ yy + 1.5 }}"
+              z-index="202" size="20 3.8" bgcolor="fff2"
+              halign="left" valign="top"
+              id="tog_{{ id }}__toggle__{{ f.key }}"
+              action="{{ id }}__toggle__{{ f.key }}" ScriptEvents="1" />
+        {{ ui.label(('on' if on else 'off'),
+                    x=LW - 10, y=yy, halign='right',
+                    size='sm', color=('0f0' if on else '888')) }}
+      {% elif f.kind == 'choice' %}
+        {{ ui.push_button('cycle__' ~ f.key ~ '__prev', '<',
+                          x=LW - 50, y=yy + 1,
+                          variant='ghost', size='sm', halign='left') }}
+        {{ ui.label((f.value or '(off)')[:14],
+                    x=LW - 14, y=yy, halign='right',
+                    size='sm', color='fff') }}
+        {{ ui.push_button('cycle__' ~ f.key ~ '__next', '>',
+                          x=LW - 8, y=yy + 1,
+                          variant='ghost', size='sm', halign='left') }}
+      {% else %}
+        {{ ui.line_edit('field__' ~ f.key, value=f.value,
+                        x=LW - 60, y=yy + 1.5,
+                        width=58, size='sm') }}
+      {% endif %}
+
+      {# description below the field #}
+      {% if f.desc %}
+        {{ ui.label(f.desc[:64], x=8, y=yy + 3.4, size='sm', color='666') }}
+      {% endif %}
+    {% endfor %}
+
+    {% if not fields %}
+      {{ ui.label('no fields in this section',
+                  x=LW/2, y=base_y - 10, halign='center',
+                  size='sm', color='666') }}
+    {% endif %}
+
+  {% endcall %}
+
+  {# ============================================================
+     RIGHT: activity feed
+     ============================================================ #}
+  {% call ui.group_box('Recent activity', x=RX, y=-17, w=RW, h=H-25) %}
+    {% if not recent %}
+      {{ ui.label('no activity yet',
+                  x=RX + RW/2, y=-30, halign='center',
+                  size='sm', color='666') }}
+    {% else %}
+      {% set row_h = 5 %}
+      {% for e in recent %}
+        {% set yy2 = -25 - loop.index0 * row_h %}
+        {% set lc = {'ok':'0f0','info':'cce','warn':'fa0','err':'f44'}[e.level]
+                    if e.level in ['ok','info','warn','err'] else 'aaa' %}
+        {{ ui.label('•', x=RX + 2, y=yy2, size='sm', color=lc) }}
+        {{ ui.label(e.text[:42], x=RX + 5, y=yy2, size='sm', color='ccc') }}
+      {% endfor %}
+    {% endif %}
+  {% endcall %}
+
+  {# bottom action row #}
+  {{ ui.push_button('refresh', 'Refresh',
+                    x=4, y=-H+5, variant='ghost',
+                    halign='left', size='md') }}
+  {{ ui.push_button('reset_drafts', 'Discard',
+                    x=W-58, y=-H+5,
+                    variant=('ghost' if not dirty_count else 'warning'),
+                    halign='right', size='md') }}
+  {{ ui.push_button('save',
+                    ('Save (' ~ dirty_count|string ~ ')')
+                      if dirty_count else 'Save',
+                    x=W-4, y=-H+5,
+                    variant=('success' if dirty_count else 'ghost'),
+                    halign='right', size='md') }}
+
+  {{ ui.hover_script() }}
+</frame>

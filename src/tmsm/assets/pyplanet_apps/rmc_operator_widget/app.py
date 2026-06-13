@@ -263,7 +263,9 @@ class RmcOperatorWidget(WidgetAppBase):
                 "broken_text": "0",
                 "current_text": "-",
                 "meta_text": "--.--.----  by -",
-                "top_action_text": "Stop RMC",
+                "top_action_text": "Start RMC",
+                "top_action_icon": "play",
+                "top_action_variant": "success",
                 "free_skip_btn_text": "Free Skip (1 left)",
                 "broken_skip_btn_text": "Skip broken Map",
                 "secondary_skip_btn_text": "Secondary Skip",
@@ -310,6 +312,20 @@ class RmcOperatorWidget(WidgetAppBase):
                 goal_key = str(mode._goal_medal(run) or goal_key)
         except Exception:
             pass
+        # Resolve the sub-goal medal label so the secondary-skip button reads
+        # "Gold Skip" / "Silver Skip" / "Bronze Skip" instead of a generic name.
+        sub_key = "gold"
+        try:
+            if hasattr(mode, "_secondary_medal"):
+                sub_key = str(mode._secondary_medal(goal_key) or "gold")
+        except Exception:
+            pass
+        sub_label = {
+            "at":     "AT",
+            "gold":   "Gold",
+            "silver": "Silver",
+            "bronze": "Bronze",
+        }.get(sub_key.lower(), sub_key.title())
         is_active = bool(run.get("active"))
 
         is_operator = False
@@ -323,29 +339,45 @@ class RmcOperatorWidget(WidgetAppBase):
         # buttons. Shift content up and shrink the frame so there's no
         # empty space where the operator buttons would otherwise live.
         y_off = -2.2 if is_operator else 7.4
+        # Idle-state timer reflects the configured run length, not a hardcoded
+        # 60:00 — picks up the user's chosen duration the moment they change it.
+        idle_timer_text = "60:00"
+        try:
+            if hasattr(mode, "_configured_run_duration_ms"):
+                idle_timer_text = self._fmt_mmss(int(mode._configured_run_duration_ms()))
+        except Exception:
+            pass
+
         data: dict[str, Any] = {
-            "widget_force_hidden": (not is_active),
+            # Widget stays visible whenever the RMC mode is the active
+            # game mode — even before the operator presses Start. The button
+            # itself communicates whether the run is currently going.
+            "widget_force_hidden": False,
             "is_operator": is_operator,
             "y_off": y_off,
             "state_text": state_text,
-            "timer_text": self._fmt_mmss(remaining_ms) if is_active else "60:00",
+            "timer_text": self._fmt_mmss(remaining_ms) if is_active else idle_timer_text,
             "goal_time_text": self._fmt_mmss(goal_ms) if goal_ms > 0 else "00:00",
             "goal_medal_substyle": self._goal_medal_substyle(goal_key),
             "goal_prev_medal_substyle": self._goal_minus_one_substyle(goal_key),
-            "goal_count_text": str(int(run.get("maps_cleared") or 0)) if is_active else "",
-            "goal_prev_count_text": str(int(run.get("secondary_cleared") or 0)) if is_active else "",
+            "goal_count_text": str(int(run.get("maps_cleared") or 0)) if is_active else "0",
+            "goal_prev_count_text": str(int(run.get("secondary_cleared") or 0)) if is_active else "0",
             "pause_play_btn_text": "Resume" if paused else "Pause",
+            # Pause logic is currently broken; hide the button entirely until fixed.
+            "show_pause_btn": False,
             "maps_text": str(int(run.get("maps_cleared") or 0)),
             "broken_text": str(broken_skips),
             "current_text": current_name,
             "meta_text": f"{date_text}  by {author}",
             "top_action_text": "Stop RMC" if active else "Start RMC",
+            "top_action_icon": "times" if active else "play",
+            "top_action_variant": "danger" if active else "success",
             "free_skip_btn_text": f"Free Skip ({free_left} left)",
             "broken_skip_btn_text": "Skip broken Map",
             "secondary_skip_btn_text": (
-                "Secondary Skip (ready)"
+                f"{sub_label} Skip (ready)"
                 if (is_active and bool(cmap.get("secondary_cleared")) and not bool(cmap.get("cleared")))
-                else "Secondary Skip"
+                else f"{sub_label} Skip"
             ),
             "secondary_skip_available": bool(
                 is_active

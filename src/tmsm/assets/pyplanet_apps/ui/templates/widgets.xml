@@ -1092,13 +1092,17 @@
   {% set s = _SIZES[size] %}
   {% set h = s.entry_h %}
   {% set ns = namespace(label='') %}
+  {# Compare as strings: callers commonly pass `selected=value|string` while
+     the choice's `value` may be an int. Without normalisation the equality
+     test silently fails and the bar renders as "- select -". #}
+  {% set sel_str = (selected|string) if selected is not none else '' %}
   {% for opt in options %}
     {% if opt is mapping %}
       {% set ov = opt['value'] %}{% set ol = opt.get('label', ov) %}
     {% else %}
       {% set ov = opt[0] %}{% set ol = opt[1] if opt|length > 1 else opt[0] %}
     {% endif %}
-    {% if ov == selected %}{% set ns.label = ol %}{% endif %}
+    {% if (ov|string) == sel_str %}{% set ns.label = ol %}{% endif %}
   {% endfor %}
   {# main bar #}
   <quad pos="{{ x }} {{ y }}" z-index="{{ z }}" size="{{ w }} {{ h }}"
@@ -1128,7 +1132,7 @@
         {% set ov = opt[0] %}{% set ol = opt[1] if opt|length > 1 else opt[0] %}
       {% endif %}
       {% set ry = y - h/2 - loop.index0 * row_h %}
-      {% set is_sel = (ov == selected) %}
+      {% set is_sel = ((ov|string) == sel_str) %}
       <quad pos="{{ x }} {{ ry }}" z-index="{{ z + 3 }}"
             size="{{ w }} {{ row_h }}"
             bgcolor="{{ '15d6' if is_sel else '0000' }}"

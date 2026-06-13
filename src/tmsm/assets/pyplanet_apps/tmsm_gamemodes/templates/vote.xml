@@ -47,14 +47,14 @@
             bgcolor="{{ fill }}" halign="left" valign="top" />
     {% endif %}
 
-    {# Click target on top of the bar; disabled (no scriptevents) when voted. #}
-    {% if not has_voted %}
-      <quad pos="4 {{ oy }}" z-index="854" size="{{ win_w - 8 }} 6"
-            bgcolor="0000" halign="left" valign="top"
-            id="uibtn_ghost_{{ id }}__vote__pick__{{ opt.value }}"
-            action="{{ id }}__vote__pick__{{ opt.value }}" scriptevents="1"
-            class="ui-btn ui-btn-ghost" />
-    {% endif %}
+    {# Click target stays active even after voting so players can change
+       their pick if they hit the wrong button. The engine simply overwrites
+       the existing ballot for that login. #}
+    <quad pos="4 {{ oy }}" z-index="854" size="{{ win_w - 8 }} 6"
+          bgcolor="0000" halign="left" valign="top"
+          id="uibtn_ghost_{{ id }}__vote__pick__{{ opt.value }}"
+          action="{{ id }}__vote__pick__{{ opt.value }}" scriptevents="1"
+          class="ui-btn ui-btn-ghost" />
 
     {{ ui.label(opt.label,
                 x=6, y=oy - 3, size='sm',

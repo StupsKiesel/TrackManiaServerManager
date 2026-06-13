@@ -1,0 +1,150 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (see TmsmGamemodesApp.rmc_results_context):
+     results = {
+       run_id, reason, goal_label, secondary_label,
+       goal_substyle, secondary_substyle,
+       goal_count, secondary_count, players_count,
+       rows: [{rank, nickname, goal_clears, secondary_clears}],
+     }
+     can_close = bool
+#}
+
+{% if results %}
+
+{% set win_w  = 170 %}
+{% set rows   = results.rows or [] %}
+{% set n_rows = rows|length %}
+{% set body_top = -22 %}     {# y of first row, header occupies 0..-22 #}
+{% set row_h   = 7 %}
+{% set rows_h  = n_rows * row_h if n_rows > 0 else row_h %}
+{% set win_h   = (-body_top) + rows_h + 4 %}    {# header + rows + small bottom pad #}
+
+{# column layout (x positions inside the panel) #}
+{% set col_rank   = 4 %}
+{% set col_player = 10 %}
+{% set col_count  = 46 %}     {# "3/4 + 1/2" numeric column #}
+{% set col_medals = 78 %}     {# start of medal icon strip #}
+
+<frame pos="{{ -win_w / 2 }} 60" z-index="900">
+
+  {# panel background #}
+  <quad pos="0 0" z-index="900" size="{{ win_w }} {{ win_h }}"
+        bgcolor="000c" halign="left" valign="top" />
+  {# accent line under header #}
+  <quad pos="0 -22" z-index="901" size="{{ win_w }} 0.3"
+        bgcolor="15dfa" halign="left" valign="top" />
+  {# title strip #}
+  <quad pos="0 0" z-index="901" size="{{ win_w }} 8"
+        bgcolor="000a" halign="left" valign="top" />
+
+  {{ ui.label('RMC RESULTS', x=4, y=-4, size='md', color='fc4', bold=True, z=910) }}
+
+  {# top-right red close X with hover effect. z must beat the panel
+     background (z=900) and the title strip (z=901). #}
+  {{ ui.tool_button('close', 'times', x=win_w - 1, y=-4,
+                    variant='danger', size='md', halign='right',
+                    z=920, tooltip='Close') }}
+
+  {# header line 1: goal + secondary medal counts with mini icons #}
+  <quad pos="4 -12" z-index="911" size="3 3"
+        style="MedalsBig" substyle="{{ results.goal_substyle }}"
+        halign="left" valign="center" />
+  {{ ui.label(results.goal_label ~ ': ' ~ results.goal_count,
+              x=8, y=-12, size='sm', color='fff', bold=True, z=912) }}
+
+  <quad pos="48 -12" z-index="911" size="3 3"
+        style="MedalsBig" substyle="{{ results.secondary_substyle }}"
+        halign="left" valign="center" />
+  {{ ui.label(results.secondary_label ~ ': ' ~ results.secondary_count,
+              x=52, y=-12, size='sm', color='fff', bold=True, z=912) }}
+
+  {# header line 2: participants only — the finish reason is omitted because
+     this panel is shown precisely WHEN the run ended, so the reason is
+     redundant (operator stop / time-out are visually obvious anyway). #}
+  {{ ui.label('Players: ' ~ results.players_count,
+              x=win_w - 12, y=-12, halign='right',
+              size='sm', color='cdf', z=912) }}
+
+  {# column captions #}
+  {{ ui.label('#',      x=col_rank,   y=-18, size='sm', color='888', z=912) }}
+  {{ ui.label('Player', x=col_player, y=-18, size='sm', color='888', z=912) }}
+  {{ ui.label('Count',  x=col_count,  y=-18, size='sm', color='888', z=912) }}
+  {{ ui.label('Medals', x=col_medals, y=-18, size='sm', color='888', z=912) }}
+
+  {# rows #}
+  {% if n_rows == 0 %}
+    {{ ui.label('No participants recorded.',
+                x=win_w/2, y=body_top - 4, halign='center',
+                size='sm', color='aaa', z=915) }}
+  {% else %}
+    {% for r in rows %}
+      {% set ry = body_top - (loop.index0 * row_h) %}
+
+      {# alternating subtle row band #}
+      {% if loop.index0 % 2 == 1 %}
+        <quad pos="2 {{ ry }}" z-index="913"
+              size="{{ win_w - 4 }} {{ row_h - 0.4 }}"
+              bgcolor="ffffff08" halign="left" valign="top" />
+      {% endif %}
+
+      {{ ui.label('#' ~ r.rank, x=col_rank,   y=ry - 3,
+                  size='sm', color='fc4', bold=True, z=915) }}
+      {{ ui.label(r.nickname,   x=col_player, y=ry - 3,
+                  size='sm', color='fff', z=915) }}
+
+      {# Numeric counts column: "<goal_clears> / <secondary_clears>" \u2014 just
+         this player's own contributions, no run totals. #}
+      {% set count_txt = (r.goal_clears|string) ~ ' $888/$z ' ~ (r.secondary_clears|string) %}
+      {{ ui.label(count_txt, x=col_count, y=ry - 3,
+                  size='sm', color='fff', bold=True, z=915) }}
+
+      {# Medal strips. Each icon is 4u wide, 0.4u gap between icons. Cap each
+         strip at how many icons fit between col_medals and the right margin
+         (with 1 slot reserved for the optional "+N" overflow tag). #}
+      {% set strip_w   = win_w - col_medals - 4 %}
+      {% set icon_w    = 4.0 %}
+      {% set icon_gap  = 0.4 %}
+      {% set max_icons = ((strip_w / (icon_w + icon_gap)) | int) - 1 %}
+      {% if max_icons < 4 %}{% set max_icons = 4 %}{% endif %}
+
+      {% set goal_n = r.goal_clears or 0 %}
+      {% set sec_n  = r.secondary_clears or 0 %}
+      {% set goal_show = goal_n if goal_n <= max_icons else max_icons %}
+      {% set remain    = max_icons - goal_show %}
+      {% if goal_n > max_icons %}{% set remain = 0 %}{% endif %}
+      {% set sec_show  = sec_n if sec_n <= remain else remain %}
+
+      {% set xpos = namespace(v=col_medals) %}
+      {% for i in range(goal_show) %}
+        <quad pos="{{ xpos.v }} {{ ry - row_h/2 }}" z-index="915"
+              size="{{ icon_w }} {{ icon_w }}" halign="left" valign="center"
+              style="MedalsBig" substyle="{{ results.goal_substyle }}" />
+        {% set xpos.v = xpos.v + icon_w + icon_gap %}
+      {% endfor %}
+      {% if goal_n > max_icons %}
+        {{ ui.label('+' ~ (goal_n - max_icons),
+                    x=xpos.v, y=ry - 3, size='sm', color='fc4', bold=True, z=915) }}
+      {% endif %}
+
+      {% if sec_show > 0 %}
+        {% set xpos.v = xpos.v + 1.5 %}
+        {% for i in range(sec_show) %}
+          <quad pos="{{ xpos.v }} {{ ry - row_h/2 }}" z-index="915"
+                size="{{ icon_w }} {{ icon_w }}" halign="left" valign="center"
+                style="MedalsBig" substyle="{{ results.secondary_substyle }}" />
+          {% set xpos.v = xpos.v + icon_w + icon_gap %}
+        {% endfor %}
+        {% if sec_n > sec_show %}
+          {{ ui.label('+' ~ (sec_n - sec_show),
+                      x=xpos.v, y=ry - 3, size='sm', color='ddd', bold=True, z=915) }}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+
+  {# Hover-effect ManiaScript for the close button (and any future buttons). #}
+  {{ ui.hover_script() }}
+</frame>
+
+{% endif %}

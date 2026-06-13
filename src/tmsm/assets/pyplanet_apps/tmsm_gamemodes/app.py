@@ -20,7 +20,7 @@ from . import state as _state
 from . import modes as _builtin_modes  # noqa: F401  side-effect: registers built-ins
 from .base import REGISTRY, GameMode, GameModeContext
 from .picker import MapPicker
-from .views import AdminView, OperatorView, VotePanelView
+from .views import AdminView, OperatorView, RmcResultsView, VotePanelView
 from .votes import VoteEngine
 from .widget_layout_storage import WidgetLayoutStorage
 
@@ -53,6 +53,10 @@ class TmsmGamemodesApp(AppConfig):
         self.operator_view: OperatorView | None = None
         self.admin_view: AdminView | None = None
         self.vote_view: VotePanelView | None = None
+        self.rmc_results_view: RmcResultsView | None = None
+        # Latest RMC run row id used to feed `rmc_results_context` after a
+        # run finishes; None until a run is persisted.
+        self._rmc_last_run_id: int | None = None
 
         # Services.
         self.picker = MapPicker(self)
@@ -143,6 +147,9 @@ class TmsmGamemodesApp(AppConfig):
 
             self.vote_view = VotePanelView(self)
             self.vote_view.handle_catch_all = self._catch_all  # type: ignore[assignment]
+
+            self.rmc_results_view = RmcResultsView(self)
+            self.rmc_results_view.handle_catch_all = self._catch_all  # type: ignore[assignment]
         except Exception:
             logger.exception("gamemodes: view init failed")
             return
@@ -166,7 +173,7 @@ class TmsmGamemodesApp(AppConfig):
                 await self._active.on_disable()
             except Exception:
                 logger.exception("gamemodes: on_disable on stop failed")
-        for v in (self.operator_view, self.admin_view, self.vote_view):
+        for v in (self.operator_view, self.admin_view, self.vote_view, self.rmc_results_view):
             if v is not None:
                 try:
                     await v.destroy()
@@ -175,6 +182,7 @@ class TmsmGamemodesApp(AppConfig):
         self.operator_view = None
         self.admin_view = None
         self.vote_view = None
+        self.rmc_results_view = None
 
     # ---- persistence ---------------------------------------------------
 
@@ -1174,6 +1182,108 @@ class TmsmGamemodesApp(AppConfig):
             "picked_value": picked,
         }
 
+    # ---- RMC end-of-run results ---------------------------------------
+
+    _RMC_MEDAL_SUBSTYLE = {
+        "at":      "MedalNadeo",
+        "gold":    "MedalGold",
+        "silver":  "MedalSilver",
+        "bronze":  "MedalBronze",
+    }
+    _RMC_MEDAL_LABEL = {
+        "at":     "AT",
+        "gold":   "Gold",
+        "silver": "Silver",
+        "bronze": "Bronze",
+    }
+
+    async def show_rmc_results(self, run_id: int) -> None:
+        """Open the end-of-run results panel for everyone online."""
+        if self.rmc_results_view is None:
+            return
+        self._rmc_last_run_id = int(run_id)
+        try:
+            await self.rmc_results_view.show()
+        except Exception:
+            logger.exception("gamemodes: rmc_results_view show failed")
+
+    async def hide_rmc_results(self, *, login: str | None = None) -> None:
+        view = self.rmc_results_view
+        if view is None:
+            return
+        try:
+            if login:
+                view._visible_logins.discard(login)
+                await TemplateView.hide(view, player_logins=[login])
+            else:
+                await TemplateView.hide(view)
+                view._visible = False
+                view._visible_logins.clear()
+        except Exception:
+            logger.exception("gamemodes: rmc_results_view hide failed")
+
+    async def rmc_results_context(self, login: str) -> dict[str, Any]:
+        run_id = self._rmc_last_run_id
+        if not run_id:
+            return {"results": None, "can_close": True}
+        try:
+            from .models import RmcRun, RmcRunPlayer
+        except Exception:
+            logger.exception("gamemodes: rmc results models import failed")
+            return {"results": None, "can_close": True}
+        try:
+            run = await RmcRun.objects.get(RmcRun, RmcRun.id == int(run_id))
+        except Exception:
+            logger.exception("gamemodes: rmc_run %s lookup failed", run_id)
+            return {"results": None, "can_close": True}
+        try:
+            rows_q = (
+                RmcRunPlayer.select()
+                .where(RmcRunPlayer.run == run)
+            )
+            rows = list(await RmcRunPlayer.objects.execute(rows_q))
+        except Exception:
+            logger.exception("gamemodes: rmc_run_player query failed")
+            rows = []
+
+        # Rank: goal clears desc, then secondary clears desc, then finishes desc.
+        rows.sort(
+            key=lambda r: (
+                -int(r.goal_clears or 0),
+                -int(r.secondary_clears or 0),
+                -int(r.finishes or 0),
+            )
+        )
+        ranked = []
+        for i, r in enumerate(rows, start=1):
+            # Show only players who actually contributed a medal-tracked event.
+            if int(r.goal_clears or 0) <= 0 and int(r.secondary_clears or 0) <= 0:
+                continue
+            ranked.append({
+                "rank": i,
+                "nickname": str(r.nickname or r.login),
+                "goal_clears": int(r.goal_clears or 0),
+                "secondary_clears": int(r.secondary_clears or 0),
+            })
+
+        goal_key = str(run.goal_medal or "at").lower()
+        sec_key = str(run.secondary_medal or "gold").lower()
+        return {
+            "results": {
+                "run_id":              int(run.id),
+                "reason":              str(run.reason or ""),
+                "goal_label":          self._RMC_MEDAL_LABEL.get(goal_key, goal_key.title()),
+                "secondary_label":     self._RMC_MEDAL_LABEL.get(sec_key, sec_key.title()),
+                "goal_substyle":       self._RMC_MEDAL_SUBSTYLE.get(goal_key, "MedalNadeo"),
+                "secondary_substyle":  self._RMC_MEDAL_SUBSTYLE.get(sec_key, "MedalGold"),
+                "goal_count":          int(run.maps_cleared or 0),
+                "secondary_count":     int(run.secondary_cleared or 0),
+                "players_count":       int(run.players_count or 0),
+                "rows":                ranked,
+            },
+            "can_close": True,
+        }
+
     # ---- mode activation ----------------------------------------------
 
     async def _activate(self, mode_key: str, *, announce: bool = True) -> None:
@@ -1341,7 +1451,17 @@ class TmsmGamemodesApp(AppConfig):
             # listener and clears self.data — making the view unusable for
             # subsequent votes. Use TemplateView.hide() directly so the view
             # stays alive and re-shows cleanly next time.
+            #
+            # We MUST hide both per-player and globally: BaseView.refresh()
+            # re-displays per-login on every progress tick, so by the time
+            # the vote times out the manialink has been pushed both as a
+            # global frame AND as per-player frames. A bare hide(None) only
+            # clears the global flag and leaves the per-player frames on
+            # the clients, so the panel sticks around forever.
             try:
+                logins = list(self.vote_view._visible_logins)
+                if logins:
+                    await TemplateView.hide(self.vote_view, player_logins=logins)
                 await TemplateView.hide(self.vote_view)
             except Exception:
                 logger.exception("gamemodes: vote_view hide failed")
@@ -1989,6 +2109,11 @@ class TmsmGamemodesApp(AppConfig):
         m = re.match(r"^vote__pick__(.+)$", action)
         if m:
             await self.votes.cast(login, m.group(1))
+            return
+
+        # rmc results panel close (per-player)
+        if action == "close":
+            await self.hide_rmc_results(login=login)
             return
 
     def _absorb(self, player, values: dict[str, Any]) -> None:

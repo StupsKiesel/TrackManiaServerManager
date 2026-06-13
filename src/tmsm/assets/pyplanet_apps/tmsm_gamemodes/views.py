@@ -123,3 +123,28 @@ class VotePanelView(BaseView):
 
     async def get_per_player_data(self, login):
         return await self.app.vote_panel_context(login)
+
+
+class RmcResultsView(BaseView):
+    """End-of-run results panel: medal contributions per player.
+
+    Shown to everyone online when an RMC run finishes. Players close it
+    via the Close button; until then it stays sticky so late joiners and
+    spectators can see who carried the run.
+    """
+
+    template_name = "tmsm_gamemodes/rmc_results.xml"
+
+    # No breadcrumbs: this is an overlay, not a hub-app screen.
+    breadcrumbs = []
+
+    async def get_context_data(self):
+        ctx = await super().get_context_data()
+        ctx.update(
+            results=None,
+            can_close=True,
+        )
+        return ctx
+
+    async def get_per_player_data(self, login):
+        return await self.app.rmc_results_context(login)

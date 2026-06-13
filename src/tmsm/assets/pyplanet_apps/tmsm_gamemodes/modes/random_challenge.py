@@ -10,6 +10,7 @@ Cooperative multiplayer adaptation of Random Map Challenge:
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import time
 from typing import Any
@@ -18,6 +19,15 @@ from ..base import ConfigField, GameMode, GameModeContext, register
 from ..picker import downloadable, min_awards, reject_difficulty, reject_tags
 
 logger = logging.getLogger(__name__)
+
+
+# Medal substyles for `style="MedalsBig"` quads in templates.
+MEDAL_SUBSTYLE = {
+    "at": "MedalNadeo",
+    "gold": "MedalGold",
+    "silver": "MedalSilver",
+    "bronze": "MedalBronze",
+}
 
 
 GOAL_ORDER = ["bronze", "silver", "gold", "at"]
@@ -58,10 +68,15 @@ class RandomChallengeMode(GameMode):
         self._run_task: asyncio.Task | None = None
         self._current_map = None
         self._in_race_started_at_monotonic: float | None = None
+        # Logins that were actively racing the moment the operator hit Pause.
+        # On Resume only these players are force-moved back into the race;
+        # anyone else who self-spec'd in the meantime stays free to choose.
+        self._paused_active_logins: set[str] = set()
 
     def default_config(self) -> dict[str, Any]:
         return {
             "goal_medal": "at",
+            "run_duration_min": 60,
             "resume_behavior": "current",  # current|next
             "max_pick_attempts": 10,
             "block_lunatic": True,
@@ -87,6 +102,24 @@ class RandomChallengeMode(GameMode):
                     ("silver", "Silver"),
                     ("gold", "Gold"),
                     ("at", "AT"),
+                ],
+            ),
+            ConfigField.make(
+                "run_duration_min",
+                "Run duration",
+                "choice",
+                default=60,
+                help="Total challenge time for a new run. 30-minute steps (5 min option for testing).",
+                choices=[
+                    (5,   "5 min (test)"),
+                    (30,  "30 min"),
+                    (60,  "1 h"),
+                    (90,  "1 h 30"),
+                    (120, "2 h"),
+                    (150, "2 h 30"),
+                    (180, "3 h"),
+                    (210, "3 h 30"),
+                    (240, "4 h"),
                 ],
             ),
             ConfigField.make(
@@ -183,11 +216,13 @@ class RandomChallengeMode(GameMode):
             self._run_task = asyncio.ensure_future(self._run_tick_loop())
 
         run = self._state.setdefault("run", {})
-        if not bool(run.get("active")):
-            await self._start_new_run(announce=False)
-        else:
+        # Do NOT auto-start a run on enable. Finished runs (or fresh mode
+        # activations) stay idle until an operator presses Start RMC or runs
+        # `//rmc start`, otherwise the challenge would silently restart every
+        # time the timer expires or the pool boots.
+        if bool(run.get("active")):
             self._in_race_started_at_monotonic = None
-            self._update_status()
+        self._update_status()
 
     async def on_disable(self) -> None:
         self._commit_race_elapsed()
@@ -198,7 +233,7 @@ class RandomChallengeMode(GameMode):
         run = self._state.setdefault("run", {})
         run["active"] = False
         run["paused"] = False
-        run["remaining_race_ms"] = self.RUN_DURATION_MS
+        run["remaining_race_ms"] = self._configured_run_duration_ms()
         run["maps_cleared"] = 0
         run["secondary_cleared"] = 0
         run["free_skip_used"] = False
@@ -326,6 +361,7 @@ class RandomChallengeMode(GameMode):
         login = str(getattr(player, "login", "") or "")
         if not login:
             return
+        nickname = str(getattr(player, "nickname", "") or login)
 
         try:
             score = int(kwargs.get("race_time") or kwargs.get("lap_time") or 0)
@@ -333,6 +369,9 @@ class RandomChallengeMode(GameMode):
             score = 0
         if score <= 0:
             return
+
+        # Count every valid finish (used only by future stats app).
+        self._bump_contribution(login, nickname, "finishes", 1)
 
         cmap = dict(run.get("current_map") or {})
         if bool(cmap.get("cleared")):
@@ -355,22 +394,28 @@ class RandomChallengeMode(GameMode):
             return
 
         # Track secondary medal (one notch easier) independently, but only
-        # bump the global counter once per map across all players.
+        # bump the global counter once per map across all players. Driving
+        # the goal-medal time directly must NOT count toward the secondary
+        # counter — those are two separate achievements.
         if (
             secondary_ms > 0
             and not bool(cmap.get("secondary_cleared"))
             and score <= secondary_ms
+            and score > goal_ms
         ):
             cmap["secondary_cleared"] = True
+            cmap["secondary_clear_login"] = login
+            cmap["secondary_clear_time_ms"] = int(score)
             run["current_map"] = cmap
             run["secondary_cleared"] = int(run.get("secondary_cleared") or 0) + 1
+            self._bump_contribution(login, nickname, "secondary_clears", 1)
             self._save()
             self._update_status()
             # Make the secondary-skip button light up immediately.
             await self._refresh_rmc_widgets()
 
         if score <= goal_ms:
-            await self._on_first_goal_clear(login=login, time_ms=score)
+            await self._on_first_goal_clear(login=login, nickname=nickname, time_ms=score, goal_ms=goal_ms)
 
     async def on_player_chat(self, player=None, text: str = "", **kwargs) -> None:
         raw = str(text or "").strip()
@@ -382,7 +427,7 @@ class RandomChallengeMode(GameMode):
 
         login = str(getattr(player, "login", "") or "")
         if cmd in {"//rmc", "/rmc", "//rmc help", "/rmc help"}:
-            self.ctx.chat("$fa0RMC:$z //rmc start | pause | play [current|next] | stop | vote skip | vote broken | status", login=login)
+            self.ctx.chat("$fa0RMC:$z //rmc start | pause | play [current|next] | stop | vote skip | vote broken | vote secondary | status", login=login)
             return
 
         if not self._is_operator(player):
@@ -426,6 +471,11 @@ class RandomChallengeMode(GameMode):
             await self._start_skip_vote(vote_kind="broken")
             return
 
+        if cmd in {"//rmc vote secondary", "/rmc vote secondary",
+                   "//rmc secondary", "/rmc secondary"}:
+            await self._start_skip_vote(vote_kind="secondary")
+            return
+
     def status_lines(self) -> list[str]:
         run = self._state.setdefault("run", {})
         goal = self._goal_medal(run)
@@ -440,7 +490,7 @@ class RandomChallengeMode(GameMode):
         free_left = 0 if bool(run.get("free_skip_used")) else 1
         return [
             f"State: {state}",
-            f"Timer: {self._fmt_ms(rem)} / {self._fmt_ms(self.RUN_DURATION_MS)}",
+            f"Timer: {self._fmt_ms(rem)} / {self._fmt_ms(self._configured_run_duration_ms())}",
             f"Goal: {GOAL_LABELS.get(goal, goal.upper())}",
             f"Maps cleared: {int(run.get('maps_cleared') or 0)}",
             f"Skips: free-left={free_left}, broken-skips={int(run.get('broken_skips') or 0)}",
@@ -457,7 +507,7 @@ class RandomChallengeMode(GameMode):
         self._state["run"] = {
             "active": True,
             "paused": False,
-            "remaining_race_ms": self.RUN_DURATION_MS,
+            "remaining_race_ms": self._configured_run_duration_ms(),
             "goal_medal": self._normalized_goal(self._config.get("goal_medal")),
             "maps_cleared": 0,
             "secondary_cleared": 0,
@@ -468,6 +518,8 @@ class RandomChallengeMode(GameMode):
             "pending_track_id": 0,
             "pending_row": {},
             "last_event": "",
+            "started_at": datetime.datetime.utcnow().isoformat(),
+            "contributions": {},  # login -> {nickname, goal_clears, secondary_clears, finishes, best_delta_ms, total_clear_time_ms}
         }
         self._state["history_track_ids"] = []
         self._state["last_track_id"] = None
@@ -494,6 +546,10 @@ class RandomChallengeMode(GameMode):
         run["active"] = False
         run["paused"] = False
         run["last_event"] = str(reason or "")
+        # Persist stats first so the results view can read the new run_id.
+        run_id = await self._persist_run_stats(reason=reason)
+        if run_id:
+            run["last_run_id"] = int(run_id)
         self._save()
         self._update_status()
         await self._restore_mode_timelimit()
@@ -502,6 +558,121 @@ class RandomChallengeMode(GameMode):
             f"Clears: {int(run.get('maps_cleared') or 0)}"
         )
         await self._refresh_rmc_widgets()
+        # Open the end-of-run results panel for everyone online.
+        try:
+            app = self.ctx._app
+            if app is not None and hasattr(app, "show_rmc_results") and run_id:
+                await app.show_rmc_results(int(run_id))
+        except Exception:
+            logger.exception("rmc: opening results view failed")
+
+    async def _persist_run_stats(self, *, reason: str) -> int | None:
+        """Write `rmc_run`, `rmc_run_player`, and update `rmc_player_totals`.
+
+        Returns the new `rmc_run.id` on success, or None if persistence
+        failed (logged + skipped so it never blocks the run lifecycle).
+        """
+        try:
+            from ..models import RmcPlayerTotals, RmcRun, RmcRunPlayer
+        except Exception:
+            logger.exception("rmc: stats models import failed")
+            return None
+
+        run = self._state.setdefault("run", {})
+        contribs = dict(run.get("contributions") or {})
+        goal = self._goal_medal(run)
+        secondary = self._secondary_medal(goal)
+        maps_cleared = int(run.get("maps_cleared") or 0)
+        secondary_cleared = int(run.get("secondary_cleared") or 0)
+        # Participants = anyone who recorded at least one finish.
+        players_count = sum(
+            1 for r in contribs.values()
+            if int((r or {}).get("finishes") or 0) > 0
+        )
+
+        started_at = self._parse_iso_dt(run.get("started_at"))
+        finished_at = datetime.datetime.utcnow()
+        duration_ms = self._configured_run_duration_ms() - max(0, self._remaining_ms_now())
+        if duration_ms < 0:
+            duration_ms = 0
+
+        try:
+            run_row = await RmcRun.objects.create(
+                RmcRun,
+                started_at=started_at or finished_at,
+                finished_at=finished_at,
+                duration_ms=int(duration_ms),
+                goal_medal=goal,
+                secondary_medal=secondary,
+                reason=str(reason or "")[:64],
+                maps_cleared=maps_cleared,
+                secondary_cleared=secondary_cleared,
+                players_count=players_count,
+            )
+        except Exception:
+            logger.exception("rmc: failed to insert rmc_run row")
+            return None
+
+        for login, raw in contribs.items():
+            r = raw or {}
+            try:
+                await RmcRunPlayer.objects.create(
+                    RmcRunPlayer,
+                    run=run_row,
+                    login=str(login)[:100],
+                    nickname=str(r.get("nickname") or login)[:150],
+                    goal_clears=int(r.get("goal_clears") or 0),
+                    secondary_clears=int(r.get("secondary_clears") or 0),
+                    finishes=int(r.get("finishes") or 0),
+                    best_delta_ms=(
+                        int(r["best_delta_ms"])
+                        if r.get("best_delta_ms") is not None else None
+                    ),
+                    total_clear_time_ms=int(r.get("total_clear_time_ms") or 0),
+                )
+            except Exception:
+                logger.exception("rmc: failed to insert rmc_run_player row for %s", login)
+
+            try:
+                existing = None
+                try:
+                    existing = await RmcPlayerTotals.objects.get(
+                        RmcPlayerTotals, RmcPlayerTotals.login == str(login)
+                    )
+                except RmcPlayerTotals.DoesNotExist:
+                    existing = None
+                if existing is None:
+                    await RmcPlayerTotals.objects.create(
+                        RmcPlayerTotals,
+                        login=str(login)[:100],
+                        nickname=str(r.get("nickname") or login)[:150],
+                        runs_played=1,
+                        goal_clears=int(r.get("goal_clears") or 0),
+                        secondary_clears=int(r.get("secondary_clears") or 0),
+                        finishes=int(r.get("finishes") or 0),
+                        last_played_at=finished_at,
+                    )
+                else:
+                    existing.nickname = str(r.get("nickname") or existing.nickname)[:150]
+                    existing.runs_played = int(existing.runs_played or 0) + 1
+                    existing.goal_clears = int(existing.goal_clears or 0) + int(r.get("goal_clears") or 0)
+                    existing.secondary_clears = int(existing.secondary_clears or 0) + int(r.get("secondary_clears") or 0)
+                    existing.finishes = int(existing.finishes or 0) + int(r.get("finishes") or 0)
+                    existing.last_played_at = finished_at
+                    await RmcPlayerTotals.objects.update(existing)
+            except Exception:
+                logger.exception("rmc: failed to upsert rmc_player_totals for %s", login)
+
+        return int(run_row.id) if run_row is not None else None
+
+    @staticmethod
+    def _parse_iso_dt(raw: Any) -> datetime.datetime | None:
+        if not raw:
+            return None
+        try:
+            return datetime.datetime.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            return None
 
     async def _pause_run(self) -> None:
         run = self._state.setdefault("run", {})
@@ -509,6 +680,10 @@ class RandomChallengeMode(GameMode):
             return
         self._commit_race_elapsed()
         run["paused"] = True
+        # Snapshot whoever is actively racing right now so resume can put
+        # exactly these players back into the race. Everyone else online
+        # gets force-spec'd too, but is released (not force-played) on resume.
+        self._paused_active_logins = set(self._active_player_logins())
         self._save()
         await self._force_all_spectator(True)
         self._update_status()
@@ -529,7 +704,24 @@ class RandomChallengeMode(GameMode):
         run["paused"] = False
         self._in_race_started_at_monotonic = time.monotonic()
         self._save()
-        await self._force_all_spectator(False)
+        # Force previously-driving players back into the race; release
+        # everyone else from forced spectate so they stay spectating but
+        # are free to self-toggle into driving whenever they want.
+        try:
+            online_logins = {
+                str(getattr(p, "login", "") or "")
+                for p in self.ctx.instance.player_manager.online
+            }
+            online_logins.discard("")
+        except Exception:
+            online_logins = set()
+        to_restore = set(self._paused_active_logins) & online_logins
+        to_release = online_logins - to_restore
+        if to_restore:
+            await self._force_spectator_for(to_restore, spectate=False)
+        if to_release:
+            await self._release_force_spectator_for(to_release)
+        self._paused_active_logins.clear()
         if chosen == "next":
             try:
                 await self.ctx.instance.gbx("NextMap")
@@ -539,7 +731,7 @@ class RandomChallengeMode(GameMode):
         self.ctx.chat(f"$fa0>> $fffRMC:$z resumed ({chosen}).")
         await self._refresh_rmc_widgets()
 
-    async def _on_first_goal_clear(self, *, login: str, time_ms: int) -> None:
+    async def _on_first_goal_clear(self, *, login: str, nickname: str = "", time_ms: int, goal_ms: int = 0) -> None:
         if self._round_ending:
             return
         self._round_ending = True
@@ -551,17 +743,18 @@ class RandomChallengeMode(GameMode):
             cmap["cleared"] = True
             cmap["first_clear_login"] = login
             cmap["first_clear_time_ms"] = int(time_ms)
-            # Achieving the goal medal time also implies the secondary medal,
-            # so bump the secondary counter once for this map if not already.
-            if not bool(cmap.get("secondary_cleared")):
-                cmap["secondary_cleared"] = True
-                run["secondary_cleared"] = int(run.get("secondary_cleared") or 0) + 1
+            # NOTE: driving the goal medal time does NOT bump the secondary
+            # counter — the two medal counters are tracked independently.
             run["current_map"] = cmap
             run["maps_cleared"] = int(run.get("maps_cleared") or 0) + 1
+            self._bump_contribution(login, nickname or login, "goal_clears", 1)
+            self._bump_contribution(login, nickname or login, "total_clear_time_ms", int(time_ms))
+            if int(goal_ms) > 0:
+                self._update_best_delta(login, int(goal_ms) - int(time_ms))
             self._save()
             self._update_status()
             self.ctx.chat(
-                f"$fa0>> $fffRMC:$z first clear by $fa0{login}$z in {self._fmt_ms(int(time_ms))}."
+                f"$fa0>> $fffRMC:$z first clear by $fa0{nickname or login}$z in {self._fmt_ms(int(time_ms))}."
             )
             try:
                 await self.ctx.instance.gbx("NextMap")
@@ -571,11 +764,12 @@ class RandomChallengeMode(GameMode):
             self._round_ending = False
 
     async def _secondary_skip(self) -> bool:
-        """Operator anti-stuck skip.
+        """Operator-triggered secondary skip — wired through a vote.
 
         Allowed only when the secondary medal has been cleared on the current
-        map but the primary goal has not. Does NOT bump the primary counter;
-        the secondary counter was already incremented when the medal was hit.
+        map but the primary goal has not. This entry point no longer applies
+        the skip directly; it kicks off a vote and the actual skip happens
+        in ``_start_skip_vote``'s ``_on_finish`` when the vote passes.
         """
         run = self._state.setdefault("run", {})
         if not bool(run.get("active")) or bool(run.get("paused")):
@@ -590,8 +784,15 @@ class RandomChallengeMode(GameMode):
                 severity="warning",
             )
             return False
-        if self._round_ending:
-            return False
+        await self._start_skip_vote(vote_kind="secondary")
+        return True
+
+    async def _apply_secondary_skip(self) -> None:
+        """Actually perform the secondary skip — invoked from the vote callback."""
+        run = self._state.setdefault("run", {})
+        cmap = dict(run.get("current_map") or {})
+        if bool(cmap.get("cleared")) or self._round_ending:
+            return
         self._round_ending = True
         try:
             cmap["cleared"] = True
@@ -600,8 +801,8 @@ class RandomChallengeMode(GameMode):
             self._save()
             self._update_status()
             self.ctx.chat(
-                f"$fa0>> $fffRMC:$z operator triggered secondary skip "
-                f"(secondary medal already cleared)."
+                "$fa0>> $fffRMC:$z secondary skip approved "
+                "(secondary medal already cleared)."
             )
             try:
                 await self.ctx.instance.gbx("NextMap")
@@ -610,7 +811,6 @@ class RandomChallengeMode(GameMode):
         finally:
             self._round_ending = False
         await self._refresh_rmc_widgets()
-        return True
 
     # ---- picking -------------------------------------------------------
 
@@ -722,6 +922,18 @@ class RandomChallengeMode(GameMode):
             await self.ctx.notify("RMC: free skip already used this run.", severity="warning")
             return
 
+        if vote_kind == "secondary":
+            cmap_now = dict(run.get("current_map") or {})
+            if bool(cmap_now.get("cleared")):
+                await self.ctx.notify("RMC: map already cleared.", severity="warning")
+                return
+            if not bool(cmap_now.get("secondary_cleared")):
+                await self.ctx.notify(
+                    "RMC: secondary skip not yet available (secondary medal not achieved).",
+                    severity="warning",
+                )
+                return
+
         participants = self._participant_logins()
         if not participants:
             await self.ctx.notify("RMC: no participating players for vote.", severity="warning")
@@ -731,6 +943,11 @@ class RandomChallengeMode(GameMode):
             title = "RMC vote: use the single free skip?"
             key = "rmc:free_skip"
             duration = self.FREE_SKIP_VOTE_SECONDS
+        elif vote_kind == "secondary":
+            sub = self._secondary_medal(self._goal_medal(run)).title()
+            title = f"RMC vote: {sub} skip (advance to next map)?"
+            key = "rmc:secondary_skip"
+            duration = self.BROKEN_SKIP_VOTE_SECONDS
         else:
             title = "RMC vote: mark current map broken and skip?"
             key = "rmc:broken_skip"
@@ -751,6 +968,10 @@ class RandomChallengeMode(GameMode):
                     await self.ctx.instance.gbx("NextMap")
                 except Exception:
                     logger.exception("rmc: NextMap after free skip failed")
+                return
+
+            if vote_kind == "secondary":
+                await self._apply_secondary_skip()
                 return
 
             run["broken_skips"] = int(run.get("broken_skips") or 0) + 1
@@ -838,7 +1059,7 @@ class RandomChallengeMode(GameMode):
         run = self._state.setdefault("run", {})
         run.setdefault("active", False)
         run.setdefault("paused", False)
-        run.setdefault("remaining_race_ms", self.RUN_DURATION_MS)
+        run.setdefault("remaining_race_ms", self._configured_run_duration_ms())
         run.setdefault("goal_medal", self._normalized_goal(self._config.get("goal_medal")))
         run.setdefault("maps_cleared", 0)
         run.setdefault("secondary_cleared", 0)
@@ -884,6 +1105,27 @@ class RandomChallengeMode(GameMode):
         # for backwards compatibility with existing call sites.
         return self._normalized_goal(self._config.get("goal_medal"))
 
+    def _configured_run_duration_ms(self) -> int:
+        """Total run length in ms, picked from config in 30-min steps.
+
+        Falls back to ``RUN_DURATION_MS`` for any unexpected value so a
+        broken config can never produce a zero / negative timer.
+        """
+        try:
+            minutes = int(self._config.get("run_duration_min") or 60)
+        except (TypeError, ValueError):
+            minutes = 60
+        # Allow the 5-minute test option; otherwise clamp to 30..240 and
+        # snap to the nearest 30-minute step.
+        if minutes == 5:
+            return 5 * 60 * 1000
+        if minutes < 30:
+            minutes = 30
+        elif minutes > 240:
+            minutes = 240
+        minutes = (minutes // 30) * 30 or 30
+        return minutes * 60 * 1000
+
     @staticmethod
     def _normalized_goal(raw: Any) -> str:
         key = str(raw or "at").strip().lower()
@@ -903,6 +1145,40 @@ class RandomChallengeMode(GameMode):
             "gold": "silver",
             "silver": "bronze",
         }.get(key, "gold")
+
+    # ---- per-player contribution helpers -------------------------------
+
+    def _contrib_row(self, login: str, nickname: str) -> dict[str, Any]:
+        run = self._state.setdefault("run", {})
+        contribs = run.setdefault("contributions", {})
+        row = contribs.get(login)
+        if row is None:
+            row = {
+                "nickname": nickname or login,
+                "goal_clears": 0,
+                "secondary_clears": 0,
+                "finishes": 0,
+                "best_delta_ms": None,
+                "total_clear_time_ms": 0,
+            }
+            contribs[login] = row
+        elif nickname and row.get("nickname") != nickname:
+            row["nickname"] = nickname
+        return row
+
+    def _bump_contribution(self, login: str, nickname: str, key: str, delta: int) -> None:
+        row = self._contrib_row(login, nickname)
+        row[key] = int(row.get(key) or 0) + int(delta)
+
+    def _update_best_delta(self, login: str, delta_ms: int) -> None:
+        run = self._state.setdefault("run", {})
+        contribs = run.setdefault("contributions", {})
+        row = contribs.get(login)
+        if row is None:
+            return
+        cur = row.get("best_delta_ms")
+        if cur is None or int(delta_ms) < int(cur):
+            row["best_delta_ms"] = int(delta_ms)
 
     def _goal_time_for_map(self, map_obj, goal: str) -> int:
         times = {
@@ -971,22 +1247,75 @@ class RandomChallengeMode(GameMode):
             logger.exception("rmc: run tick loop crashed")
 
     async def _force_all_spectator(self, force: bool) -> None:
+        """Apply a server-wide ForceSpectator flip.
+
+        Used at run start / finish / disable to release any leftover force
+        from a previous pause. We deliberately do NOT force-player anyone
+        during a running challenge: players must stay free to toggle
+        spectator on their own. Instead we set mode 0 (UserSelectable) so
+        whoever was previously forced is released.
+        """
         try:
             online = list(self.ctx.instance.player_manager.online)
         except Exception:
             online = []
-        # Dedicated expects explicit spectator mode values:
-        # 1 = force spectator, 2 = force player.
-        target_mode = 1 if force else 2
         for p in online:
             login = str(getattr(p, "login", "") or "")
             if not login:
                 continue
             try:
-                await self.ctx.instance.gbx("ForceSpectator", login, target_mode)
+                if force:
+                    # 3 = SpectatorReleasePlayerSlot → actually moves a driving
+                    # player into spec right now. Following up with mode 1
+                    # locks them as force-spectator so they can't drive again
+                    # until we release them on resume.
+                    await self.ctx.instance.gbx("ForceSpectator", login, 3)
+                    await self.ctx.instance.gbx("ForceSpectator", login, 1)
+                else:
+                    # 0 = UserSelectable: release any leftover force flag.
+                    await self.ctx.instance.gbx("ForceSpectator", login, 0)
             except Exception:
                 # Keep best-effort semantics; not all dedicated builds expose this equally.
                 logger.exception("rmc: ForceSpectator failed for %s", login)
+
+    async def _force_spectator_for(self, logins, *, spectate: bool) -> None:
+        """Force-spec (or release) a specific set of logins.
+
+        On release we briefly set mode 2 (force player) to physically move
+        the client back into the race, then mode 0 (user selectable) so the
+        player keeps the freedom to spec again afterwards.
+        """
+        for raw in (logins or []):
+            login = str(raw or "")
+            if not login:
+                continue
+            try:
+                if spectate:
+                    # 3 first physically moves a driver into spec, then 1
+                    # locks the force-spec flag.
+                    await self.ctx.instance.gbx("ForceSpectator", login, 3)
+                    await self.ctx.instance.gbx("ForceSpectator", login, 1)
+                else:
+                    await self.ctx.instance.gbx("ForceSpectator", login, 2)
+                    await self.ctx.instance.gbx("ForceSpectator", login, 0)
+            except Exception:
+                logger.exception("rmc: ForceSpectator failed for %s", login)
+
+    async def _release_force_spectator_for(self, logins) -> None:
+        """Release force-spec without moving the client back into the race.
+
+        Used on resume for players who were spectating at pause time — they
+        should stay spectating, just without the forced flag, so they can
+        self-toggle into driving if they want.
+        """
+        for raw in (logins or []):
+            login = str(raw or "")
+            if not login:
+                continue
+            try:
+                await self.ctx.instance.gbx("ForceSpectator", login, 0)
+            except Exception:
+                logger.exception("rmc: ForceSpectator release failed for %s", login)
 
     async def _set_mode_timelimit_zero(self) -> None:
         """Ensure server-side timelimit does not interfere with RMC run timer."""

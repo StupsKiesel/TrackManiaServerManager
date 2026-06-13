@@ -8,11 +8,11 @@
 
 {% call widgets.frame() %}
   {% if is_operator %}
-  {{ ui.push_button('rmc_action', top_action_text|default('Stop RMC'),
-                    icon='times',
+  {{ ui.push_button('rmc_action', top_action_text|default('Start RMC'),
+                    icon=top_action_icon|default('play'),
           x=2, y=-2.8 + y_off,
                     halign='left',
-                    variant='danger', size='sm',
+                    variant=top_action_variant|default('success'), size='sm',
                     width=widget_w - 4,
                     z=142) }}
 
@@ -50,6 +50,7 @@
     {% call ui.group_box('', x=2, y=-24.8 + y_off, w=widget_w - 4, h=0.35,
                        color='999', border='fff4', z=141) %}{% endcall %}
 
+  {% if show_pause_btn %}
   {{ ui.push_button('rmc_pause_play', pause_play_btn_text|default('Pause / Play'),
                     icon='pause',
           x=2, y=-29.8 + y_off,
@@ -57,6 +58,7 @@
                     variant='primary', size='sm',
                     width=widget_w - 4,
                     z=142) }}
+  {% endif %}
 
   {{ ui.push_button('rmc_free_skip', free_skip_btn_text|default('Free Skip (1 left)'),
                     icon='redo',

@@ -1,0 +1,4 @@
+{
+  "description": "Twitch chat → TrackMania map requests. Streamer's viewers run `!mr <tmx-id>` in Twitch chat to add a TMX map to the server; it is queued in the jukebox and auto-removed after it has been played once. Supports anonymous chat (no OAuth) by default; optional bot OAuth enables in-chat replies. Per-pool permission gating (everyone / subs / vips / mods), per-user and global cooldowns, max-pending cap, TMX length and difficulty filters, and an in-game on/off switch.",
+  "author": "tmsm"
+}

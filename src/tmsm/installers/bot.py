@@ -213,21 +213,41 @@ def update_bot(name: str, source: str, log: Log) -> Path:
 
         overwritten = 0
         added = 0
-        for src in stage.rglob("*"):
+        skipped: list[str] = []
+        log(f"Overlaying zip contents onto {root}")
+        for src in sorted(stage.rglob("*")):
             rel = src.relative_to(stage)
             dst = root / rel
             if src.is_dir():
                 dst.mkdir(parents=True, exist_ok=True)
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)
-            existed = dst.exists()
-            shutil.copy2(src, dst)
-            # copy2 preserves perms from the staged file (which _extract_zip
-            # already set from the zip's unix mode bits).
+            existed = dst.exists() or dst.is_symlink()
+            # Force-remove the destination first so copy2 can't silently
+            # follow a symlink, hit a read-only file, or trip over a
+            # type mismatch (e.g. file replacing a directory).
+            if existed:
+                try:
+                    if dst.is_dir() and not dst.is_symlink():
+                        shutil.rmtree(dst)
+                    else:
+                        dst.unlink()
+                except OSError as e:
+                    skipped.append(f"{rel} ({e})")
+                    log(f"  SKIP {rel}: could not remove existing entry ({e})")
+                    continue
+            try:
+                shutil.copy2(src, dst)
+            except OSError as e:
+                skipped.append(f"{rel} ({e})")
+                log(f"  SKIP {rel}: copy failed ({e})")
+                continue
             if existed:
                 overwritten += 1
+                log(f"  OVERWRITE {rel}")
             else:
                 added += 1
+                log(f"  ADD       {rel}")
 
         # Ensure run.sh is executable even if the zip didn't preserve perms.
         run_sh = root / "run.sh"
@@ -239,6 +259,10 @@ def update_bot(name: str, source: str, log: Log) -> Path:
 
     log(f"Update done: {overwritten} file(s) overwritten, {added} new file(s); "
         f"untouched files in {root} were kept.")
+    if skipped:
+        log(f"WARNING: {len(skipped)} file(s) could not be written:")
+        for entry in skipped:
+            log(f"  - {entry}")
     log("Note: dependencies will be (re)installed by run.sh on next start.")
 
     # Record where this update came from for the detail pane.

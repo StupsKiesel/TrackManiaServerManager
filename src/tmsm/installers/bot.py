@@ -33,7 +33,17 @@ def _download(url: str, dest: Path, log: Log) -> None:
 def _extract_zip(zip_path: Path, target: Path, log: Log) -> None:
     """Extract zip into target. If the zip has a single top-level dir, strip it."""
     with zipfile.ZipFile(zip_path) as zf:
-        names = [n for n in zf.namelist() if n and not n.startswith("__MACOSX/")]
+        # Normalise backslashes -> forward slashes. PowerShell's
+        # Compress-Archive and some other Windows tools produce zips
+        # whose member names use "\" as the separator, which is not spec-
+        # compliant. Without this, a member named "dir\file.py" would be
+        # written as a single file literally called "dir\file.py" on
+        # POSIX instead of as dir/file.py inside a "dir" subdirectory.
+        names = [
+            n.replace("\\", "/")
+            for n in zf.namelist()
+            if n and not n.startswith("__MACOSX/")
+        ]
         # Detect a common top-level directory to strip.
         top_parts = {n.split("/", 1)[0] for n in names}
         strip_prefix: str | None = None
@@ -49,14 +59,18 @@ def _extract_zip(zip_path: Path, target: Path, log: Log) -> None:
         log(f"Extracting {len(names)} entries"
             + (f" (stripping top-level '{strip_prefix.rstrip('/')}/')" if strip_prefix else ""))
         for member in zf.infolist():
-            name = member.filename
-            if not name or name.startswith("__MACOSX/"):
+            raw = member.filename
+            if not raw or raw.startswith("__MACOSX/"):
                 continue
+            name = raw.replace("\\", "/")
             rel = name[len(strip_prefix):] if strip_prefix and name.startswith(strip_prefix) else name
             if not rel:
                 continue
             out_path = target / rel
-            if member.is_dir():
+            # Treat zip entries as directories either via the explicit
+            # is_dir() flag (proper zips) or by a trailing slash (some
+            # tools emit only the latter).
+            if member.is_dir() or name.endswith("/"):
                 out_path.mkdir(parents=True, exist_ok=True)
                 continue
             out_path.parent.mkdir(parents=True, exist_ok=True)

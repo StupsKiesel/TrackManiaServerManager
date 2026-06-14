@@ -1,0 +1,4 @@
+{
+  "description": "Widget: GBX replacement for Race_DisplayMessage. Renders a single text line announcing the race winner (e.g. \"{Nick} has won the Race!\"). Replaces the title-pack default Race_DisplayMessage manialink.",
+  "author": "tmsm"
+}

@@ -322,6 +322,7 @@ class MainScreen(Screen):
             inst.kind is Kind.BOT and bool(getattr(getattr(inst, "meta", None), "db_name", ""))
         )
         is_server = inst.kind is Kind.SERVER
+        is_bot = inst.kind is Kind.BOT
         items = [
             MenuItem("start",   "▶  Start",        enabled=not running),
             MenuItem("stop",    "■  Stop",         enabled=running),
@@ -330,7 +331,11 @@ class MainScreen(Screen):
             MenuItem("logs",    "≡  View logs"),
             MenuItem("edit",    "✎  Edit config"),
             MenuItem("db_tool",       "⛁  Open DB tool",      enabled=is_db_target),
-            MenuItem("update",        "⤓  Update server",     enabled=is_server),
+            MenuItem(
+                "update",
+                "⤓  Update bot (from zip / URL)" if is_bot else "⤓  Update server",
+                enabled=(is_server or is_bot) and not running,
+            ),
             MenuItem("add_map",       "＋  Add map (from Exchange)", enabled=is_server),
             MenuItem("open_location", "📂  Open location (mc)"),
             MenuItem("delete",        "✗  Delete",            enabled=not running),
@@ -497,14 +502,35 @@ class MainScreen(Screen):
     def action_update(self) -> None:
         from .install_screen import InstallScreen
         from ..installers import server as server_installer
+        from ..installers import bot as bot_installer
+        from .bot_update_screen import BotUpdateScreen
         inst = self._selected()
-        if inst is None or inst.kind is not Kind.SERVER:
-            self.notify("Update is only available for game servers.", severity="warning")
+        if inst is None or inst.kind not in (Kind.SERVER, Kind.BOT):
+            self.notify("Update is only available for game servers and Discord bots.",
+                        severity="warning")
             return
         if inst.is_running:
             self.notify(f"Stop {inst.name} before updating.", severity="warning")
             return
         name = inst.name
+
+        if inst.kind is Kind.BOT:
+            def on_source(source: str | None, _n=name) -> None:
+                if not source:
+                    return
+                title = f"Updating bot '{_n}'"
+
+                def runner(log, _src=source):
+                    bot_installer.update_bot(_n, _src, log)
+
+                self.app.push_screen(
+                    InstallScreen(title=title, runner=runner),
+                    lambda _r: self.refresh_instances(),
+                )
+
+            self.app.push_screen(BotUpdateScreen(name), on_source)
+            return
+
         title = f"Updating server '{name}'"
 
         def runner(log):

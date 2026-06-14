@@ -184,6 +184,74 @@ def install_bot(name: str, source: str, provision_db: bool, log: Log) -> Path:
     return root
 
 
+def update_bot(name: str, source: str, log: Log) -> Path:
+    """Overlay the contents of a new zip on top of an existing bot install.
+
+    Files present in the zip overwrite the corresponding files on disk.
+    Files already in the install directory but NOT in the zip are preserved
+    (this is how user-managed config like ``.env``, the ``.venv`` virtualenv,
+    sqlite fallback files, etc. survive an update).
+    """
+    root = paths.BOTS_DIR / name
+    if not (root / "bot.toml").is_file():
+        raise FileNotFoundError(f"Bot '{name}' not found at {root}")
+
+    with tempfile.TemporaryDirectory(prefix="tmsm-bot-update-") as td:
+        td_path = Path(td)
+        if _is_url(source):
+            zip_path = td_path / "bot.zip"
+            _download(source, zip_path, log)
+        else:
+            zip_path = Path(source).expanduser()
+            if not zip_path.is_file():
+                raise FileNotFoundError(f"Zip not found: {zip_path}")
+
+        stage = td_path / "stage"
+        stage.mkdir()
+        _extract_zip(zip_path, stage, log)
+        _validate_layout(stage)
+
+        overwritten = 0
+        added = 0
+        for src in stage.rglob("*"):
+            rel = src.relative_to(stage)
+            dst = root / rel
+            if src.is_dir():
+                dst.mkdir(parents=True, exist_ok=True)
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            existed = dst.exists()
+            shutil.copy2(src, dst)
+            # copy2 preserves perms from the staged file (which _extract_zip
+            # already set from the zip's unix mode bits).
+            if existed:
+                overwritten += 1
+            else:
+                added += 1
+
+        # Ensure run.sh is executable even if the zip didn't preserve perms.
+        run_sh = root / "run.sh"
+        if run_sh.is_file():
+            try:
+                run_sh.chmod(run_sh.stat().st_mode | 0o111)
+            except OSError:
+                pass
+
+    log(f"Update done: {overwritten} file(s) overwritten, {added} new file(s); "
+        f"untouched files in {root} were kept.")
+    log("Note: dependencies will be (re)installed by run.sh on next start.")
+
+    # Record where this update came from for the detail pane.
+    try:
+        meta = BotMeta.load(root)
+        meta.source = source
+        meta.save(root)
+    except Exception as e:
+        log(f"WARNING: could not update bot.toml source field: {e}")
+
+    return root
+
+
 def delete_bot(name: str, log: Log) -> None:
     root = paths.BOTS_DIR / name
     if not root.exists():

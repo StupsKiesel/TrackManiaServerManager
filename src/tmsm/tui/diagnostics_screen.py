@@ -55,6 +55,7 @@ class CheckResult:
     fix_confirm_title: str = "Apply fix?"
     fix_confirm_body: str = ""                  # full text shown in confirm modal
     fix: Callable[[], tuple[bool, str]] | None = None   # returns (success, message)
+    needs_sudo: bool = False                    # prompt for sudo password before running fix
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -703,6 +704,54 @@ def _read_server_dedicated_cfg(srv: GameServerInstance) -> dict[str, str] | None
     return out
 
 
+def check_name_collisions(instances: list[Instance]) -> CheckResult:
+    """Instance names must be unique across kinds.
+
+    The supervisor identifies a process by its instance name alone — it
+    derives the screen session as ``tmsm-<name>``, picks the log file
+    path from it, and stops/starts by it. If a game server and a
+    PyPlanet pool (or any two instances) share a name they cannot run
+    side by side: starting the second one fails with "already running",
+    stopping one kills the other, and the log viewer mixes their output.
+    """
+    by_name: dict[str, list[Instance]] = {}
+    for inst in instances:
+        by_name.setdefault(inst.name, []).append(inst)
+    collisions = {n: lst for n, lst in by_name.items() if len(lst) > 1}
+
+    if not collisions:
+        return CheckResult(
+            "name_collisions", "Instance name uniqueness", STATUS_OK,
+            "all instance names are unique",
+        )
+
+    lines: list[str] = []
+    for name, lst in sorted(collisions.items()):
+        kinds = ", ".join(sorted(i.kind.value for i in lst))
+        lines.append(f"  '{name}' is used by: {kinds}")
+        for i in lst:
+            lines.append(f"      {i.kind.value:<7}  {i.root}")
+    body = (
+        "Two or more instances share the same name. The supervisor "
+        "(GNU screen) keys every process by its instance name "
+        "(`tmsm-<name>`), so they cannot run at the same time:\n"
+        "  - starting the second one fails with 'already running'\n"
+        "  - stopping one kills the other\n"
+        "  - logs from both end up in the same capture file\n\n"
+        "Collisions:\n" + "\n".join(lines) + "\n\n"
+        "Fix: rename one of the instances. Servers can be renamed by "
+        "renaming their folder under ~/.tmsm/servers/ and updating the "
+        "`name` field in `instance.toml`; pools likewise under "
+        "~/.tmsm/pyplanet/pools/ with `pool.toml`; bots under "
+        "~/.tmsm/bots/ with `bot.toml`."
+    )
+    summary = ", ".join(f"'{n}' ({len(lst)})" for n, lst in sorted(collisions.items()))
+    return CheckResult(
+        "name_collisions", "Instance name uniqueness", STATUS_FAIL,
+        f"duplicate name(s): {summary}", detail=body,
+    )
+
+
 def check_pool_superadmin(instances: list[Instance]) -> list[CheckResult]:
     """Pool SuperAdmin password must match the linked server's SuperAdmin
     password — otherwise PyPlanet authenticates against the wrong server or
@@ -899,6 +948,225 @@ def check_time_sync() -> CheckResult:
                 "Fix:\n"
                 "  sudo timedatectl set-ntp true\n"
                 "  sudo systemctl enable --now systemd-timesyncd"),
+        fix_label="Enable NTP and resync clock",
+        fix_confirm_title="Resync system clock via NTP?",
+        fix_confirm_body=(
+            "This will (using sudo):\n"
+            "  1. Enable NTP via timedatectl set-ntp true\n"
+            "  2. Enable + restart systemd-timesyncd (or chronyd, if installed)\n"
+            "  3. On WSL, also run hwclock -s to pull the time from Windows\n"
+            "     as a one-shot resync (WSL clocks drift after host sleep).\n\n"
+            "You will be asked for your sudo password."
+        ),
+        fix=_fix_time_sync,
+        needs_sudo=True,
+    )
+
+
+def _systemd_running() -> bool:
+    """True if PID 1 is systemd. WSL without `systemd=true` in wsl.conf is not."""
+    try:
+        r = subprocess.run(
+            ["systemctl", "is-system-running"],
+            capture_output=True, text=True, timeout=2, check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    # Returns "running"/"degraded"/"starting"/... on systemd; on non-systemd it
+    # prints "System has not been booted with systemd as init system (PID 1)."
+    # to stderr and exits non-zero. Be conservative: only trust a known good
+    # state string on stdout.
+    return r.stdout.strip() in {"running", "degraded", "starting", "maintenance"}
+
+
+def _which(name: str) -> str | None:
+    """Locate a command in PATH or common sbin/bin locations."""
+    import shutil
+    p = shutil.which(name)
+    if p:
+        return p
+    for d in ("/usr/sbin", "/sbin", "/usr/bin", "/bin"):
+        cand = Path(d) / name
+        if cand.exists():
+            return str(cand)
+    return None
+
+
+def _windows_time_from_wsl() -> str | None:
+    """Fetch current time from the Windows host as ISO 'YYYY-MM-DD HH:MM:SS'
+    (UTC). Used on WSL when hwclock is unavailable."""
+    cmd_exe = "/mnt/c/Windows/System32/cmd.exe"
+    if not Path(cmd_exe).exists():
+        return None
+    try:
+        # PowerShell is more reliable than cmd's locale-dependent %DATE%/%TIME%.
+        ps = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+        if Path(ps).exists():
+            r = subprocess.run(
+                [ps, "-NoProfile", "-Command",
+                 "(Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')"],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _http_date_utc() -> str | None:
+    """Fetch a trustworthy current time from an HTTPS Date: header.
+    Returns 'YYYY-MM-DD HH:MM:SS' UTC, or None."""
+    import urllib.request
+    from email.utils import parsedate_to_datetime
+    for url in ("https://www.cloudflare.com/", "https://www.google.com/"):
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                d = resp.headers.get("Date")
+                if d:
+                    dt = parsedate_to_datetime(d)
+                    return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            continue
+    return None
+
+
+def _fix_time_sync() -> tuple[bool, str]:
+    """Best-effort one-click NTP resync. Relies on cached sudo credentials
+    that the diagnostics fix runner primes via SudoModal beforehand."""
+    from .sudo_helper import sudo_run
+
+    steps: list[str] = []
+    any_failed = False
+
+    def _try(label: str, *cmd: str, optional: bool = False) -> None:
+        nonlocal any_failed
+        proc = sudo_run(*cmd)
+        if proc.returncode == 0:
+            steps.append(f"OK   {label}")
+            return
+        if optional:
+            steps.append(f"skip {label} ({(proc.stderr or proc.stdout or '').strip()[:80]})")
+            return
+        steps.append(f"FAIL {label}: {(proc.stderr or proc.stdout or '').strip()[:120]}")
+        any_failed = True
+
+    has_systemd = _systemd_running()
+    is_wsl = wsl_host.is_wsl()
+    hwclock = _which("hwclock")
+    ntpdate = _which("ntpdate")
+    chronyd = _which("chronyd")
+
+    if has_systemd:
+        _try("timedatectl set-ntp true", "timedatectl", "set-ntp", "true")
+
+        # Pick whichever NTP daemon is installed. Try timesyncd first, then chrony.
+        if Path("/lib/systemd/systemd-timesyncd").exists() or Path("/usr/lib/systemd/systemd-timesyncd").exists():
+            _try("enable systemd-timesyncd", "systemctl", "enable", "--now", "systemd-timesyncd", optional=True)
+            _try("restart systemd-timesyncd", "systemctl", "restart", "systemd-timesyncd", optional=True)
+        elif chronyd:
+            _try("enable chronyd", "systemctl", "enable", "--now", "chrony", optional=True)
+            _try("restart chronyd", "systemctl", "restart", "chrony", optional=True)
+            _try("chronyc makestep", "chronyc", "makestep", optional=True)
+        else:
+            steps.append("warn no NTP daemon found (install systemd-timesyncd or chrony)")
+    else:
+        steps.append("skip systemd not running (PID 1 is not systemd) — using non-systemd path")
+
+    # One-shot resync. Walk a ladder of tools, stop at first success.
+    resynced = False
+
+    if is_wsl and hwclock:
+        proc = sudo_run(hwclock, "-s")
+        if proc.returncode == 0:
+            steps.append("OK   hwclock -s (WSL host time)")
+            resynced = True
+        else:
+            steps.append(f"skip hwclock -s ({(proc.stderr or proc.stdout or '').strip()[:80]})")
+
+    if not resynced and is_wsl:
+        # No hwclock available — pull the time directly from Windows.
+        winstr = _windows_time_from_wsl()
+        if winstr:
+            proc = sudo_run("date", "-u", "-s", winstr)
+            if proc.returncode == 0:
+                steps.append(f"OK   date -u -s '{winstr}' (from Windows host)")
+                resynced = True
+            else:
+                steps.append(f"FAIL date -u -s: {(proc.stderr or proc.stdout or '').strip()[:120]}")
+                any_failed = True
+        else:
+            steps.append("skip could not read time from Windows host")
+
+    if not resynced and ntpdate:
+        _try(f"ntpdate -u pool.ntp.org", ntpdate, "-u", "pool.ntp.org")
+        # _try sets any_failed on failure; success means we're done.
+        if not any_failed:
+            resynced = True
+
+    if not resynced and chronyd and not has_systemd:
+        proc = sudo_run(chronyd, "-q")
+        if proc.returncode == 0:
+            steps.append("OK   chronyd -q (one-shot sync)")
+            resynced = True
+        else:
+            steps.append(f"FAIL chronyd -q: {(proc.stderr or proc.stdout or '').strip()[:120]}")
+            any_failed = True
+
+    if not resynced:
+        # Last-resort: HTTPS Date header. Accurate to ~1s, plenty for Dedimania.
+        httpstr = _http_date_utc()
+        if httpstr:
+            proc = sudo_run("date", "-u", "-s", httpstr)
+            if proc.returncode == 0:
+                steps.append(f"OK   date -u -s '{httpstr}' (from HTTPS Date header)")
+                resynced = True
+            else:
+                steps.append(f"FAIL date -u -s: {(proc.stderr or proc.stdout or '').strip()[:120]}")
+                any_failed = True
+        elif not has_systemd:
+            steps.append("warn no resync tool available (install ntpdate, chrony, or util-linux)")
+            any_failed = True
+
+    # Verify result. On systemd, ask timedatectl; otherwise sanity-check the year.
+    success_msg = ""
+    verified = False
+    if has_systemd:
+        for _ in range(6):
+            try:
+                r = subprocess.run(
+                    ["timedatectl", "show", "--property=NTPSynchronized"],
+                    capture_output=True, text=True, timeout=2, check=False,
+                )
+                if "yes" in r.stdout.lower():
+                    verified = True
+                    success_msg = "Clock is now NTP-synchronized."
+                    break
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                break
+            time.sleep(0.5)
+        if not verified and resynced:
+            # One-shot resync succeeded even if the daemon hasn't reported yet.
+            verified = True
+            success_msg = "Clock resynced (NTP daemon may still be settling)."
+    else:
+        if resynced and datetime.now().year >= 2024:
+            verified = True
+            success_msg = (
+                "Clock resynced. (No systemd → cannot verify continuous NTP sync.)"
+            )
+
+    log = "\n".join(steps)
+    if verified:
+        return True, success_msg + "\n\n" + log
+    if any_failed:
+        return False, "Time resync ran but reported errors:\n\n" + log
+    return False, (
+        "Time resync issued, but could not confirm sync.\n"
+        "If on WSL, ensure Windows itself is time-synced (Settings → Time & language).\n"
+        "If on bare Linux, install systemd-timesyncd, chrony, or ntpdate and re-run.\n\n"
+        + log
     )
 
 
@@ -1491,6 +1759,8 @@ def plan_checks(cfg: Config) -> list[tuple[str, Callable[[], list[CheckResult]]]
          lambda: [check_time_sync()]),
         ("Probing MariaDB",
          lambda: [check_mariadb(cfg)]),
+        ("Checking for duplicate instance names",
+         lambda: [check_name_collisions(instances)]),
         ("Verifying server port ownership",
          lambda: check_port_alignment(cfg, instances, managed)),
         ("Verifying pool ↔ server port alignment",
@@ -1859,31 +2129,56 @@ class DiagnosticsScreen(Screen):
         def after(confirmed: bool | None) -> None:
             if not confirmed or r.fix is None:
                 return
-            # Indeterminate progress modal while the fix runs — many fixes
-            # spawn UAC / netsh and may take a few seconds.
-            modal = _ProgressModal(f"Applying: {r.fix_label}", total=None)
-            self.app.push_screen(modal)
-
-            def worker() -> None:
-                try:
-                    ok, msg = r.fix()  # type: ignore[misc]
-                except Exception as e:
-                    self.app.call_from_thread(modal.finish)
-                    self.app.call_from_thread(
-                        self.notify, f"Fix failed: {e}",
-                        severity="error", timeout=8,
-                    )
-                    return
-                self.app.call_from_thread(modal.finish)
-                self.app.call_from_thread(
-                    self.notify, msg,
-                    severity="information" if ok else "warning", timeout=8,
-                )
-                self.app.call_from_thread(self.action_rerun)
-
-            self.run_worker(worker, thread=True, exclusive=False, name="diagnostics-fix")
+            self._run_fix_with_sudo_if_needed(r)
 
         self.app.push_screen(
             _ConfirmFixScreen(r.fix_confirm_title, r.fix_confirm_body, r.fix_label),
             after,
         )
+
+    def _run_fix_with_sudo_if_needed(self, r: CheckResult) -> None:
+        from .sudo_helper import SudoModal, sudo_cached, sudo_run
+
+        if r.needs_sudo and not sudo_cached():
+            def got_password(pw: str | None) -> None:
+                if not pw:
+                    return
+                # Prime the sudo cache so the worker thread can run sudo -n.
+                proc = sudo_run("-v", password=pw)
+                if proc.returncode != 0:
+                    self.notify(
+                        f"sudo authentication failed: {(proc.stderr or '').strip()[:120]}",
+                        severity="error", timeout=8,
+                    )
+                    return
+                self._launch_fix_worker(r)
+
+            self.app.push_screen(SudoModal(), got_password)
+            return
+
+        self._launch_fix_worker(r)
+
+    def _launch_fix_worker(self, r: CheckResult) -> None:
+        # Indeterminate progress modal while the fix runs — many fixes
+        # spawn UAC / netsh / sudo and may take a few seconds.
+        modal = _ProgressModal(f"Applying: {r.fix_label}", total=None)
+        self.app.push_screen(modal)
+
+        def worker() -> None:
+            try:
+                ok, msg = r.fix()  # type: ignore[misc]
+            except Exception as e:
+                self.app.call_from_thread(modal.finish)
+                self.app.call_from_thread(
+                    self.notify, f"Fix failed: {e}",
+                    severity="error", timeout=8,
+                )
+                return
+            self.app.call_from_thread(modal.finish)
+            self.app.call_from_thread(
+                self.notify, msg,
+                severity="information" if ok else "warning", timeout=8,
+            )
+            self.app.call_from_thread(self.action_rerun)
+
+        self.run_worker(worker, thread=True, exclusive=False, name="diagnostics-fix")

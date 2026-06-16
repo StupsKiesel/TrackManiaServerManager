@@ -1058,26 +1058,57 @@ def _fix_time_sync() -> tuple[bool, str]:
     ntpdate = _which("ntpdate")
     chronyd = _which("chronyd")
 
+    daemon_enabled = False  # True once systemd-timesyncd or chrony is up
+
+    def _try_capture(label: str, *cmd: str) -> bool:
+        """Run a sudo command, log it, return True on success."""
+        proc = sudo_run(*cmd)
+        if proc.returncode == 0:
+            steps.append(f"OK   {label}")
+            return True
+        steps.append(f"skip {label} ({(proc.stderr or proc.stdout or '').strip()[:80]})")
+        return False
+
     if has_systemd:
         _try("timedatectl set-ntp true", "timedatectl", "set-ntp", "true")
 
         # Pick whichever NTP daemon is installed. Try timesyncd first, then chrony.
         if Path("/lib/systemd/systemd-timesyncd").exists() or Path("/usr/lib/systemd/systemd-timesyncd").exists():
-            _try("enable systemd-timesyncd", "systemctl", "enable", "--now", "systemd-timesyncd", optional=True)
-            _try("restart systemd-timesyncd", "systemctl", "restart", "systemd-timesyncd", optional=True)
+            a = _try_capture("enable systemd-timesyncd", "systemctl", "enable", "--now", "systemd-timesyncd")
+            b = _try_capture("restart systemd-timesyncd", "systemctl", "restart", "systemd-timesyncd")
+            daemon_enabled = a or b
         elif chronyd:
-            _try("enable chronyd", "systemctl", "enable", "--now", "chrony", optional=True)
-            _try("restart chronyd", "systemctl", "restart", "chrony", optional=True)
-            _try("chronyc makestep", "chronyc", "makestep", optional=True)
+            a = _try_capture("enable chronyd", "systemctl", "enable", "--now", "chrony")
+            b = _try_capture("restart chronyd", "systemctl", "restart", "chrony")
+            _try_capture("chronyc makestep", "chronyc", "makestep")
+            daemon_enabled = a or b
         else:
             steps.append("warn no NTP daemon found (install systemd-timesyncd or chrony)")
     else:
         steps.append("skip systemd not running (PID 1 is not systemd) — using non-systemd path")
 
     # One-shot resync. Walk a ladder of tools, stop at first success.
+    # If an NTP daemon was just (re)started, give it a chance to step the clock
+    # on its own before falling back to a one-shot tool.
     resynced = False
 
-    if is_wsl and hwclock:
+    if daemon_enabled:
+        # Wait briefly for the daemon to step the clock.
+        for _ in range(10):
+            try:
+                r = subprocess.run(
+                    ["timedatectl", "show", "--property=NTPSynchronized"],
+                    capture_output=True, text=True, timeout=2, check=False,
+                )
+                if "yes" in r.stdout.lower():
+                    resynced = True
+                    steps.append("OK   NTP daemon synchronized clock")
+                    break
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                break
+            time.sleep(0.5)
+
+    if not resynced and is_wsl and hwclock:
         proc = sudo_run(hwclock, "-s")
         if proc.returncode == 0:
             steps.append("OK   hwclock -s (WSL host time)")
@@ -1091,7 +1122,7 @@ def _fix_time_sync() -> tuple[bool, str]:
         if winstr:
             proc = sudo_run("date", "-u", "-s", winstr)
             if proc.returncode == 0:
-                steps.append(f"OK   date -u -s '{winstr}' (from Windows host)")
+                steps.append(f"OK   date -u -s '{winstr} UTC' (from Windows host)")
                 resynced = True
             else:
                 steps.append(f"FAIL date -u -s: {(proc.stderr or proc.stdout or '').strip()[:120]}")
@@ -1101,7 +1132,6 @@ def _fix_time_sync() -> tuple[bool, str]:
 
     if not resynced and ntpdate:
         _try(f"ntpdate -u pool.ntp.org", ntpdate, "-u", "pool.ntp.org")
-        # _try sets any_failed on failure; success means we're done.
         if not any_failed:
             resynced = True
 
@@ -1120,7 +1150,7 @@ def _fix_time_sync() -> tuple[bool, str]:
         if httpstr:
             proc = sudo_run("date", "-u", "-s", httpstr)
             if proc.returncode == 0:
-                steps.append(f"OK   date -u -s '{httpstr}' (from HTTPS Date header)")
+                steps.append(f"OK   date -u -s '{httpstr} UTC' (from HTTPS Date header)")
                 resynced = True
             else:
                 steps.append(f"FAIL date -u -s: {(proc.stderr or proc.stdout or '').strip()[:120]}")
@@ -1147,7 +1177,6 @@ def _fix_time_sync() -> tuple[bool, str]:
                 break
             time.sleep(0.5)
         if not verified and resynced:
-            # One-shot resync succeeded even if the daemon hasn't reported yet.
             verified = True
             success_msg = "Clock resynced (NTP daemon may still be settling)."
     else:
@@ -1157,16 +1186,25 @@ def _fix_time_sync() -> tuple[bool, str]:
                 "Clock resynced. (No systemd → cannot verify continuous NTP sync.)"
             )
 
+    # Append the current clock in both UTC and local time so the user can
+    # confirm at a glance (avoids "the log shows 19:25 but it's 21:25" confusion).
+    now = datetime.now()
+    utc_now = datetime.utcnow()
+    clock_line = (
+        f"\n\nCurrent time:  {now:%Y-%m-%d %H:%M:%S} local  /  "
+        f"{utc_now:%Y-%m-%d %H:%M:%S} UTC"
+    )
+
     log = "\n".join(steps)
     if verified:
-        return True, success_msg + "\n\n" + log
+        return True, success_msg + clock_line + "\n\n" + log
     if any_failed:
-        return False, "Time resync ran but reported errors:\n\n" + log
+        return False, "Time resync ran but reported errors:" + clock_line + "\n\n" + log
     return False, (
         "Time resync issued, but could not confirm sync.\n"
         "If on WSL, ensure Windows itself is time-synced (Settings → Time & language).\n"
-        "If on bare Linux, install systemd-timesyncd, chrony, or ntpdate and re-run.\n\n"
-        + log
+        "If on bare Linux, install systemd-timesyncd, chrony, or ntpdate and re-run."
+        + clock_line + "\n\n" + log
     )
 
 

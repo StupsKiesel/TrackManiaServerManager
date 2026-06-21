@@ -53,7 +53,6 @@ class App_Jukebox(AppConfig):
         # UI / state.
         self.view: JukeboxView | None = None
         self._state: dict[str, dict[str, Any]] = {}
-        self._visible_logins: set[str] = set()
 
         # Asset HTTP server (serves the CD icon for the hub tile).
         # Host defaults to 127.0.0.1; override with TMSM_ASSET_HOST for
@@ -193,8 +192,8 @@ class App_Jukebox(AppConfig):
         self._state.setdefault(player.login, self._default_state())
         try:
             await self.view.display(player_logins=[player.login])
-            self._visible_logins.add(player.login)
-            self.view._visible = bool(self._visible_logins)
+            self.view._visible_logins.add(player.login)
+            self.view._visible = bool(self.view._visible_logins)
         except Exception:
             logger.exception("jukebox: open failed")
 
@@ -222,7 +221,7 @@ class App_Jukebox(AppConfig):
         if self.view is None:
             return
         try:
-            if self._visible_logins and getattr(self.view, "_visible", False):
+            if self.view._visible_logins and getattr(self.view, "_visible", False):
                 await self.view.refresh()
         except Exception:
             logger.exception("jukebox: refresh failed")
@@ -331,9 +330,9 @@ class App_Jukebox(AppConfig):
 
         if action == "_close" or action.startswith("_crumb__"):
             login = player.login
-            self._visible_logins.discard(login)
             if self.view is not None:
-                self.view._visible = bool(self._visible_logins)
+                self.view._visible_logins.discard(login)
+                self.view._visible = bool(self.view._visible_logins)
                 try:
                     from pyplanet.views.template import TemplateView
                     await TemplateView.hide(self.view, player_logins=[login])
@@ -437,8 +436,8 @@ class App_Jukebox(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.view, player_logins=[login])
-                self._visible_logins.discard(login)
-                self.view._visible = bool(self._visible_logins)
+                self.view._visible_logins.discard(login)
+                self.view._visible = bool(self.view._visible_logins)
             except Exception:
                 logger.exception("jukebox: hide view failed")
         try:

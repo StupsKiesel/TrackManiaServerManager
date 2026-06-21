@@ -191,28 +191,52 @@ class BaseView(TemplateView):
         # re-render for whoever currently has it open.
         if not self._visible:
             return
-        # If we know exactly who has it open (per-player view), only refresh
-        # those logins. Otherwise fall back to full show() (e.g. global views
-        # that haven't recorded per-login state yet).
-        if self._visible_logins:
-            try:
-                await self.display(player_logins=list(self._visible_logins))
-            except Exception:
-                logger.exception("BaseView.refresh: targeted display failed")
+        if not self._visible_logins:
+            # Inconsistent state: `_visible=True` but no per-login set
+            # populated. This happens when a caller bypasses `show()` and
+            # uses `display(player_logins=[...])` + `_visible = True`
+            # directly without also updating `_visible_logins`. Falling
+            # back to `show()` here would broadcast the window to every
+            # online player (audience defaults to everyone) — silently
+            # leaking the UI. Refuse to render instead and warn so the
+            # caller fixes the open path.
+            logger.warning(
+                "BaseView(%s).refresh: _visible=True but _visible_logins "
+                "is empty; skipping to avoid broadcasting. Caller likely "
+                "opened the view via display() without updating "
+                "_visible_logins.", self.__class__.__name__,
+            )
             return
-        await self.show()
+        try:
+            await self.display(player_logins=list(self._visible_logins))
+        except Exception:
+            logger.exception("BaseView.refresh: targeted display failed")
 
     async def _on_player_connect(self, player, **kwargs) -> None:
         # Only re-show to joining players if the view is currently meant
         # to be visible (an explicit show() happened and no hide() since).
         if not self._visible:
             return
+        login = getattr(player, "login", None)
+        if not login:
+            return
         if self.audience.is_global:
+            # Global views are pushed once via display() with no
+            # `player_logins`; that broadcast doesn't reach players who
+            # weren't connected at push time. Re-display per-login on
+            # connect so late joiners actually see the panel and so
+            # subsequent refresh() targets them too.
+            try:
+                await self.display(player_logins=[login])
+                self._visible_logins.add(login)
+            except Exception:
+                logger.exception("BaseView: global re-display on connect failed")
             return
         if not self.audience.matches(player):
             return
         try:
-            await self.display(player_logins=[player.login])
+            await self.display(player_logins=[login])
+            self._visible_logins.add(login)
         except Exception:
             logger.exception("BaseView: per-player display failed")
 

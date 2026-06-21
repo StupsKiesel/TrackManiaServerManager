@@ -171,9 +171,15 @@
                       size='sm', color='888') }}
           {% for field in active_config %}
             {% set fy = cfg_y - 13 - loop.index0 * 7 %}
-            {{ ui.label(field.label,
+            {{ ui.label(field.label ~ (' $888(locked)' if field.locked else ''),
                         x=cfg_col1_x, y=fy, size='sm', color='ccc') }}
-            {% if field.type == 'bool' %}
+            {% if field.locked %}
+              {# Locked while a run is active: render the live value as a
+                 read-only label so the operator sees what's in effect but
+                 cannot edit it. Server-side also rejects any submission. #}
+              {{ ui.label(field.value|string,
+                          x=cfg_col2_x, y=fy, size='sm', color='888') }}
+            {% elif field.type == 'bool' %}
               {{ ui.check_box('cfg__' ~ field.key, label='',
                               checked=field.value,
                               x=cfg_col2_x + 4, y=fy, size='sm') }}

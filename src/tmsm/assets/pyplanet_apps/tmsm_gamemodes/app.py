@@ -308,6 +308,23 @@ class TmsmGamemodesApp(AppConfig):
         af = self._policy().get("allowed_fields", {})
         return set(str(k) for k in (af.get(mode_key, []) or []))
 
+    def _locked_fields_for(self, mode_key: str) -> set[str]:
+        """Return the set of field keys currently locked for ``mode_key``.
+
+        Live (active) modes own the lock predicate via ``locked_fields()``.
+        Inactive modes never have locked fields — they only describe what
+        they *would* lock once running, and creating a throwaway instance
+        here just to ask that question would also tear down any state
+        the running instance is keeping.
+        """
+        if self._active is None or getattr(self._active, "key", None) != mode_key:
+            return set()
+        try:
+            return set(self._active.locked_fields() or ())
+        except Exception:
+            logger.exception("gamemodes: locked_fields() raised for %s", mode_key)
+            return set()
+
     def _config_for(self, mode_key: str, defaults: dict[str, Any]) -> dict[str, Any]:
         persisted = dict(self._state.get("configs", {}).get(mode_key) or {})
         return {**defaults, **persisted}
@@ -962,11 +979,19 @@ class TmsmGamemodesApp(AppConfig):
             stored = self._config_for(selected, defaults)
             draft = self._operator_drafts.get(login, {}).get(selected, {})
             op_allowed_fields = self._operator_allowed_fields(selected)
+            locked_fields = self._locked_fields_for(selected)
             all_rows: list[dict[str, Any]] = []
             for f in tmp_instance.config_schema():
                 if not admin_view and str(f.get("key")) not in op_allowed_fields:
                     continue
-                val = draft.get(f["key"], stored.get(f["key"], f.get("default")))
+                fkey = str(f.get("key") or "")
+                is_locked = fkey in locked_fields
+                # For locked fields, ignore any stale draft so the row
+                # reflects the live (frozen) value the operator can't change.
+                if is_locked:
+                    val = stored.get(f["key"], f.get("default"))
+                else:
+                    val = draft.get(f["key"], stored.get(f["key"], f.get("default")))
                 all_rows.append({
                     "key":     f["key"],
                     "label":   f["label"],
@@ -976,6 +1001,7 @@ class TmsmGamemodesApp(AppConfig):
                     "min":     f.get("min"),
                     "max":     f.get("max"),
                     "choices": f.get("choices") or [],
+                    "locked":  is_locked,
                     "combo_open": (
                         str(
                             self._operator_cfg_combo_open
@@ -1581,8 +1607,13 @@ class TmsmGamemodesApp(AppConfig):
         # Persist into state.configs[<mode>].
         cfg = self._config_for(selected, REGISTRY[selected](GameModeContext(self, selected)).default_config())
         allowed = self._operator_allowed_fields(selected)
+        locked = self._locked_fields_for(selected)
+        dropped_locked: list[str] = []
         for k, v in draft.items():
             if not is_admin and k not in allowed:
+                continue
+            if k in locked:
+                dropped_locked.append(k)
                 continue
             cfg[k] = v
         self._state.setdefault("configs", {})[selected] = cfg
@@ -1596,6 +1627,12 @@ class TmsmGamemodesApp(AppConfig):
                 logger.exception("gamemodes: live config refresh failed for %s", selected)
         # Clear the local draft now that it lives in state.
         self._operator_drafts.get(player.login, {}).pop(selected, None)
+        if dropped_locked:
+            await self._notify(
+                "Some fields are locked while a run is active and were "
+                f"not saved: {', '.join(sorted(dropped_locked))}.",
+                "warning", login=player.login,
+            )
         await self._notify(f"{REGISTRY[selected].name} config saved.",
                            "success", login=player.login)
         await self._sync_required_widget_visibility()
@@ -1605,6 +1642,12 @@ class TmsmGamemodesApp(AppConfig):
                              field_key: str, raw_value: Any) -> None:
         """Stash a draft change for the operator's session."""
         if mode_key not in REGISTRY:
+            return
+        if field_key in self._locked_fields_for(mode_key):
+            await self._notify(
+                f"'{field_key}' is locked while a run is active.",
+                "warning", login=login,
+            )
             return
         instance = REGISTRY[mode_key](GameModeContext(self, mode_key))
         schema = instance.config_schema()
@@ -2136,12 +2179,18 @@ class TmsmGamemodesApp(AppConfig):
             return
         is_admin = self._is_admin(player)
         allowed = self._operator_allowed_fields(selected)
+        locked = self._locked_fields_for(selected)
         for raw_key, raw_val in values.items():
             prefix = next((p for p in prefixes if raw_key.startswith(p)), None)
             if prefix is None:
                 continue
             field_key = raw_key[len(prefix):]
             if not is_admin and field_key not in allowed:
+                continue
+            if field_key in locked:
+                # Silently drop submissions to locked fields — the live
+                # value wins and `_on_cfg_change` already notifies for
+                # interactive changes.
                 continue
             # Push through the draft path synchronously; refresh happens at
             # the end of the outer action so we don't double-fire.

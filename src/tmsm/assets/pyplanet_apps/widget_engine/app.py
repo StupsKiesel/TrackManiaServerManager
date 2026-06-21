@@ -97,8 +97,6 @@ class WidgetsApp(AppConfig):
         self.edit_overlay_view: WidgetEditOverlayView | None = None
         # GBX manialink id replacements: manialink_id -> widget key.
         self._replacements: dict[str, str] = {}
-        # Per-player opt-out for replacement widgets: key -> {login,...}.
-        self._replace_disabled: dict[str, set[str]] = {}
         # Server-wide override of `hide_ui_modules` per replacement widget.
         # widget_key -> tuple(ids). Missing key = inherit addon manifest;
         # empty tuple = explicit "hide nothing".
@@ -174,17 +172,6 @@ class WidgetsApp(AppConfig):
                 self.engine.strip_thickness = float(thick)
         except Exception:
             logger.exception("widget_engine: settings hydrate failed")
-        # Hydrate per-player replacement opt-out lists.
-        try:
-            for skey, sval in (self.storage.settings_all() or {}).items():
-                if not skey.startswith("replace_disabled:"):
-                    continue
-                widget_key = skey.split(":", 1)[1]
-                logins = {l for l in (sval or "").split(",") if l}
-                if logins:
-                    self._replace_disabled[widget_key] = logins
-        except Exception:
-            logger.exception("widget_engine: replacement opt-outs hydrate failed")
         # Hydrate per-replacement UI module overrides (JSON list).
         try:
             for skey, sval in (self.storage.settings_all() or {}).items():
@@ -813,10 +800,26 @@ class WidgetsApp(AppConfig):
         except Exception:
             return []
 
-    def is_replacement_enabled(self, login: str, key: str) -> bool:
-        if not login or key not in self._entries:
+    def is_replacement_active(self, key: str) -> bool:
+        """Global replacement state. A replacement is active when its row
+        exists, declares a `gbx_replace` target, and is not disabled
+        (row-level disabled flag or out-of-phase via `visible_phases`).
+        Replacements are server-wide so this predicate has no `login`
+        dimension; per-player intent (e.g. TAB hold) belongs in the
+        client-side ManiaScript inside the replacement XML."""
+        entry = self._entries.get(key)
+        if entry is None or not entry.gbx_replace:
             return False
-        return login not in self._replace_disabled.get(key, set())
+        try:
+            resolved = self.engine.resolve(key, "")
+        except Exception:
+            logger.exception(
+                "widget_engine: resolve '%s' for active check failed", key,
+            )
+            return False
+        if resolved is None or bool(resolved.disabled):
+            return False
+        return True
 
     def has_ui_modules_override(self, key: str) -> bool:
         return key in self._ui_modules_overrides
@@ -868,45 +871,14 @@ class WidgetsApp(AppConfig):
         new_set = set(new_effective)
         to_show = tuple(prev_set - new_set)
         to_hide = tuple(new_set - prev_set)
-        any_enabled = any(
-            self.is_replacement_enabled(login, k)
-            for k in (key,)
-            for login in self._online_logins()
-        )
+        active = self.is_replacement_active(key)
         if to_show:
             await self._apply_ui_modules_visibility(to_show, visible=True)
-        if to_hide and any_enabled:
+        if to_hide and active:
             await self._apply_ui_modules_visibility(to_hide, visible=False)
         # Normalize globally in case multiple replacement keys overlap on
         # the same UI module ids.
         await self._reconcile_all_ui_modules()
-
-    async def set_replacement_enabled(
-        self, login: str, key: str, enabled: bool,
-    ) -> None:
-        if not login or key not in self._entries:
-            return
-        entry = self._entries[key]
-        if not (entry.gbx_replace and entry.gbx_replace.manialink_id):
-            return
-        disabled = self._replace_disabled.setdefault(key, set())
-        changed = (login in disabled) if enabled else (login not in disabled)
-        if enabled:
-            disabled.discard(login)
-        else:
-            disabled.add(login)
-        if changed:
-            try:
-                await self.storage.setting_set(
-                    f"replace_disabled:{key}", ",".join(sorted(disabled)),
-                )
-            except Exception:
-                logger.exception(
-                    "widget_engine: persist replace_disabled '%s' failed", key,
-                )
-        await self.push_replacement(key, logins=[login])
-        if self.get_effective_hide_ui_modules(key):
-            await self._reconcile_all_ui_modules()
 
     async def _on_player_connect(self, player=None, **kwargs):  # noqa: ARG002
         login = getattr(player, "login", None)
@@ -925,15 +897,22 @@ class WidgetsApp(AppConfig):
                 )
         if not self._replacements:
             return
-        # Re-assert visibility policy too. Do not blindly hide: some widgets
-        # may be disabled for all online players and their modules must stay
-        # visible in that case.
+        # Re-broadcast UI module visibility: the modescript may not replay
+        # `Common.UIModules.SetProperties` to a joining client, and the
+        # core PyPlanet `SetUIProperties` XML sent on connect resets module
+        # visibility to the title-pack defaults. Re-applying the engine's
+        # globally-resolved state restores it for everyone (including the
+        # joiner). The state itself does not change with a connect, so we
+        # just replay the most recent decision.
         try:
             await self._reconcile_all_ui_modules()
         except Exception:
             logger.exception("widget_engine: on_connect reconcile UI modules failed")
-        # Push each replacement after its own delay so the original
-        # manialink lands first and our XML overwrites it client-side.
+        # Catch-up push of each active replacement to the joining player.
+        # The XML content is identical for everyone, but the client only
+        # picks up manialinks that arrive after it connects, so we send a
+        # per-login copy with the configured delay so the title-pack
+        # original lands first and our override wins client-side.
         for key in list(self._replacements.values()):
             entry = self._entries.get(key)
             if entry is None or not entry.gbx_replace:
@@ -985,8 +964,17 @@ class WidgetsApp(AppConfig):
         self, key: str, logins: Optional[list[str]] = None,
     ) -> None:
         """Render `key`'s replacement XML and push it via GBX, owning the
-        configured manialink id. When `logins` is None, pushes to every
-        currently-online player (per-player to allow per-login data)."""
+        configured manialink id.
+
+        Replacements are server-wide: the XML body and the active/clear
+        decision are computed once from the globally-resolved widget
+        state. When `logins` is None we broadcast via
+        `SendDisplayManialinkPage`; when `logins` is provided we send the
+        same XML to those specific players via
+        `SendDisplayManialinkPageToLogin` (used as catch-up on connect,
+        since the broadcast only reaches clients that were connected at
+        the time it was sent).
+        """
         entry = self._entries.get(key)
         if entry is None or not entry.gbx_replace:
             return
@@ -1001,44 +989,54 @@ class WidgetsApp(AppConfig):
                 key,
             )
             return
-        targets = list(logins) if logins is not None else self._online_logins()
-        # Out-of-phase: clear the replacement instead of rebuilding it.
-        # The current phase may be None (host hasn't reported one yet); in
-        # that case fall through and push normally.
+
+        resolved = self.engine.resolve(key, "")
         out_of_phase = (
             entry.visible_phases is not None
             and self.engine.current_phase is not None
             and self.engine.current_phase not in entry.visible_phases
         )
-        for login in targets:
+        clear = out_of_phase or (resolved is not None and bool(resolved.disabled))
+        if clear:
+            xml = f'<manialink id="{manialink_id}" version="3"></manialink>'
+            if out_of_phase:
+                logger.debug(
+                    "widget_engine: clearing replacement '%s' id=%s "
+                    "(out of phase: current=%s allowed=%s)",
+                    key, manialink_id,
+                    self.engine.current_phase.value if self.engine.current_phase else "?",
+                    ",".join(p.value for p in (entry.visible_phases or ())),
+                )
+        else:
+            try:
+                body = await builder("")
+            except Exception:
+                logger.exception(
+                    "widget_engine: build_replacement_xml '%s' failed", key,
+                )
+                return
+            xml = self._wrap_replacement_xml(body or "", manialink_id)
+            if entry.gbx_replace.chrome:
+                xml = self._inject_replacement_chrome(xml, entry, resolved)
+
+        if logins is None:
+            try:
+                await self.instance.gbx(
+                    "SendDisplayManialinkPage", xml, 0, False,
+                )
+                logger.debug(
+                    "widget_engine: broadcast replacement '%s' id=%s (%d bytes)",
+                    key, manialink_id, len(xml),
+                )
+            except Exception:
+                logger.exception(
+                    "widget_engine: gbx broadcast '%s' failed", key,
+                )
+            return
+
+        for login in logins:
             if not login:
                 continue
-            resolved = self.engine.resolve(key, login)
-            # Per-player opt-out OR out-of-phase: send an empty manialink
-            # so the override is cleared. The default UI will not
-            # necessarily come back until the next mode-script refresh.
-            if out_of_phase or (resolved is not None and bool(resolved.disabled)) or not self.is_replacement_enabled(login, key):
-                xml = f'<manialink id="{manialink_id}" version="3"></manialink>'
-                if out_of_phase:
-                    logger.debug(
-                        "widget_engine: clearing replacement '%s' id=%s for %s "
-                        "(out of phase: current=%s allowed=%s)",
-                        key, manialink_id, login,
-                        self.engine.current_phase.value if self.engine.current_phase else "?",
-                        ",".join(p.value for p in (entry.visible_phases or ())),
-                    )
-            else:
-                try:
-                    body = await builder(login)
-                except Exception:
-                    logger.exception(
-                        "widget_engine: build_replacement_xml '%s' for '%s' failed",
-                        key, login,
-                    )
-                    continue
-                xml = self._wrap_replacement_xml(body or "", manialink_id)
-                if entry.gbx_replace.chrome:
-                    xml = self._inject_replacement_chrome(xml, entry, resolved)
             try:
                 await self.instance.gbx(
                     "SendDisplayManialinkPageToLogin",
@@ -1283,33 +1281,29 @@ class WidgetsApp(AppConfig):
             )
 
     async def _reconcile_ui_modules_for(self, key: str) -> None:
-        """Re-show the title-pack UI modules of replacement `key` if no
-        online player currently has the replacement enabled; otherwise
-        keep them hidden. Compensates for the fact that
-        `Common.UIModules.SetProperties` is server-wide — a player who
-        disables the replacement would otherwise see neither the custom
-        manialink nor the default UI."""
+        """Re-apply the title-pack UI module visibility for replacement
+        `key` based on its globally-resolved active state. Server-wide:
+        when the replacement is active the listed modules get hidden,
+        otherwise they are shown."""
         entry = self._entries.get(key)
         if entry is None or not entry.gbx_replace:
             return
         ids = self.get_effective_hide_ui_modules(key)
         if not ids:
             return
-        any_enabled = any(
-            self.is_replacement_enabled(login, key)
-            for login in self._online_logins()
-        )
-        await self._apply_ui_modules_visibility(ids, visible=not any_enabled)
+        active = self.is_replacement_active(key)
+        await self._apply_ui_modules_visibility(ids, visible=not active)
 
     async def _reconcile_all_ui_modules(self) -> None:
         """Compute desired visibility for every known module id globally.
 
-        `Common.UIModules.SetProperties` is server-wide, so per-key toggles can
-        race when multiple replacements reference the same module id. We hide an
-        id iff at least one replacement that lists it is enabled for any online
-        player; otherwise we show it.
+        `Common.UIModules.SetProperties` is server-wide, so the decision
+        is a single global one per module id. A module is hidden iff at
+        least one *active* replacement that lists it exists. "Active"
+        means the replacement is installed, not row-disabled, and in
+        scope for the current phase — there is no per-player branching
+        because the underlying GBX callback cannot honor it.
         """
-        online = self._online_logins()
         desired_hidden: dict[str, bool] = {}
         keys = tuple(dict.fromkeys(self._replacements.values()))
         for key in keys:
@@ -1319,11 +1313,11 @@ class WidgetsApp(AppConfig):
             ids = self.get_effective_hide_ui_modules(key)
             if not ids:
                 continue
-            any_enabled = any(self.is_replacement_enabled(login, key) for login in online)
+            active = self.is_replacement_active(key)
             for mid in ids:
                 if not mid:
                     continue
-                desired_hidden[mid] = bool(desired_hidden.get(mid, False) or any_enabled)
+                desired_hidden[mid] = bool(desired_hidden.get(mid, False) or active)
 
         if not desired_hidden:
             return
@@ -1852,7 +1846,6 @@ class WidgetsApp(AppConfig):
             + ", ".join(modules),
             player.login,
         )
-        online = self._online_logins()
         hits = 0
         for key in sorted(self._entries.keys()):
             entry = self._entries.get(key)
@@ -1866,14 +1859,10 @@ class WidgetsApp(AppConfig):
                 continue
             hits += 1
             source = "override" if self.has_ui_modules_override(key) else "default"
-            enabled_logins = [lg for lg in online if self.is_replacement_enabled(lg, key)]
-            enabled_info = (
-                f"enabled_for={len(enabled_logins)}/{len(online)}"
-                if online else "enabled_for=0/0"
-            )
-            active = "active_hide=yes" if bool(enabled_logins) else "active_hide=no"
+            active = self.is_replacement_active(key)
+            state = "active_hide=yes" if active else "active_hide=no"
             await self.instance.chat(
-                f"$fff{key}$888 source={source} {enabled_info} {active} hides="
+                f"$fff{key}$888 source={source} {state} hides="
                 + ",".join(matched),
                 player.login,
             )

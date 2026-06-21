@@ -619,11 +619,11 @@
             {# left status stripe #}
             <quad pos="0 {{ ry }}" size="0.6 {{ CARD_H }}"
                   valign="top" halign="left"
-                  bgcolor="{{ '0d8f' if r.enabled else '666c' }}" />
+                  bgcolor="{{ '0d8f' if r.active else '666c' }}" />
             {# title row: name · key #}
             <label pos="2 {{ ry - 2 }}" z-index="136"
                    halign="left" valign="center2"
-                   text="${{ 'fff' if r.enabled else 'aaa' }}{{ r.name }}$555  ·  {{ r.key }}"
+                   text="${{ 'fff' if r.active else 'aaa' }}{{ r.name }}$555  ·  {{ r.key }}"
                    textsize="1.1" textfont="GameFontBlack" />
             {# right-aligned controls: MODULES + EDIT buttons + status badge #}
             {{ ui.push_button('replacements__row__' ~ r.key ~ '__edit',
@@ -637,9 +637,10 @@
                               width=18, halign='right',
                               variant=('primary' if r.ui_modules_overridden else 'ghost'),
                               size='sm', z=137) }}
-            {{ ui.check_box('replacements__row__' ~ r.key ~ '__toggle',
-                            checked=r.enabled,
-                            x=CW - 36, y=ry - 2, size='sm', z=137) }}
+            <label pos="{{ CW - 36 }} {{ ry - 2 }}" z-index="137"
+                   halign="right" valign="center2"
+                   text="${{ '0f8' if r.active else '888' }}{{ r.status_label }}"
+                   textsize="0.95" textfont="GameFontBlack" />
             {# meta row 1: target_kind · scope · author/version #}
             <label pos="2 {{ ry - 5.4 }}" z-index="136"
                    halign="left" valign="center2"

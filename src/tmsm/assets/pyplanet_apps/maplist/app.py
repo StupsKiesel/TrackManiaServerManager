@@ -157,6 +157,7 @@ class App_Maplist(AppConfig):
         self._state.setdefault(player.login, self._default_state())
         try:
             await self.view.display(player_logins=[player.login])
+            self.view._visible_logins.add(player.login)
             self.view._visible = True
         except Exception:
             logger.exception("maplist: open failed")
@@ -404,7 +405,8 @@ class App_Maplist(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.view, player_logins=[login])
-                self.view._visible = False
+                self.view._visible_logins.discard(login)
+                self.view._visible = bool(self.view._visible_logins)
             except Exception:
                 logger.exception("maplist: hide list failed")
         try:
@@ -443,11 +445,13 @@ class App_Maplist(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.view, player_logins=[login])
-                self.view._visible = False
+                self.view._visible_logins.discard(login)
+                self.view._visible = bool(self.view._visible_logins)
             except Exception:
                 logger.exception("maplist: hide list failed")
         try:
             await self.detail_view.display(player_logins=[login])
+            self.detail_view._visible_logins.add(login)
             self.detail_view._visible = True
         except Exception:
             logger.exception("maplist: open details failed")
@@ -458,7 +462,8 @@ class App_Maplist(AppConfig):
             try:
                 from pyplanet.views.template import TemplateView
                 await TemplateView.hide(self.detail_view, player_logins=[login])
-                self.detail_view._visible = False
+                self.detail_view._visible_logins.discard(login)
+                self.detail_view._visible = bool(self.detail_view._visible_logins)
             except Exception:
                 logger.exception("maplist: hide details failed")
         await self._open(player)

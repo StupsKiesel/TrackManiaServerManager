@@ -249,13 +249,8 @@ class WidgetEngine:
 
     # ---- gbx manialink-id replacement façade --------------------------
 
-    def is_replacement_enabled(self, login: str, key: str) -> bool:
-        return self._host.is_replacement_enabled(login, key)
-
-    async def set_replacement_enabled(
-        self, login: str, key: str, enabled: bool,
-    ) -> None:
-        await self._host.set_replacement_enabled(login, key, enabled)
+    def is_replacement_active(self, key: str) -> bool:
+        return self._host.is_replacement_active(key)
 
     async def push_replacement(
         self, key: str, logins: Optional[list[str]] = None,

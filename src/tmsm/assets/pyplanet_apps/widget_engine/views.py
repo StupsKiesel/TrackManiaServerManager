@@ -169,14 +169,17 @@ class WidgetEngineManagerView(BaseView):
         return counts
 
     def _build_replacements_rows(self, login: str) -> list[dict[str, Any]]:
-        """Per-login rows for the Replacements 'Active' tab: one entry per
-        installed widget that overrides a GBX manialink id."""
+        """Rows for the Replacements 'Active' tab: one entry per installed
+        widget that overrides a GBX manialink id. Replacements are
+        server-wide so this view does not depend on `login` — the
+        argument is kept for signature parity with other per-player
+        data builders."""
         rows: list[dict[str, Any]] = []
         for entry in self._replacement_entries():
             repl = entry.gbx_replace
             ui_modules = list(self.host.get_effective_hide_ui_modules(entry.key))
             overridden = self.host.has_ui_modules_override(entry.key)
-            enabled = bool(self.host.is_replacement_enabled(login, entry.key))
+            active = bool(self.host.is_replacement_active(entry.key))
             rows.append({
                 "key": entry.key,
                 "name": entry.name or entry.key,
@@ -195,12 +198,12 @@ class WidgetEngineManagerView(BaseView):
                 # manialink id as its primary target. The list of UI modules
                 # is auxiliary (hidden alongside).
                 "target_kind": "manialink_id",
-                # Scope: the engine stores per-login disabled sets, so the
-                # toggle is per-player. We surface this for clarity.
-                "scope": "per-player",
-                "enabled": enabled,
-                "status_label": "ENABLED" if enabled else "DISABLED",
-                "status_variant": "success" if enabled else "ghost",
+                # Scope: replacements are global; the EDIT screen's
+                # "Disable widget" toggle is the only on/off control.
+                "scope": "global",
+                "active": active,
+                "status_label": "ACTIVE" if active else "DISABLED",
+                "status_variant": "success" if active else "ghost",
             })
         return rows
 
@@ -482,14 +485,6 @@ class WidgetEngineManagerView(BaseView):
             "input": str(st.get("ui_modules_editor_input") or ""),\
             "input_field": "ui_modules_editor__input",\
         }
-
-    async def _on_replacement_toggle(self, login: str, key: str) -> None:
-        entry = self.host._entries.get(key)
-        if entry is None or not entry.gbx_replace:
-            return
-        currently = self.host.is_replacement_enabled(login, key)
-        await self.host.set_replacement_enabled(login, key, not currently)
-        await self.display(player_logins=[login])
 
     # ---- context ------------------------------------------------------
 
@@ -800,14 +795,9 @@ class WidgetEngineManagerView(BaseView):
                     return
                 return
             if action.startswith("replacements__row__"):
-                # replacements__row__<key>__toggle
                 # replacements__row__<key>__edit
                 # replacements__row__<key>__ui_modules
                 rest = action[len("replacements__row__"):]
-                if rest.endswith("__toggle"):
-                    key = rest[:-len("__toggle")]
-                    await self._on_replacement_toggle(login, key)
-                    return
                 if rest.endswith("__ui_modules"):
                     key = rest[:-len("__ui_modules")]
                     await self._ui_modules_editor_open(login, key)

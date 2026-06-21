@@ -78,7 +78,7 @@ class RandomChallengeMode(GameMode):
             "goal_medal": "at",
             "run_duration_min": 60,
             "resume_behavior": "current",  # current|next
-            "max_pick_attempts": 10,
+            "max_pick_attempts": 30,
             "block_lunatic": True,
             "block_kacky": True,
             "skip_duplicate_maps": True,
@@ -137,7 +137,7 @@ class RandomChallengeMode(GameMode):
                 "max_pick_attempts",
                 "Max TMX pick attempts",
                 "int",
-                default=10,
+                default=30,
                 min=1,
                 max=60,
                 help="How many random rolls to try before giving up this cycle.",
@@ -243,8 +243,9 @@ class RandomChallengeMode(GameMode):
         run["pending_track_id"] = 0
         run["pending_row"] = {}
         run["last_event"] = ""
-        self._state["history_track_ids"] = []
-        self._state["last_track_id"] = None
+        # Persist the picker dedup window across mode-disable cycles so
+        # the next activation doesn't immediately re-roll maps that were
+        # just played. `history_size` keeps the list bounded.
         self._in_race_started_at_monotonic = None
         if self._run_task is not None:
             self._run_task.cancel()
@@ -256,37 +257,11 @@ class RandomChallengeMode(GameMode):
         """Force re-render of RMC widgets after lifecycle transitions.
 
         Their templates use `widget_force_hidden`, which is evaluated on
-        render. Explicit refresh avoids stale visibility after stop/finish.
+        render. Refresh routes exclusively through the widget engine's
+        public refresh signal so the engine owns visibility/audience
+        decisions; reaching into widget-app internals here used to cause
+        duplicate frames and stale visibility after stop/finish.
         """
-        # Directly drive the widget apps' refresh loops so they execute their
-        # active-aware display/hide logic immediately, not on the next tick.
-        apps_map = getattr(self.ctx._app.instance.apps, "apps", {}) or {}
-        for app_label in ("rmc_operator_widget", "rmc_rules_widget"):
-            widget_app = apps_map.get(app_label)
-            if widget_app is None:
-                continue
-            try:
-                if hasattr(widget_app, "_active_mode") and widget_app._active_mode() is None:
-                    if hasattr(widget_app, "_hide_view"):
-                        await widget_app._hide_view()
-                        continue
-                view = getattr(widget_app, "view", None)
-                if view is None:
-                    continue
-                try:
-                    online_logins = [
-                        p.login for p in self.ctx.instance.player_manager.online
-                        if getattr(p, "login", None)
-                    ]
-                except Exception:
-                    online_logins = []
-                if online_logins:
-                    await view.display(player_logins=online_logins)
-                else:
-                    await view.display()
-            except Exception:
-                logger.exception("rmc: direct widget refresh '%s' failed", app_label)
-
         try:
             sig_new = self.ctx._app.context.signals.get_signal("widget_engine:refresh")
         except Exception:
@@ -301,12 +276,12 @@ class RandomChallengeMode(GameMode):
                 try:
                     await sig_new.send_robust(payload, raw=True)
                 except Exception:
-                    pass
+                    logger.exception("rmc: widget_engine refresh failed for '%s'", key)
             if sig_old is not None:
                 try:
                     await sig_old.send_robust(payload, raw=True)
                 except Exception:
-                    pass
+                    logger.exception("rmc: legacy widget refresh failed for '%s'", key)
 
     async def on_map_begin(self, map_obj) -> None:
         self._current_map = map_obj
@@ -427,7 +402,7 @@ class RandomChallengeMode(GameMode):
 
         login = str(getattr(player, "login", "") or "")
         if cmd in {"//rmc", "/rmc", "//rmc help", "/rmc help"}:
-            self.ctx.chat("$fa0RMC:$z //rmc start | pause | play [current|next] | stop | vote skip | vote broken | vote secondary | status", login=login)
+            self.ctx.chat("$fa0RMC:$z //rmc start | pause | play [current|next] | stop | vote skip | vote broken | vote secondary | clear-history | status", login=login)
             return
 
         if not self._is_operator(player):
@@ -476,6 +451,18 @@ class RandomChallengeMode(GameMode):
             await self._start_skip_vote(vote_kind="secondary")
             return
 
+        if cmd in {"//rmc clear-history", "/rmc clear-history",
+                   "//rmc clearhistory", "/rmc clearhistory"}:
+            count = len(self._history_ids())
+            self._state["history_track_ids"] = []
+            self._state["last_track_id"] = None
+            self._save()
+            self._update_status()
+            self.ctx.chat(
+                f"$fa0>> $fffRMC:$z cleared dedup window ({count} maps)."
+            )
+            return
+
     def status_lines(self) -> list[str]:
         run = self._state.setdefault("run", {})
         goal = self._goal_medal(run)
@@ -504,10 +491,12 @@ class RandomChallengeMode(GameMode):
         self._commit_race_elapsed()
         await self._set_mode_timelimit_zero()
         await self._force_all_spectator(False)
+        total_ms = self._configured_run_duration_ms_from_config()
         self._state["run"] = {
             "active": True,
             "paused": False,
-            "remaining_race_ms": self._configured_run_duration_ms(),
+            "remaining_race_ms": total_ms,
+            "total_duration_ms": total_ms,
             "goal_medal": self._normalized_goal(self._config.get("goal_medal")),
             "maps_cleared": 0,
             "secondary_cleared": 0,
@@ -521,8 +510,13 @@ class RandomChallengeMode(GameMode):
             "started_at": datetime.datetime.utcnow().isoformat(),
             "contributions": {},  # login -> {nickname, goal_clears, secondary_clears, finishes, best_delta_ms, total_clear_time_ms}
         }
-        self._state["history_track_ids"] = []
-        self._state["last_track_id"] = None
+        # NB: do NOT reset `history_track_ids` / `last_track_id` here.
+        # The deduplication window must persist across runs (and across
+        # mode disable cycles), otherwise the picker happily re-rolls
+        # maps the same players just saw a few minutes ago in the
+        # previous run. The list is already bounded by `history_size`
+        # so it can't grow without limit; if an operator really wants a
+        # fresh slate they can clear via the operator UI.
         self._in_race_started_at_monotonic = None
         self._save()
         self._update_status()
@@ -1100,23 +1094,27 @@ class RandomChallengeMode(GameMode):
         return out
 
     def _goal_medal(self, run: dict[str, Any] | None = None) -> str:
-        # Always reflect the current config so changing the goal in the UI
-        # takes effect immediately, even mid-run. The `run` argument is kept
-        # for backwards compatibility with existing call sites.
+        # While a run is active, the goal medal is frozen at the value
+        # captured in `_start_new_run`. Once the run is finished/idle,
+        # fall back to live config so the operator UI reflects the
+        # medal that the *next* run will use.
+        live = self._state.setdefault("run", {})
+        if bool(live.get("active")) and live.get("goal_medal"):
+            return self._normalized_goal(live.get("goal_medal"))
         return self._normalized_goal(self._config.get("goal_medal"))
 
-    def _configured_run_duration_ms(self) -> int:
-        """Total run length in ms, picked from config in 30-min steps.
+    def _configured_run_duration_ms_from_config(self) -> int:
+        """Total run length in ms computed from live config.
 
-        Falls back to ``RUN_DURATION_MS`` for any unexpected value so a
-        broken config can never produce a zero / negative timer.
+        Used by ``_start_new_run`` to snapshot the duration into the run
+        state. Most callers should use :meth:`_configured_run_duration_ms`,
+        which returns the snapshot while a run is active so a mid-run
+        config edit cannot move the timer.
         """
         try:
             minutes = int(self._config.get("run_duration_min") or 60)
         except (TypeError, ValueError):
             minutes = 60
-        # Allow the 5-minute test option; otherwise clamp to 30..240 and
-        # snap to the nearest 30-minute step.
         if minutes == 5:
             return 5 * 60 * 1000
         if minutes < 30:
@@ -1125,6 +1123,34 @@ class RandomChallengeMode(GameMode):
             minutes = 240
         minutes = (minutes // 30) * 30 or 30
         return minutes * 60 * 1000
+
+    def _configured_run_duration_ms(self) -> int:
+        """Total run length in ms.
+
+        While a run is active, returns the value snapshotted at run
+        start so the UI / persisted stats agree regardless of any
+        in-flight config edit. Falls back to ``_configured_run_duration_ms_from_config``
+        for the idle / next-run case.
+
+        Falls back to ``RUN_DURATION_MS`` for any unexpected value so a
+        broken config can never produce a zero / negative timer.
+        """
+        run = self._state.setdefault("run", {})
+        if bool(run.get("active")):
+            try:
+                snap = int(run.get("total_duration_ms") or 0)
+            except (TypeError, ValueError):
+                snap = 0
+            if snap > 0:
+                return snap
+        return self._configured_run_duration_ms_from_config()
+
+    def locked_fields(self) -> set[str]:
+        """Config keys frozen while a run is in flight."""
+        run = self._state.setdefault("run", {})
+        if bool(run.get("active")):
+            return {"goal_medal", "run_duration_min"}
+        return set()
 
     @staticmethod
     def _normalized_goal(raw: Any) -> str:

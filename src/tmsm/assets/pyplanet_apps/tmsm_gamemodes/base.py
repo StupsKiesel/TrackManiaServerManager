@@ -240,6 +240,19 @@ class GameMode(ABC):
         """Short status lines for the operator panel."""
         return []
 
+    # ---- run-state field locks ----------------------------------------
+
+    def locked_fields(self) -> set[str]:
+        """Config field keys that must not be edited right now.
+
+        Modes return a non-empty set when run parameters are in flight
+        (e.g. RMC locks ``goal_medal`` / ``run_duration_min`` while a run
+        is active so the in-flight rules cannot mutate). The orchestrator
+        consults this on every draft change and save to reject edits and
+        notify the operator.
+        """
+        return set()
+
 
 # Mode registry. Modes register themselves at import time.
 REGISTRY: dict[str, type[GameMode]] = {}

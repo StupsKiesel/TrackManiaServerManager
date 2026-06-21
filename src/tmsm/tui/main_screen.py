@@ -337,6 +337,7 @@ class MainScreen(Screen):
                 enabled=(is_server or is_bot) and not running,
             ),
             MenuItem("add_map",       "＋  Add map (from Exchange)", enabled=is_server),
+            MenuItem("set_maplist",   "🗺  Set startup maplist",     enabled=is_server),
             MenuItem("open_location", "📂  Open location (mc)"),
             MenuItem("delete",        "✗  Delete",            enabled=not running),
         ]
@@ -438,6 +439,56 @@ class MainScreen(Screen):
                 FilePickerScreen(f"Edit config — {inst.name}", files),
                 _open,
             )
+
+    def action_set_maplist(self) -> None:
+        inst = self._selected()
+        if inst is None:
+            return
+        from ..instances.server import GameServerInstance
+        if not isinstance(inst, GameServerInstance):
+            self.notify("Startup maplist is only available for game servers.", severity="warning")
+            return
+        ms_dir = inst.server_dir() / "UserData" / "Maps" / "MatchSettings"
+        files = sorted(ms_dir.glob("*.txt")) if ms_dir.is_dir() else []
+        if not files:
+            self.notify(
+                "No .txt files in UserData/Maps/MatchSettings/ — add a map or "
+                "save a matchsettings profile first.",
+                severity="warning",
+            )
+            return
+        current = inst.meta.matchsettings
+        from .edit_screen import FilePickerScreen
+
+        labelled = [
+            (
+                ("★ " if f"MatchSettings/{p.name}" == current else "   ") + p.name,
+                p,
+            )
+            for p in files
+        ]
+
+        def _apply(path) -> None:
+            if path is None:
+                return
+            rel = f"MatchSettings/{path.name}"
+            inst.meta.matchsettings = rel
+            try:
+                inst.meta.save(inst.root)
+            except Exception as e:  # noqa: BLE001
+                self.notify(f"Failed to save instance.toml: {e}", severity="error")
+                return
+            self.notify(
+                f"Startup maplist set to {path.name} (applies on next start).",
+                severity="information",
+                timeout=6,
+            )
+            self.refresh_instances()
+
+        self.app.push_screen(
+            FilePickerScreen(f"Startup maplist — {inst.name}", labelled),
+            _apply,
+        )
 
     def action_logs(self) -> None:
         inst = self._selected()

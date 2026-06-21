@@ -46,10 +46,42 @@ REPLACEMENTS_PER_PAGE = 4
 UI_MODULES_PER_PAGE = 6
 
 
+def _normalize_color_hex(raw: str) -> str | None:
+    """Validate and normalize an HTML color string.
+
+    Accepts (with or without leading '#'):
+      rgb     -> 3 hex digits
+      rgba    -> 4 hex digits
+      rrggbb  -> 6 hex digits
+      rrggbbaa-> 8 hex digits
+
+    Returns the lowercased hex without the leading '#' on success,
+    or None if `raw` is not a recognizable HTML color value.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip().lstrip("#").lower()
+    if len(s) not in (3, 4, 6, 8):
+        return None
+    if any(c not in "0123456789abcdef" for c in s):
+        return None
+    return s
+
+
 class WidgetEngineManagerView(BaseView):
     template_name = "widget_engine/manager.xml"
     audience: Audience = Audience.everyone()
     breadcrumbs = [{"key": "hub", "label": "Hub"}]
+
+    async def _on_player_connect(self, player, **kwargs) -> None:
+        # The manager is an on-demand admin window, not a persistent
+        # panel. `_open_manager` sets `_visible = True` so per-player
+        # re-renders (editor/perms refreshes) work while it is open, but
+        # that flag stays True until everyone closes it. BaseView's global
+        # re-display on connect would therefore pop the window open for
+        # every joining player. Suppress it: newcomers must explicitly
+        # open the manager themselves.
+        return
 
     async def _on_close(self, player) -> None:
         # Design rule: the window's red × button always fully exits back to
@@ -180,6 +212,19 @@ class WidgetEngineManagerView(BaseView):
             ui_modules = list(self.host.get_effective_hide_ui_modules(entry.key))
             overridden = self.host.has_ui_modules_override(entry.key)
             active = bool(self.host.is_replacement_active(entry.key))
+            stored = self.host.storage.get(entry.key) or {}
+            disabled = bool(stored.get("disabled"))
+            current_phase = self.host.engine.current_phase
+            in_phase = (
+                entry.visible_phases is None
+                or current_phase is None
+                or current_phase in entry.visible_phases
+            )
+            phases_label = (
+                "any"
+                if entry.visible_phases is None
+                else ", ".join(p.value for p in entry.visible_phases)
+            )
             rows.append({
                 "key": entry.key,
                 "name": entry.name or entry.key,
@@ -198,12 +243,18 @@ class WidgetEngineManagerView(BaseView):
                 # manialink id as its primary target. The list of UI modules
                 # is auxiliary (hidden alongside).
                 "target_kind": "manialink_id",
-                # Scope: replacements are global; the EDIT screen's
-                # "Disable widget" toggle is the only on/off control.
+                # Scope: replacements are global; the master enable/disable
+                # checkbox on the row is the only on/off control.
                 "scope": "global",
+                # `enabled` is the master admin kill-switch (persists to
+                # storage). `active` is its current runtime visibility
+                # (enabled AND in-scope for current phase). `in_phase`
+                # tells the user whether the declared `visible_phases`
+                # currently allow rendering.
+                "enabled": not disabled,
                 "active": active,
-                "status_label": "ACTIVE" if active else "DISABLED",
-                "status_variant": "success" if active else "ghost",
+                "in_phase": in_phase,
+                "phases_label": phases_label,
             })
         return rows
 
@@ -663,6 +714,10 @@ class WidgetEngineManagerView(BaseView):
             "strip_thickness_display": (
                 "%.1f" % engine.strip_thickness
             ),
+            "global_colors_enabled": engine.global_colors_enabled,
+            "global_bg_color": engine.global_bg_color,
+            "global_strip_color": engine.global_strip_color,
+            "color_error": str(st.pop("color_error", "") or ""),
         }
 
         # Replacements pagination (Active tab).
@@ -797,6 +852,7 @@ class WidgetEngineManagerView(BaseView):
             if action.startswith("replacements__row__"):
                 # replacements__row__<key>__edit
                 # replacements__row__<key>__ui_modules
+                # replacements__row__<key>__toggle
                 rest = action[len("replacements__row__"):]
                 if rest.endswith("__ui_modules"):
                     key = rest[:-len("__ui_modules")]
@@ -810,6 +866,33 @@ class WidgetEngineManagerView(BaseView):
                     st["replacements_open"] = False
                     await self._editor_open(login, key, st["phase"])
                     return
+                if rest.endswith("__toggle"):
+                    key = rest[:-len("__toggle")]
+                    if key in self.host._entries:
+                        # Guarantee a base row exists first; without one the
+                        # set_disabled write below is a silent no-op and the
+                        # checkbox appears to "do nothing".
+                        if self.host.storage.get(key) is None:
+                            await self.host.storage.ensure_row(
+                                self.host._entries[key]
+                            )
+                        stored = self.host.storage.get(key) or {}
+                        new_disabled = not bool(stored.get("disabled"))
+                        logger.info(
+                            "widget_engine: replacements toggle key='%s' "
+                            "prev_disabled=%s new_disabled=%s by=%s",
+                            key, bool(stored.get("disabled")),
+                            new_disabled, login,
+                        )
+                        await self.host.storage.set_disabled(key, new_disabled)
+                        await self.host._redisplay(key)
+                        await self.display(player_logins=[login])
+                    else:
+                        logger.warning(
+                            "widget_engine: replacements toggle for unknown key '%s'",
+                            key,
+                        )
+                    return
                 return
             if action == "_crumb__settings":
                 # Current-page crumb: no-op.
@@ -822,6 +905,19 @@ class WidgetEngineManagerView(BaseView):
                 return
             if action == "settings__strip_thickness__dec":
                 await self._on_setting_thickness(login, -0.1)
+                return
+            if action == "settings__global_colors__toggle":
+                await self._on_setting_toggle_global_colors(login)
+                return
+            if action == "settings__strip_color__apply":
+                await self._on_setting_apply_color(
+                    login, values, "strip",
+                )
+                return
+            if action == "settings__bg_color__apply":
+                await self._on_setting_apply_color(
+                    login, values, "bg",
+                )
                 return
             if action == "_crumb__widget_engine":
                 # Picker / editor / settings breadcrumb back to the manager.
@@ -1553,6 +1649,55 @@ class WidgetEngineManagerView(BaseView):
         except Exception:
             logger.exception("settings: persist strip_thickness failed")
         await self.host._refresh_all()
+        await self.display(player_logins=[login])
+
+    async def _on_setting_toggle_global_colors(self, login: str) -> None:
+        engine = self.host.engine
+        new_val = not engine.global_colors_enabled
+        engine.global_colors_enabled = new_val
+        try:
+            await self.host.storage.setting_set(
+                "global_colors_enabled", "1" if new_val else "0",
+            )
+        except Exception:
+            logger.exception("settings: persist global_colors_enabled failed")
+        await self.host._refresh_all()
+        await self.display(player_logins=[login])
+
+    async def _on_setting_apply_color(
+        self, login: str, values: dict, which: str,
+    ) -> None:
+        """Apply a free-form HTML color value typed into the settings form.
+
+        `which` is "bg" or "strip"; the corresponding entry name in the
+        line_edit is `settings__bg_color_text` / `settings__strip_color_text`.
+        """
+        field = (
+            "settings__bg_color_text" if which == "bg"
+            else "settings__strip_color_text"
+        )
+        raw = str((values or {}).get(f"entry_{self.id}__{field}") or "").strip()
+        st = self._ensure_state(login)
+        hex_val = _normalize_color_hex(raw)
+        if hex_val is None:
+            st["color_error"] = (
+                f"Invalid color '{raw}'. Use rgb / rrggbb / rrggbbaa (hex)."
+            )
+            await self.display(player_logins=[login])
+            return
+        engine = self.host.engine
+        if which == "bg":
+            engine.global_bg_color = hex_val
+            setting_key = "global_bg_color"
+        else:
+            engine.global_strip_color = hex_val
+            setting_key = "global_strip_color"
+        try:
+            await self.host.storage.setting_set(setting_key, hex_val)
+        except Exception:
+            logger.exception("settings: persist %s failed", setting_key)
+        if engine.global_colors_enabled:
+            await self.host._refresh_all()
         await self.display(player_logins=[login])
 
 

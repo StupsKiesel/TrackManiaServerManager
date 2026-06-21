@@ -1661,33 +1661,29 @@ class TmxBrowserApp(AppConfig):
             except Exception:
                 logger.exception("tmx_browser: add_to_jukebox failed")
 
+        # Persist the playlist into the active startup matchsettings file so
+        # the freshly-added map survives a server restart (integrated //wml).
+        try:
+            from pyplanet.apps.tmsm.ui.maplist_io import write_active_matchsettings
+            await write_active_matchsettings(self.instance)
+        except Exception:
+            logger.exception("tmx_browser: auto write_maplist after add failed")
+
         await self._notify(login, f"Added: {name}", "success", 4000)
 
     # ---- write map list -----------------------------------------------
 
     async def _on_write_maplist(self, player) -> None:
-        """Save the current matchsettings file — equivalent to //wml."""
+        """Save the current matchsettings file — equivalent to //wml.
+
+        Writes to the exact file the dedicated server boots with (read from
+        instance.toml), so the saved playlist survives a restart.
+        """
         login = player.login
         try:
-            from pyplanet.conf import settings as _pp_settings
-            setting = getattr(_pp_settings, "MAP_MATCHSETTINGS", None)
-            if isinstance(setting, dict):
-                setting = (
-                    setting.get(self.instance.process_name)
-                    or setting.get("default")
-                )
-            if not isinstance(setting, str) or not setting:
-                raise RuntimeError(
-                    "MAP_MATCHSETTINGS not configured in settings/base.py"
-                )
-            file_name = setting.format(
-                server_login=self.instance.game.server_player_login
-            )
-            file_path = f"MatchSettings/{file_name}"
-            await self.instance.map_manager.save_matchsettings(file_path)
-            await self.instance.map_manager.update_list(full_update=True)
-            logger.info("tmx_browser: wrote matchsettings to %s", file_path)
-            await self._notify(login, f"Map list saved to {file_name}", "success", 4000)
+            from pyplanet.apps.tmsm.ui.maplist_io import write_active_matchsettings
+            rel = await write_active_matchsettings(self.instance)
+            await self._notify(login, f"Map list saved to {rel}", "success", 4000)
         except Exception as e:
             logger.exception("tmx_browser: write_maplist failed")
             await self._notify(login, f"Write map list failed: {e}", "error", 6000)

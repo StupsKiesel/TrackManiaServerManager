@@ -49,10 +49,27 @@
                        color='fff', border='fff5') %}
 
     {% set hy = table_y - 5 %}
-    {{ ui.label('Name',     x=8,   y=hy, size='sm', color='888') }}
-    {{ ui.label('Author',   x=108, y=hy, size='sm', color='888') }}
-    {{ ui.label('Env',      x=158, y=hy, size='sm', color='888') }}
-    {{ ui.label('Time',     x=178, y=hy, size='sm', color='888') }}
+    {# Column layout. The right-edge "actions" column holds three sm tool
+       buttons (jukebox / details / remove) right-aligned and stepped
+       5.5u apart. `act_x_right` is pulled inward from the group-box edge
+       so the rightmost button doesn't touch the border. #}
+    {% set act_x_right = win_w - 8 %}
+    {% set act_step = 5.5 %}
+    {% set act_x_juke = act_x_right %}
+    {% set act_x_info = act_x_right - act_step %}
+    {% set act_x_trash = act_x_right - act_step * 2 %}
+    {% set time_x_right = act_x_trash - 6 %}
+    {% set karma_x_right = time_x_right - 18 %}
+
+    {{ ui.label('Name',     x=8,              y=hy, size='sm', color='888') }}
+    {{ ui.label('Author',   x=108,            y=hy, size='sm', color='888') }}
+    {{ ui.label('Env',      x=148,            y=hy, size='sm', color='888') }}
+    {{ ui.label('Karma',    x=karma_x_right,  y=hy, halign='right',
+                size='sm', color='888') }}
+    {{ ui.label('Time',     x=time_x_right,   y=hy, halign='right',
+                size='sm', color='888') }}
+    {{ ui.label('Actions',  x=act_x_right,    y=hy, halign='right',
+                size='sm', color='888') }}
 
     {% if rows %}
       {% for r in results %}
@@ -69,24 +86,33 @@
         {{ ui.label(r.author|truncate(14, true, ''),
                     x=108, y=ry, size='sm', color='ccc') }}
         {{ ui.label(r.environment|truncate(6, true, ''),
-                    x=158, y=ry, size='sm', color='ccc') }}
+                    x=148, y=ry, size='sm', color='ccc') }}
+        {{ ui.label(r.karma_str,
+                    x=karma_x_right, y=ry, halign='right',
+                    size='sm', color=r.karma_color) }}
         {{ ui.label(r.time_author_s,
-                    x=178, y=ry, size='sm', color='ccc') }}
+                    x=time_x_right, y=ry, halign='right',
+                    size='sm', color='ccc') }}
+
+        {# ── actions column (right-anchored, right→left) ─────────── #}
         {% if r.in_queue %}
-          {{ ui.label('queued', x=win_w - 6, y=ry, halign='right',
-                      size='sm', color='fa0') }}
+          {{ ui.tool_button('juke__' ~ r.uid, 'check',
+                            x=act_x_juke, y=ry, halign='right',
+                            variant='ghost', size='sm',
+                            tooltip='Already in jukebox queue.') }}
         {% else %}
-          {{ ui.push_button('juke__' ~ r.uid, 'Jukebox',
-                            x=win_w - 6, y=ry, halign='right',
-                            icon='plus', variant='success', size='sm') }}
+          {{ ui.tool_button('juke__' ~ r.uid, 'plus',
+                            x=act_x_juke, y=ry, halign='right',
+                            variant='success', size='sm',
+                            tooltip='Add to jukebox queue.') }}
         {% endif %}
         {{ ui.tool_button('details__' ~ r.uid, 'info',
-                          x=win_w - 28, y=ry, halign='right',
+                          x=act_x_info, y=ry, halign='right',
                           variant='primary', size='sm',
                           tooltip='Show map details') }}
         {% if is_operator and not r.is_current %}
           {{ ui.tool_button('remove__' ~ r.uid, 'trash',
-                            x=win_w - 34, y=ry, halign='right',
+                            x=act_x_trash, y=ry, halign='right',
                             variant='danger', size='sm',
                             tooltip='Remove map from playlist (operator).') }}
         {% endif %}

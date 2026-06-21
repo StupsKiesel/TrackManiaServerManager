@@ -76,18 +76,17 @@
          text="$fff{{ selected_phase_label }}  $888· {{ total_widgets }} widget{{ '' if total_widgets == 1 else 's' }}"
          textsize="1.2" textfont="GameFontBlack" />
 
-  {# Add button + engine-phase indicator share the header line. The button
-     sits at the far right; the indicator dims to its left. #}
-  {{ ui.push_button('add__open', '+ Add widget',
-                    x=DETAIL_X + DETAIL_W, y=DETAIL_HDR_Y - DETAIL_HDR_H/2,
-                    halign='right', size='sm', variant='primary') }}
+  {# Settings + Replacements buttons + engine-phase indicator share the
+     header line, right-aligned. The legacy '+ Add widget' button used
+     to live here too; widgets are now seeded from addon registration
+     so a manual add picker is no longer needed. #}
   {{ ui.push_button('settings__open', 'Settings', icon='sliders-h',
-                    x=DETAIL_X + DETAIL_W - 22, y=DETAIL_HDR_Y - DETAIL_HDR_H/2,
+                    x=DETAIL_X + DETAIL_W, y=DETAIL_HDR_Y - DETAIL_HDR_H/2,
                     halign='right', size='sm', variant='ghost') }}
   {{ ui.push_button('replacements__open', 'Replacements', icon='exchange-alt',
-                    x=DETAIL_X + DETAIL_W - 40, y=DETAIL_HDR_Y - DETAIL_HDR_H/2,
+                    x=DETAIL_X + DETAIL_W - 18, y=DETAIL_HDR_Y - DETAIL_HDR_H/2,
                     halign='right', size='sm', variant='ghost') }}
-  <label pos="{{ DETAIL_X + DETAIL_W - 62 }} {{ DETAIL_HDR_Y - DETAIL_HDR_H/2 }}"
+  <label pos="{{ DETAIL_X + DETAIL_W - 40 }} {{ DETAIL_HDR_Y - DETAIL_HDR_H/2 }}"
          z-index="135"
          halign="right" valign="center2"
          text="$666engine: $aaa{{ engine_phase }}"
@@ -117,21 +116,12 @@
 
         {# right-aligned icon buttons + enable checkbox.
            Walk right→left; each icon button is a square quad with a
-           GameFontBlack glyph (FA icons render as squares in GameFont). #}
+           GameFontBlack glyph (FA icons render as squares in GameFont).
+           The per-row 'remove' (trash) button was dropped: widgets are
+           seeded from addon registration and an admin disable via the
+           enable checkbox is the supported way to hide them. #}
         {% set bw = ROW_H - 0.6 %}
         {% set cx = namespace(v=DETAIL_W - 1.0) %}
-
-        {# remove (trash) #}
-        <quad pos="{{ cx.v - bw }} {{ ry - 0.3 }}" size="{{ bw }} {{ bw }}"
-              valign="top" halign="left" bgcolor="c33b"
-              id="uibtn_danger_{{ id }}__row__{{ r.key }}__remove"
-              action="{{ id }}__row__{{ r.key }}__remove" scriptevents="1"
-              class="ui-btn ui-btn-danger" />
-        <label pos="{{ cx.v - bw/2 }} {{ ry - ROW_H/2 }}" z-index="140"
-               halign="center" valign="center2"
-               text="$fff{{ '&#xf1f8;'|safe }}"
-               textsize="1.0" textfont="GameFontBlack" />
-        {% set cx.v = cx.v - bw - 0.4 %}
 
         {# edit (pencil) #}
         <quad pos="{{ cx.v - bw }} {{ ry - 0.3 }}" size="{{ bw }} {{ bw }}"
@@ -528,38 +518,119 @@
 {# ── engine-wide settings sub-view ─────────────────────────────────── #}
 {% if settings_open %}
   {% set ST_W = WIN_W %}
-  {% set ST_H = 60 %}
+  {# Window height: header (8) + strip group (24) + colors group (46) + padding. #}
+  {% set ST_H = 90 %}
   {{ ui.window('Widget Engine · settings',
                icon='sliders', x=0, y=0, w=ST_W, h=ST_H,
                crumbs=[{'key':'hub','label':'Hub'},
                        {'key':'widget_engine','label':'Widget Engine'},
                        {'key':'settings','label':'Settings'}]) }}
 
-  {% call ui.group_box(title='Strip rendering', x=4, y=-12, w=ST_W - 8, h=36) %}
-    <label pos="3 -4" z-index="151"
+  {# ── Strip rendering group (top: y=-12, h=24, bottom: y=-36) ─────── #}
+  {% call ui.group_box(title='Strip rendering', x=4, y=-12, w=ST_W - 8, h=24) %}
+    <label pos="6 -17" z-index="151"
            halign="left" valign="center2"
            text="$fffStrip placement"
            textsize="1.0" textfont="GameFontBlack" />
-    <label pos="3 -8" z-index="151"
+    <label pos="6 -21" z-index="151"
            halign="left" valign="center2"
            text="$888When ON, the engine prefers the top edge of the screen for status strips."
            textsize="0.8" textfont="GameFont" />
     {{ ui.check_box('settings__strip_top__toggle',
-                    label='Prefer top edge',
                     checked=engine_settings.strip_prefer_top,
-                    x=ST_W - 50, y=-6, size='sm', z=152) }}
+                    x=ST_W - 8, y=-19, size='sm', z=152) }}
 
-    <label pos="3 -18" z-index="151"
+    <label pos="6 -28" z-index="151"
            halign="left" valign="center2"
            text="$fffStrip thickness"
            textsize="1.0" textfont="GameFontBlack" />
-    <label pos="3 -22" z-index="151"
+    <label pos="6 -32" z-index="151"
            halign="left" valign="center2"
            text="$888Vertical thickness of status strips (manialink units, 0.1 – 5.0)."
            textsize="0.8" textfont="GameFont" />
     {{ ui.stepper('settings__strip_thickness',
                   value=engine_settings.strip_thickness_display,
-                  x=ST_W - 36, y=-20, w=26, size='sm', z=152) }}
+                  x=ST_W - 34, y=-30, w=26, size='sm', z=152) }}
+  {% endcall %}
+
+  {# ── Global color overwrite group (y=-40, h=46, bottom: y=-86) ───── #}
+  {% call ui.group_box(title='Global color overwrite', x=4, y=-40, w=ST_W - 8, h=46) %}
+    {# Master enable on the title line, right-aligned. #}
+    {{ ui.check_box('settings__global_colors__toggle',
+                    checked=engine_settings.global_colors_enabled,
+                    x=ST_W - 8, y=-43, size='sm', z=152) }}
+
+    <label pos="6 -45" z-index="151"
+           halign="left" valign="center2"
+           text="$888When ON, every widget's background and accent strip use the colors entered below, regardless of the addon's own theme."
+           textsize="0.8" textfont="GameFont" />
+    <label pos="6 -48" z-index="151"
+           halign="left" valign="center2"
+           text="$666Accepted formats: $aaargb $666· $aaarrggbb $666· $aaarrggbbaa$666 (with or without leading '#')."
+           textsize="0.75" textfont="GameFont" />
+
+    {# ── strip color row ──────────────────────────────────────────── #}
+    <label pos="6 -56" z-index="151"
+           halign="left" valign="center2"
+           text="$fffStrip color"
+           textsize="1.0" textfont="GameFontBlack" />
+    {# preview swatch for current value #}
+    <quad pos="22 -54" z-index="152" size="5 5"
+          valign="top" halign="left"
+          bgcolor="{{ engine_settings.global_strip_color }}" />
+    <quad pos="21.7 -53.7" z-index="151" size="5.6 5.6"
+          valign="top" halign="left" bgcolor="ffffff66" />
+    {{ ui.line_edit('settings__strip_color_text',
+                    value=engine_settings.global_strip_color,
+                    x=29, y=-56.5, width=24, size='sm', z=152) }}
+    {{ ui.push_button('settings__strip_color__apply', 'Apply',
+                      x=55, y=-56.5, size='sm', variant='primary',
+                      halign='left') }}
+
+    {# ── bg color row ─────────────────────────────────────────────── #}
+    <label pos="6 -66" z-index="151"
+           halign="left" valign="center2"
+           text="$fffBackground"
+           textsize="1.0" textfont="GameFontBlack" />
+    {# checker behind the swatch to show alpha (white tile + dark tile) #}
+    <quad pos="21.7 -63.7" z-index="151" size="5.6 5.6"
+          valign="top" halign="left" bgcolor="ffffff66" />
+    <quad pos="22 -64" z-index="151" size="5 5"
+          valign="top" halign="left" bgcolor="333a" />
+    <quad pos="22 -64" z-index="152" size="5 5"
+          valign="top" halign="left"
+          bgcolor="{{ engine_settings.global_bg_color }}" />
+    {{ ui.line_edit('settings__bg_color_text',
+                    value=engine_settings.global_bg_color,
+                    x=29, y=-66.5, width=24, size='sm', z=152) }}
+    {{ ui.push_button('settings__bg_color__apply', 'Apply',
+                      x=55, y=-66.5, size='sm', variant='primary',
+                      halign='left') }}
+
+    {# ── live preview swatch ──────────────────────────────────────── #}
+    <label pos="6 -76" z-index="151"
+           halign="left" valign="center2"
+           text="$fffPreview"
+           textsize="1.0" textfont="GameFontBlack" />
+    {# bg block #}
+    <quad pos="22 -74" z-index="152" size="40 7"
+          valign="top" halign="left"
+          bgcolor="{{ engine_settings.global_bg_color }}" />
+    {# strip on left edge #}
+    <quad pos="22 -74" z-index="153" size="1 7"
+          valign="top" halign="left"
+          bgcolor="{{ engine_settings.global_strip_color }}" />
+    <label pos="25 -77.5" z-index="154"
+           halign="left" valign="center2"
+           text="$fff{{ 'ACTIVE' if engine_settings.global_colors_enabled else 'DISABLED — using per-widget colors' }}"
+           textsize="0.85" textfont="GameFontBlack" />
+
+    {% if engine_settings.color_error %}
+      <label pos="6 -82" z-index="151"
+             halign="left" valign="center2"
+             text="$f55{{ engine_settings.color_error }}"
+             textsize="0.85" textfont="GameFont" />
+    {% endif %}
   {% endcall %}
 {% endif %}
 
@@ -575,15 +646,7 @@
                        {'key':'widget_engine','label':'Widget Engine'},
                        {'key':'replacements','label':'Replacements'}]) }}
 
-  {# read-only banner #}
-  <quad pos="2 {{ -RP_HDR_H - 1 }}" size="{{ RP_W - 4 }} 4.5"
-        bgcolor="15dfa3" halign="left" valign="top" z-index="134" />
-  <label pos="3 {{ -RP_HDR_H - 3.25 }}" z-index="135"
-         halign="left" valign="center2"
-         text="$cdfREAD-ONLY  $aaareview surface for upcoming replacements rework. No actions wired yet."
-         textsize="0.9" textfont="GameFontBlack" />
-
-  {% set RP_TAB_Y = -RP_HDR_H - 7 %}
+  {% set RP_TAB_Y = -RP_HDR_H - 2 %}
   {% set RP_TAB_H = 5 %}
   {% set RP_BODY_TOP = RP_TAB_Y - RP_TAB_H - 2 %}
   {# Window's usable height below the tab strip. RP_H is the window height;
@@ -616,16 +679,17 @@
             {# card background #}
             <quad pos="0 {{ ry }}" size="{{ CW }} {{ CARD_H }}"
                   valign="top" halign="left" bgcolor="14141488" />
-            {# left status stripe #}
+            {# left status stripe: green when globally enabled,
+               grey when admin-disabled #}
             <quad pos="0 {{ ry }}" size="0.6 {{ CARD_H }}"
                   valign="top" halign="left"
-                  bgcolor="{{ '0d8f' if r.active else '666c' }}" />
+                  bgcolor="{{ '0d8f' if r.enabled else '666c' }}" />
             {# title row: name · key #}
             <label pos="2 {{ ry - 2 }}" z-index="136"
                    halign="left" valign="center2"
-                   text="${{ 'fff' if r.active else 'aaa' }}{{ r.name }}$555  ·  {{ r.key }}"
+                   text="${{ 'fff' if r.enabled else 'aaa' }}{{ r.name }}$555  ·  {{ r.key }}"
                    textsize="1.1" textfont="GameFontBlack" />
-            {# right-aligned controls: MODULES + EDIT buttons + status badge #}
+            {# right-aligned controls: MODULES + EDIT buttons + ENABLED checkbox #}
             {{ ui.push_button('replacements__row__' ~ r.key ~ '__edit',
                               'EDIT', icon='cog',
                               x=CW - 2, y=ry - 2,
@@ -637,19 +701,19 @@
                               width=18, halign='right',
                               variant=('primary' if r.ui_modules_overridden else 'ghost'),
                               size='sm', z=137) }}
-            <label pos="{{ CW - 36 }} {{ ry - 2 }}" z-index="137"
-                   halign="right" valign="center2"
-                   text="${{ '0f8' if r.active else '888' }}{{ r.status_label }}"
-                   textsize="0.95" textfont="GameFontBlack" />
+            {{ ui.check_box('replacements__row__' ~ r.key ~ '__toggle',
+                            checked=r.enabled,
+                            x=CW - 36, y=ry - 2,
+                            size='sm', z=137) }}
             {# meta row 1: target_kind · scope · author/version #}
             <label pos="2 {{ ry - 5.4 }}" z-index="136"
                    halign="left" valign="center2"
                    text="$888target  $cdf{{ r.target_kind }}$888    scope  $cdf{{ r.scope }}{% if r.author %}$888    by  $aaa{{ r.author }}{% if r.version %} $666v{{ r.version }}{% endif %}{% endif %}"
                    textsize="0.9" textfont="GameFont" />
-            {# meta row 2: manialink id #}
+            {# meta row 2: manialink id + visible phases #}
             <label pos="2 {{ ry - 8.0 }}" z-index="136"
                    halign="left" valign="center2"
-                   text="$888manialink id  $aaa{{ r.manialink_id or '—' }}{% if r.hotkey %}$888    hotkey  $aaa{{ r.hotkey }}{% endif %}{% if r.connect_delay_s and r.connect_delay_s > 0 %}$888    delay  $aaa{{ '%.2f'|format(r.connect_delay_s) }}s{% endif %}"
+                   text="$888manialink id  $aaa{{ r.manialink_id or '—' }}$888    visible in  ${{ '8fc' if r.in_phase else 'aaa' }}{{ r.phases_label }}{% if r.hotkey %}$888    hotkey  $aaa{{ r.hotkey }}{% endif %}{% if r.connect_delay_s and r.connect_delay_s > 0 %}$888    delay  $aaa{{ '%.2f'|format(r.connect_delay_s) }}s{% endif %}"
                    textsize="0.9" textfont="GameFont" />
             {# meta row 3: hidden ui modules as inline chips #}
             {% if r.ui_modules_count > 0 %}

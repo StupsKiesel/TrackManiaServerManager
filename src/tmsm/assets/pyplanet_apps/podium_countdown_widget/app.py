@@ -915,17 +915,27 @@ class PodiumCountdownWidgetApp(WidgetAppBase):
         # local monotonic clock. This means a single push covers the entire
         # countdown — we only re-push on real events (map start/end, podium
         # start, player connect, time-extend reconciliation).
+        #
+        # The label reference is re-acquired every loop iteration: when the
+        # widget_engine re-broadcasts this manialink (gbx replacements get
+        # pushed by phase/runtime-layout/global-color changes), the previous
+        # XML's controls are destroyed but the old `main()` can still run
+        # one more tick during the handover. A stale `Lbl` held from before
+        # the yield then points to a freed `Page.ControlsCache` slot and
+        # `Lbl.SetText` raises "Invalid access to parameter". Re-acquiring
+        # inside the loop sidesteps the race — we either bind to the fresh
+        # control, or skip the tick if the manialink is mid-teardown.
         script = (
             '<script><!--\n'
             '#Include "TextLib" as TL\n'
             'main() {\n'
-            '  declare CMlLabel Lbl <=> (Page.GetFirstChild("podium_countdown_value") as CMlLabel);\n'
-            '  if (Lbl == Null) return;\n'
             f'  declare Integer RemainingMs = {remaining_ms};\n'
             '  declare Integer StartTick = CurrentTime;\n'
             '  declare Integer LastSec = -1;\n'
             '  while (True) {\n'
             '    yield;\n'
+            '    declare CMlLabel Lbl <=> (Page.GetFirstChild("podium_countdown_value") as CMlLabel);\n'
+            '    if (Lbl == Null) continue;\n'
             '    declare Integer Left = RemainingMs - (CurrentTime - StartTick);\n'
             '    if (Left < 0) Left = 0;\n'
             '    declare Integer Sec = Left / 1000;\n'

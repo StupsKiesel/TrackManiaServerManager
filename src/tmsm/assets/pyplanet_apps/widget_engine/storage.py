@@ -185,8 +185,14 @@ class WidgetStorage:
 
     async def _update(self, key: str, patch: dict[str, Any]) -> None:
         db = self._db
-        if db is None or key not in self._rows:
+        if db is None:
             return
+        if key not in self._rows:
+            # Cache miss: the row may still exist in the DB (cache loaded
+            # before the widget seeded its row, or a stale row from a prior
+            # session). Hydrate before deciding it is truly absent so the
+            # write is not silently dropped.
+            await self._fetch_row(key)
         patch = dict(patch)
         patch["updated_at"] = _dt.datetime.utcnow()
         try:
@@ -196,7 +202,13 @@ class WidgetStorage:
         except Exception:
             logger.exception("widget_engine.storage: update '%s' failed", key)
             return
-        self._rows[key].update(patch)
+        if key in self._rows:
+            self._rows[key].update(patch)
+        else:
+            logger.warning(
+                "widget_engine.storage: update '%s' applied with no base row "
+                "in cache or DB; call ensure_row first", key,
+            )
 
     # ── phase overrides ───────────────────────────────────────────────
 

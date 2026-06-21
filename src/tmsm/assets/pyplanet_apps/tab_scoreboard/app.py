@@ -191,6 +191,24 @@ class TabScoreboard(AppConfig):
             except Exception:
                 logger.exception("tab_scoreboard: listen '%s' failed", sig_name)
 
+        # widget_engine forwards row-button clicks (spectate / profile icons
+        # in the actions column) as manialink-page actions named
+        # ``widget_engine__spec__<login>`` / ``widget_engine__profile__<login>``.
+        # PyPlanet emits these on ``maniaplanet:manialink_answer`` (and the
+        # ``manialink_page_answer`` alias on some installs).
+        for sig_name in (
+            "maniaplanet:manialink_answer",
+            "maniaplanet:manialink_page_answer",
+        ):
+            try:
+                self.context.signals.get_signal(sig_name)
+            except Exception:
+                continue
+            try:
+                self.context.signals.listen(sig_name, self._on_manialink_action)
+            except Exception:
+                logger.exception("tab_scoreboard: listen '%s' failed", sig_name)
+
     async def on_stop(self) -> None:
         if self._queued_refresh is not None:
             self._queued_refresh.cancel()
@@ -362,6 +380,45 @@ class TabScoreboard(AppConfig):
             return
         cur["giveup"] = True
         self._queue_refresh()
+
+    # ---- row action callbacks --------------------------------------------
+
+    async def _on_manialink_action(
+        self, player=None, action=None, **kwargs,
+    ) -> None:
+        action_raw = str(action or kwargs.get("action") or "")
+        if action_raw.startswith("widget_engine__spec__"):
+            target = action_raw[len("widget_engine__spec__"):]
+            await self._action_spectate(player, target)
+
+    async def _action_spectate(self, player, target_login: str) -> None:
+        """Force the clicker into spectator mode focused on ``target_login``.
+        Two GBX calls: ``ForceSpectator(login, 3)`` (force spectator state)
+        followed by ``ForceSpectatorTarget(login, target, 1)`` (pin the
+        target). ``3`` is the documented "user-selectable spectator" mode,
+        which lets the player switch out later by pressing the play button.
+        """
+        if player is None or not target_login:
+            return
+        login = str(getattr(player, "login", "") or "")
+        if not login or login == target_login:
+            return
+        try:
+            await self.instance.gbx("ForceSpectator", login, 3)
+        except Exception:
+            logger.exception(
+                "tab_scoreboard: ForceSpectator failed for %s", login,
+            )
+            return
+        try:
+            await self.instance.gbx(
+                "ForceSpectatorTarget", login, target_login, 1,
+            )
+        except Exception:
+            logger.exception(
+                "tab_scoreboard: ForceSpectatorTarget %s -> %s failed",
+                login, target_login,
+            )
 
     # ---- refresh ----------------------------------------------------------
 
@@ -577,15 +634,25 @@ class TabScoreboard(AppConfig):
         max_rows_fit = max(1, int((table_h - header_row_h) // row_h))
         max_rows = min(_ROW_LIMIT, max_rows_fit)
 
-        # Column sizing scales with widget width.
+        # Column sizing scales with widget width. Player column is
+        # capped so the actions column sits directly behind nicknames
+        # instead of being pushed to the far right by a wide player
+        # column. Any leftover slack is absorbed between actions and
+        # the right-aligned time column.
         rank_w = 10.0
         flag_w = 9.0
+        actions_w = 9.0
         time_w = max(24.0, inner_w * 0.24)
-        player_w = max(12.0, inner_w - rank_w - flag_w - time_w)
+        player_max = max(20.0, inner_w * 0.32)
+        player_w = max(
+            12.0,
+            min(player_max, inner_w - rank_w - flag_w - actions_w - time_w),
+        )
 
         col_rank_x = pad_x + 2.0
         col_flag_x = pad_x + rank_w + 1.0
         col_player_x = pad_x + rank_w + flag_w + 1.5
+        col_actions_x = col_player_x + player_w
         col_time_x = pad_x + inner_w - 1.5
 
         parts: list[str] = []
@@ -666,6 +733,11 @@ class TabScoreboard(AppConfig):
             f'textcolor="ffae00ff" text="PLAYER"/>'
         )
         parts.append(
+            f'<label pos="{col_actions_x + (actions_w / 2.0)} {table_top - 2.0}" size="{actions_w} 4" '
+            f'halign="center" valign="center2" textsize="1" textfont="GameFontBlack" '
+            f'textcolor="ffae00ff" text="ACT"/>'
+        )
+        parts.append(
             f'<label pos="{col_time_x} {table_top - 2.0}" size="{time_w} 4" '
             f'halign="right" valign="center2" textsize="1" textfont="GameFontBlack" '
             f'textcolor="ffae00ff" text="{score_label}"/>'
@@ -705,21 +777,44 @@ class TabScoreboard(AppConfig):
                 )
                 nick = _xml_escape(r.get("nickname") or r.get("login") or "?")
                 target_login = _xml_escape(r.get("login") or "")
-                eye_size = 3.2
-                eye_x = col_player_x + player_w - 4.3
                 parts.append(
-                    f'<label pos="{col_player_x} {row_y - 2.0}" size="{player_w - 5.0} 4" '
+                    f'<label pos="{col_player_x} {row_y - 2.0}" size="{player_w - 1.0} 4" '
                     f'halign="left" valign="center2" textsize="1.1" textcolor="ffffffff" '
                     f'text="{nick}"/>'
                 )
-                if target_login and not r.get("spectator"):
-                    parts.append(
-                        f'<frame pos="{eye_x} {row_y - 0.4}" data-login="{target_login}">'
-                        f'<quad pos="0 0" size="{eye_size} {eye_size}" '
+                # Per-row action buttons live inside a parent ``<frame>``
+                # that carries ``data-login``. The widget_engine click
+                # script reads the target via ``Event.Control.Parent``
+                # (``DataAttributeGet`` is only defined on ``CMlFrame``).
+                # Spec icon is omitted for self and for rows already in
+                # spectator mode.
+                if target_login:
+                    icon_size = 3.4
+                    eye_x = 0.0
+                    profile_x = icon_size + 1.4
+                    frame_x = col_actions_x + 1.2
+                    frame_y = row_y - 0.3
+                    quads: list[str] = []
+                    if not r.get("spectator") and not is_me:
+                        quads.append(
+                            f'<quad pos="{eye_x} 0" size="{icon_size} {icon_size}" '
+                            f'halign="left" valign="top" z-index="7" '
+                            f'class="toggleSpec" scriptevents="1" '
+                            f'style="Icons64x64_1" substyle="ShowRight2" '
+                            f'tooltip="Spectate"/>'
+                        )
+                    quads.append(
+                        f'<quad pos="{profile_x} 0" size="{icon_size} {icon_size}" '
                         f'halign="left" valign="top" z-index="7" '
-                        f'class="toggleSpec" scriptevents="1" '
-                        f'style="Icons64x64_1" substyle="ShowRight2"/>'
-                        f'</frame>'
+                        f'class="openProfile" scriptevents="1" '
+                        f'style="Icons64x64_1" substyle="Buddy" '
+                        f'tooltip="Profile"/>'
+                    )
+                    parts.append(
+                        f'<frame pos="{frame_x} {frame_y}" '
+                        f'data-login="{target_login}">'
+                        + "".join(quads)
+                        + '</frame>'
                     )
                 score_color = (
                     "aaaaaaff" if r.get("giveup") else

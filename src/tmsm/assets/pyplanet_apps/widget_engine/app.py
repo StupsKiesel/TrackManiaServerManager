@@ -35,6 +35,34 @@ _MANIALINK_CLOSE_RE = re.compile(r"<\s*/\s*manialink\s*>", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 
+# Static baseline of native title-pack UI module ids the engine knows how
+# to hide. Used by `init_ui_modules` so the "enable everything, then hide
+# only what active replacements need" pass can re-enable a module even
+# when the widget that originally hid it is no longer registered (fully
+# removed code, stale server-side hide carried across a restart, etc.).
+# Keep in sync with the manager catalog (`views._CATALOG`) and any
+# addon's `hide_ui_modules` declaration.
+_KNOWN_UI_MODULE_IDS: tuple[str, ...] = (
+    "Race_ScoresTable",
+    "Race_ScoresTable2",
+    "Race_ScoresTable3",
+    "Race_Chrono",
+    "Race_Chrono2",
+    "Race_ChronoTable",
+    "Race_Checkpoint",
+    "Race_RespawnHelper",
+    "Race_Countdown",
+    "Race_Record",
+    "Race_LapsCounter",
+    "Race_DisplayMessage",
+    "Race_BigMessage",
+    "Race_HUD",
+    "Race_HUD_BigMessage",
+    "Rounds_BigMessage",
+    "Rounds_SmallMessage",
+)
+
+
 # Signals emitted/consumed by the engine. The setup pass registers all of
 # them up front so listeners attaching before the engine app is loaded
 # don't race the `get_signal` call.
@@ -101,6 +129,12 @@ class WidgetsApp(AppConfig):
         # widget_key -> tuple(ids). Missing key = inherit addon manifest;
         # empty tuple = explicit "hide nothing".
         self._ui_modules_overrides: dict[str, tuple[str, ...]] = {}
+        # Title-pack UI module ids the engine has hidden server-wide via
+        # `Common.UIModules.SetProperties`. Tracked so reconcile can
+        # re-show a module once no active replacement needs it hidden —
+        # including when every replacement was uninstalled/disabled and
+        # there is nothing left to derive the "show" command from.
+        self._hidden_ui_modules: set[str] = set()
         # owner -> set of (login, key) transient overlays set through
         # tmsm_widgets:runtime_override_set with a specific login.
         self._runtime_owner_transients: dict[str, set[tuple[str, str]]] = {}
@@ -170,6 +204,15 @@ class WidgetsApp(AppConfig):
             thick = self.storage.setting_get("strip_thickness")
             if thick is not None:
                 self.engine.strip_thickness = float(thick)
+            gce = self.storage.setting_get("global_colors_enabled")
+            if gce is not None:
+                self.engine.global_colors_enabled = gce in ("1", "true", "True")
+            gbg = self.storage.setting_get("global_bg_color")
+            if gbg:
+                self.engine.global_bg_color = gbg
+            gsc = self.storage.setting_get("global_strip_color")
+            if gsc:
+                self.engine.global_strip_color = gsc
         except Exception:
             logger.exception("widget_engine: settings hydrate failed")
         # Hydrate per-replacement UI module overrides (JSON list).
@@ -192,6 +235,18 @@ class WidgetsApp(AppConfig):
                     )
         except Exception:
             logger.exception("widget_engine: UI modules overrides hydrate failed")
+        # Hydrate the set of title-pack UI module ids we hid in a previous
+        # session. `Common.UIModules.SetProperties` persists server-side
+        # across PyPlanet restarts, so without this record a restart with
+        # no active replacement could never revert a stale hide.
+        try:
+            raw = self.storage.setting_get("hidden_ui_modules")
+            if raw:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    self._hidden_ui_modules = {str(x) for x in parsed if x}
+        except Exception:
+            logger.exception("widget_engine: hidden_ui_modules hydrate failed")
         # Player connect: re-assert replacements for that player after the
         # original manialink lands. Each replacement entry carries its own
         # delay so addons can tune ordering vs PyPlanet's own override.
@@ -266,6 +321,15 @@ class WidgetsApp(AppConfig):
             asyncio.ensure_future(self._delayed_initial_widget_push())
         except Exception:
             logger.exception("widget_engine: schedule delayed widget push failed")
+        # One-shot UI-modules reconcile after registrations settle. Install/
+        # deinstall trigger a PyPlanet restart; the dedicated server keeps
+        # whatever module visibility the previous session set, so on boot
+        # we must re-assert it (showing modules no active replacement wants
+        # hidden — including the legacy case where nothing was persisted).
+        try:
+            asyncio.ensure_future(self._startup_ui_modules_reconcile())
+        except Exception:
+            logger.exception("widget_engine: schedule startup UI reconcile failed")
         logger.info("widget_engine: ready (slice 12 — settings + copy-to)")
 
     async def _delayed_initial_widget_push(self) -> None:
@@ -496,6 +560,14 @@ class WidgetsApp(AppConfig):
             return False
         self._register_entry(entry)
         await self._redisplay(key)
+        # Re-apply native UI module visibility now that an active
+        # replacement may need some modules hidden.
+        try:
+            await self.init_ui_modules()
+        except Exception:
+            logger.exception(
+                "widget_engine: install '%s' UI modules init failed", key,
+            )
         return True
 
     async def uninstall_widget(self, key: str) -> bool:
@@ -520,6 +592,20 @@ class WidgetsApp(AppConfig):
             return False
         await self.storage.add_tombstone(key)
         self._entries.pop(key, None)
+        # Drop any GBX manialink-id claim this widget held so reconcile no
+        # longer treats it as a (now phantom) replacement.
+        for mlid, owner in list(self._replacements.items()):
+            if owner == key:
+                self._replacements.pop(mlid, None)
+        # Re-show any title-pack UI modules this widget had hidden now that
+        # it is gone; init decides globally in case other widgets still
+        # hide the same ids (enable-all-then-disable-needed).
+        try:
+            await self.init_ui_modules()
+        except Exception:
+            logger.exception(
+                "widget_engine: uninstall '%s' UI modules init failed", key,
+            )
         logger.info("widget_engine: uninstalled '%s'", key)
         return True
 
@@ -713,6 +799,20 @@ class WidgetsApp(AppConfig):
                     "widget_engine: redisplay push replacement '%s' failed",
                     key,
                 )
+            # Reconcile native UI module visibility: when the row gets
+            # disabled the replacement clears, so the title-pack module
+            # must be re-shown; on re-enable it must be re-hidden. Skip
+            # the call when the replacement declares no UI modules to
+            # hide — `_reconcile_all_ui_modules` short-circuits anyway,
+            # but avoiding the call keeps disable/enable cheap.
+            if self.get_effective_hide_ui_modules(key):
+                try:
+                    await self._reconcile_all_ui_modules()
+                except Exception:
+                    logger.exception(
+                        "widget_engine: redisplay reconcile UI modules for '%s' failed",
+                        key,
+                    )
 
     def _debug_logins_for(self, key: str) -> list[str]:
         logins: list[str] = []
@@ -997,8 +1097,26 @@ class WidgetsApp(AppConfig):
             and self.engine.current_phase not in entry.visible_phases
         )
         clear = out_of_phase or (resolved is not None and bool(resolved.disabled))
+        logger.info(
+            "widget_engine: push_replacement key='%s' id=%s clear=%s "
+            "row_disabled=%s out_of_phase=%s logins=%s",
+            key, manialink_id, clear,
+            (resolved.disabled if resolved is not None else "n/a"),
+            out_of_phase,
+            ("broadcast" if logins is None else len(logins)),
+        )
         if clear:
-            xml = f'<manialink id="{manialink_id}" version="3"></manialink>'
+            # Some TM2020 client builds do not treat a truly empty
+            # `<manialink id=X></manialink>` body as a clear — the
+            # previously-rendered content stays on screen. Sending a
+            # well-formed body that contains only an invisible no-op
+            # quad reliably replaces the previous manialink content
+            # with "nothing visible" on every client.
+            xml = (
+                f'<manialink id="{manialink_id}" version="3">'
+                f'<quad pos="0 0" size="0 0" />'
+                f'</manialink>'
+            )
             if out_of_phase:
                 logger.debug(
                     "widget_engine: clearing replacement '%s' id=%s "
@@ -1024,9 +1142,9 @@ class WidgetsApp(AppConfig):
                 await self.instance.gbx(
                     "SendDisplayManialinkPage", xml, 0, False,
                 )
-                logger.debug(
-                    "widget_engine: broadcast replacement '%s' id=%s (%d bytes)",
-                    key, manialink_id, len(xml),
+                logger.info(
+                    "widget_engine: broadcast replacement '%s' id=%s clear=%s (%d bytes)",
+                    key, manialink_id, clear, len(xml),
                 )
             except Exception:
                 logger.exception(
@@ -1185,31 +1303,70 @@ class WidgetsApp(AppConfig):
         sl = []
         sl.append('<script><!--\n')
         sl.append('main() {\n')
-        sl.append('  declare CMlFrame WeAnim <=> (Page.GetFirstChild("we_anim") as CMlFrame);\n')
-        sl.append('  if (WeAnim == Null) return;\n')
+        # ManiaScript requires every `declare` in a block to come BEFORE
+        # any executable statement; interleaving them (e.g. an early
+        # `if (... ) return;` followed by more declares) silently fails to
+        # compile and the whole main() never runs — which leaves the
+        # widget stuck at its initial (visible) position and makes the
+        # hold-to-show hotkey inert. Emit ALL declares first.
+        #
+        # Also: do NOT cache the animated frame for the whole script
+        # lifetime. External alignment tools (e.g. AlignUI) destroy and
+        # recreate widget controls underneath the still-running script,
+        # which invalidates a cached `<=>` reference and makes the next
+        # AnimMgr.Add raise "Parameter is not a CGameManialinkControl".
+        # The frame is re-resolved every loop iteration instead.
         sl.append(
             f'  declare Text TweenHidden = "<frame pos=\\"{off_x} {off_y}\\"/>";\n'
         )
         sl.append('  declare Text TweenVisible = "<frame pos=\\"0 0\\"/>";\n')
         sl.append(f'  declare Integer AnimDur = {anim_dur};\n')
-        sl.append(f'  declare Integer InDelay = {in_delay};\n')
-        sl.append(f'  declare Integer OutDelay = {out_delay};\n')
         sl.append(
             f'  declare Boolean AnimEnabled = {"True" if anim_enabled else "False"};\n'
         )
-        sl.append('  declare Boolean Concealed = False;\n')
-        if start_hidden:
-            sl.append('  AnimMgr.Add(WeAnim, TweenHidden, 0, CAnimManager::EAnimManagerEasing::Linear);\n')
-            sl.append('  Concealed = True;\n')
+        sl.append(
+            f'  declare Boolean Concealed = {"True" if start_hidden else "False"};\n'
+        )
         sl.append('  declare Boolean InRepeat = False;\n')
         sl.append('  declare Integer LastKey = -10000;\n')
+        sl.append('  declare Boolean WeReady = False;\n')
+        # --- statements (after all declares) ---
         sl.append('  while (True) {\n')
         sl.append('    yield;\n')
+        # Re-resolve the frame fresh each tick; if an alignment tool removed
+        # it this frame, drop our "ready" flag and try again next tick.
+        sl.append('    declare CMlFrame WeAnim <=> (Page.GetFirstChild("we_anim") as CMlFrame);\n')
+        sl.append('    if (WeAnim == Null) { WeReady = False; continue; }\n')
+        # When the frame first appears (or reappears after being recreated),
+        # snap it to the current visual state instantly so a freshly aligned
+        # frame does not pop back to its default (visible) position.
+        sl.append('    if (!WeReady) {\n')
+        sl.append('      WeReady = True;\n')
+        sl.append('      if (Concealed) AnimMgr.Add(WeAnim, TweenHidden, 0, CAnimManager::EAnimManagerEasing::Linear);\n')
+        sl.append('      else AnimMgr.Add(WeAnim, TweenVisible, 0, CAnimManager::EAnimManagerEasing::Linear);\n')
+        sl.append('    }\n')
         sl.append('    foreach (Event in PendingEvents) {\n')
-        sl.append('      if (Event.Type == CMlScriptEvent::Type::MouseClick && Event.Control.HasClass("toggleSpec")) {\n')
+        sl.append('      if (Event.Type == CMlScriptEvent::Type::MouseClick) {\n')
         sl.append('        declare CMlFrame Row <=> Event.Control.Parent;\n')
         sl.append('        if (Row != Null) {\n')
-        sl.append('          SetSpectateTarget(Row.DataAttributeGet("login"));\n')
+        sl.append('          declare Text PlLogin = Row.DataAttributeGet("login");\n')
+        sl.append('          if (PlLogin != "") {\n')
+        sl.append('            if (Event.Control.HasClass("toggleSpec")) {\n')
+        sl.append('              TriggerPageAction("widget_engine__spec__" ^ PlLogin);\n')
+        sl.append('            } else if (Event.Control.HasClass("openProfile")) {\n')
+        # TM2020 has no client OpenLink profile target and ShowProfile() is
+        # Maniaplanet-only (it hard-crashes here). The native in-game card is
+        # opened by writing the player's account id (WebServicesUserId) into the
+        # ClientUI variable the scores-table reads. Resolve the account id from
+        # the login via the live Players list; if not found we simply do nothing.
+        sl.append('              declare Text TMGame_ScoresTable_OpenProfileUserId for ClientUI = "";\n')
+        sl.append('              declare Text WeProfileId = "";\n')
+        sl.append('              foreach (WePlayer in Players) {\n')
+        sl.append('                if (WePlayer.User.Login == PlLogin) { WeProfileId = WePlayer.User.WebServicesUserId; }\n')
+        sl.append('              }\n')
+        sl.append('              if (WeProfileId != "") { TMGame_ScoresTable_OpenProfileUserId = WeProfileId; }\n')
+        sl.append('            }\n')
+        sl.append('          }\n')
         sl.append('        }\n')
         sl.append('      }\n')
         if hotkey:
@@ -1220,7 +1377,6 @@ class WidgetsApp(AppConfig):
             sl.append('          if (Concealed) {\n')
             sl.append('            Concealed = False;\n')
             sl.append('            InRepeat = False;\n')
-            sl.append('            if (InDelay > 0) sleep(InDelay);\n')
             sl.append('            if (AnimEnabled) AnimMgr.Add(WeAnim, TweenVisible, AnimDur, CAnimManager::EAnimManagerEasing::QuadInOut);\n')
             sl.append('            else AnimMgr.Add(WeAnim, TweenVisible, 0, CAnimManager::EAnimManagerEasing::Linear);\n')
             sl.append('          }\n')
@@ -1234,7 +1390,6 @@ class WidgetsApp(AppConfig):
             sl.append('      if (Now - LastKey > Timeout) {\n')
             sl.append('        Concealed = True;\n')
             sl.append('        InRepeat = False;\n')
-            sl.append('        if (OutDelay > 0) sleep(OutDelay);\n')
             sl.append('        if (AnimEnabled) AnimMgr.Add(WeAnim, TweenHidden, AnimDur, CAnimManager::EAnimManagerEasing::QuadInOut);\n')
             sl.append('        else AnimMgr.Add(WeAnim, TweenHidden, 0, CAnimManager::EAnimManagerEasing::Linear);\n')
             sl.append('      }\n')
@@ -1269,6 +1424,13 @@ class WidgetsApp(AppConfig):
                 "Common.UIModules.SetProperties",
                 [json.dumps(payload)],
             )
+            # Track what is currently hidden so reconcile can revert it
+            # later even if the originating replacement is gone.
+            if visible:
+                self._hidden_ui_modules.difference_update(ids)
+            else:
+                self._hidden_ui_modules.update(ids)
+            await self._persist_hidden_ui_modules()
             logger.debug(
                 "widget_engine: Common.UIModules.SetProperties ids=%s visible=%s",
                 ids, visible,
@@ -1279,6 +1441,89 @@ class WidgetsApp(AppConfig):
                 "Common.UIModules.SetProperties failed (ids=%s, visible=%s)",
                 ids, visible,
             )
+
+    async def _persist_hidden_ui_modules(self) -> None:
+        """Persist the current server-side hidden-module set so a later
+        PyPlanet restart can revert it even when no replacement is active
+        (the modescript keeps the hidden state across our restarts)."""
+        try:
+            if self._hidden_ui_modules:
+                await self.storage.setting_set(
+                    "hidden_ui_modules",
+                    json.dumps(sorted(self._hidden_ui_modules)),
+                )
+            else:
+                await self.storage.setting_delete("hidden_ui_modules")
+        except Exception:
+            logger.exception("widget_engine: persist hidden_ui_modules failed")
+
+    async def _startup_ui_modules_reconcile(self) -> None:
+        """Clean UI-module init after a (re)start.
+
+        `Common.UIModules.SetProperties` lives in the dedicated server's
+        modescript and survives PyPlanet restarts, so on boot the native
+        UI may still be hidden from a previous session. We do an explicit
+        two-phase init once registrations settle:
+
+          1. ENABLE every internal module that any *known* replacement
+             (installed or merely available) could ever hide, plus
+             anything we previously recorded as hidden — establishing a
+             known-good baseline.
+          2. DISABLE only the modules that an installed AND active
+             replacement actually needs hidden right now.
+        """
+        for delay in (3.0, 8.0):
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+        try:
+            await self.init_ui_modules()
+        except Exception:
+            logger.exception("widget_engine: startup UI modules init failed")
+
+    async def init_ui_modules(self) -> None:
+        """Reset native UI module visibility to match the current set of
+        installed/active replacements: show the full candidate universe,
+        then hide only what active replacements require. Safe to call any
+        time the install/active state changes."""
+        # Phase 0: gather the full universe of module ids any known
+        # replacement could hide, plus whatever is currently/previously
+        # recorded as hidden, so stale server-side hides get cleared.
+        candidates: set[str] = set(self._hidden_ui_modules)
+        # Static baseline so we can re-enable a module even when the widget
+        # that hid it is no longer registered at all (fully removed code or
+        # a stale hide carried across a restart with nothing to derive it
+        # from). Showing an already-visible module is a harmless no-op.
+        candidates.update(_KNOWN_UI_MODULE_IDS)
+        known = {**self._available, **self._entries}
+        for key, entry in known.items():
+            if not getattr(entry, "gbx_replace", None):
+                continue
+            for mid in self.get_effective_hide_ui_modules(key):
+                if mid:
+                    candidates.add(mid)
+
+        # Phase 2: figure out what installed + active replacements need
+        # hidden right now (only `_entries` are installed).
+        to_hide: set[str] = set()
+        for key in self._entries:
+            entry = self._entries.get(key)
+            if entry is None or not getattr(entry, "gbx_replace", None):
+                continue
+            if not self.is_replacement_active(key):
+                continue
+            for mid in self.get_effective_hide_ui_modules(key):
+                if mid:
+                    to_hide.add(mid)
+
+        # Phase 1: enable the baseline (everything not needed hidden).
+        to_show = candidates - to_hide
+        if to_show:
+            await self._apply_ui_modules_visibility(tuple(sorted(to_show)), visible=True)
+        # Phase 2 apply: disable the modules active replacements claim.
+        if to_hide:
+            await self._apply_ui_modules_visibility(tuple(sorted(to_hide)), visible=False)
 
     async def _reconcile_ui_modules_for(self, key: str) -> None:
         """Re-apply the title-pack UI module visibility for replacement
@@ -1319,13 +1564,16 @@ class WidgetsApp(AppConfig):
                     continue
                 desired_hidden[mid] = bool(desired_hidden.get(mid, False) or active)
 
-        if not desired_hidden:
-            return
-
-        to_show = tuple(mid for mid, hidden in desired_hidden.items() if not hidden)
         to_hide = tuple(mid for mid, hidden in desired_hidden.items() if hidden)
+        # Show modules that are explicitly desired-visible, plus any module
+        # the engine previously hid that no active replacement wants hidden
+        # anymore. The latter covers the all-replacements-removed case
+        # where `desired_hidden` is empty: without it the title-pack UI
+        # would stay hidden forever.
+        to_show = {mid for mid, hidden in desired_hidden.items() if not hidden}
+        to_show |= (self._hidden_ui_modules - set(to_hide))
         if to_show:
-            await self._apply_ui_modules_visibility(to_show, visible=True)
+            await self._apply_ui_modules_visibility(tuple(to_show), visible=True)
         if to_hide:
             await self._apply_ui_modules_visibility(to_hide, visible=False)
 
@@ -1349,6 +1597,7 @@ class WidgetsApp(AppConfig):
             "disable": self._sub_disable,
             "enable":  self._sub_enable,
             "reset":   self._sub_reset,
+            "resend":  self._sub_resend,
             "phase":   self._sub_phase,
             "pset":    self._sub_pset,
             "pclear":  self._sub_pclear,
@@ -1361,6 +1610,7 @@ class WidgetsApp(AppConfig):
             "rlist":   self._sub_rlist,
             "umap":    self._sub_umap,
             "ushow":   self._sub_ushow,
+            "uinit":   self._sub_uinit,
             "debug":   self._sub_debug,
             "edit":    self._sub_edit,
             "done":    self._sub_done,
@@ -1386,6 +1636,7 @@ class WidgetsApp(AppConfig):
             "$fff//widget disable <key>$888 — hide widget (master kill-switch)",
             "$fff//widget enable <key>$888 — un-hide widget",
             "$fff//widget reset <key>$888 \u2014 restore code defaults",
+            "$fff//widget resend [<key>|all]$888 \u2014 force-resend gbx replacement(s) to you (kicks stuck/empty client-side state)",
             "$fff//widget phase [<name>]$888 \u2014 show or override current phase",
             "$fff//widget plist [<key>]$888 \u2014 list phase overrides",
             "$fff//widget pset <key> <phase> <x> <y> <w> <h>$888 \u2014 set phase position override",
@@ -1489,6 +1740,57 @@ class WidgetsApp(AppConfig):
         await self.storage.set_disabled(key, False)
         await self._redisplay(key)
         await self.instance.chat(f"$0afwidget_engine: '{key}' reset to code defaults", player.login)
+
+    async def _sub_resend(self, player, rest):
+        """Force a fresh per-player push of one or all gbx replacements
+        to the calling player. Used to recover from stale client-side
+        manialink state (e.g. an empty frame left over from a removed
+        per-player off-switch). Also clears any in-memory transient
+        override for that key so the resend reflects the global state."""
+        target_arg = (rest[0].lower() if rest else "all")
+        if target_arg in {"all", "*"}:
+            keys = [
+                k for k in self._replacements.values()
+                if self._entries.get(k) and self._entries[k].gbx_replace
+            ]
+        else:
+            if target_arg not in self._entries:
+                await self.instance.chat(
+                    "$f80usage: //widget resend [<key>|all]", player.login,
+                )
+                return
+            entry = self._entries[target_arg]
+            if not entry.gbx_replace:
+                await self.instance.chat(
+                    f"$f80widget_engine: '{target_arg}' is not a gbx replacement",
+                    player.login,
+                )
+                return
+            keys = [target_arg]
+        if not keys:
+            await self.instance.chat(
+                "$f80widget_engine: no gbx replacements installed", player.login,
+            )
+            return
+        for k in keys:
+            try:
+                await self.engine.clear_transient(player.login, k)
+            except Exception:
+                logger.exception(
+                    "widget_engine: resend clear transient '%s' for '%s' failed",
+                    k, player.login,
+                )
+            try:
+                await self.push_replacement(k, logins=[player.login])
+            except Exception:
+                logger.exception(
+                    "widget_engine: resend push '%s' for '%s' failed",
+                    k, player.login,
+                )
+        await self.instance.chat(
+            f"$0afwidget_engine: resent {len(keys)} replacement(s) to you",
+            player.login,
+        )
 
     async def _sub_phase(self, player, rest):
         if not rest:
@@ -1889,6 +2191,18 @@ class WidgetsApp(AppConfig):
         await self._apply_ui_modules_visibility(modules, visible=True)
         await self.instance.chat(
             "$0afwidget_engine: forced visible (once): $fff" + ", ".join(modules),
+            player.login,
+        )
+
+    async def _sub_uinit(self, player, rest):  # noqa: ARG002
+        """Re-run the UI-modules init: enable every known internal module,
+        then re-hide only those an installed+active replacement needs.
+        Use this to recover native UI stuck hidden after a restart."""
+        await self.init_ui_modules()
+        hidden = sorted(self._hidden_ui_modules)
+        await self.instance.chat(
+            "$0afwidget_engine: UI modules re-initialised. Now hidden: $fff"
+            + (", ".join(hidden) if hidden else "(none)"),
             player.login,
         )
 

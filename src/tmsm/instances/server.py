@@ -17,6 +17,34 @@ class GameType(str, Enum):
     MANIAPLANET = "maniaplanet"
 
 
+def _dedicated_flags(meta: dict, srv_dir: Path) -> list[str]:
+    """Assemble the dedicated boot flags (everything after the binary path)
+    from a flat instance.toml mapping.
+
+    KEEP IN SYNC WITH the identical copy in
+    ``src/tmsm/assets/pyplanet_apps/restart/app.py`` — that PyPlanet app
+    lives in a different runtime (WSL) and cannot import this module, so
+    the body must be mirrored byte-for-byte. Defaults reproduce the
+    historic hardcoded command line.
+    """
+    flags: list[str] = []
+    # /nodaemon keeps the server in the foreground. Without it the
+    # dedicated server forks and the parent exits, which tears down our
+    # screen session and makes tmsm think the server crashed.
+    if meta.get("nodaemon", True):
+        flags.append("/nodaemon")
+    flags.append(f"/title={meta.get('title', 'Trackmania')}")
+    flags.append(f"/dedicated_cfg={meta.get('dedicated_cfg', 'dedicated_cfg.txt')}")
+    ms = meta.get("matchsettings", "MatchSettings/example.txt")
+    if ms and (srv_dir / "UserData" / "Maps" / ms).is_file():
+        flags.append(f"/game_settings={ms}")
+    extra = meta.get("extra_args")
+    if isinstance(extra, (list, tuple)):
+        for item in extra:
+            flags.append(str(item))
+    return flags
+
+
 @dataclass
 class ServerMeta:
     name: str
@@ -26,6 +54,12 @@ class ServerMeta:
     title: str = "Trackmania"
     linked_pool: str | None = None      # pool name, if any
     binary: str = "TrackmaniaServer"    # relative to root/server/
+    # Modular dedicated boot args. Defaults reproduce the historic
+    # hardcoded command line, so pre-existing instances behave unchanged.
+    nodaemon: bool = True
+    dedicated_cfg: str = "dedicated_cfg.txt"
+    matchsettings: str = "MatchSettings/example.txt"
+    extra_args: list[str] = field(default_factory=list)
 
     @staticmethod
     def load(root: Path) -> "ServerMeta":
@@ -61,19 +95,14 @@ class GameServerInstance(Instance):
 
     def argv(self) -> list[str]:
         bin_path = self.server_dir() / self.meta.binary
-        args = [
-            str(bin_path),
-            # /nodaemon keeps the server in the foreground. Without it the
-            # dedicated server forks and the parent exits, which tears down
-            # our screen session and makes tmsm think the server crashed.
-            "/nodaemon",
-            f"/title={self.meta.title}",
-            "/dedicated_cfg=dedicated_cfg.txt",
-        ]
-        maplist = self.server_dir() / "UserData" / "Maps" / "MatchSettings" / "example.txt"
-        if maplist.is_file():
-            args.append("/game_settings=MatchSettings/example.txt")
-        return args
+        meta = {
+            "title": self.meta.title,
+            "nodaemon": self.meta.nodaemon,
+            "dedicated_cfg": self.meta.dedicated_cfg,
+            "matchsettings": self.meta.matchsettings,
+            "extra_args": list(self.meta.extra_args or []),
+        }
+        return [str(bin_path), *_dedicated_flags(meta, self.server_dir())]
 
     def xmlrpc_port_str(self) -> str:
         return str(self.meta.xmlrpc_port)

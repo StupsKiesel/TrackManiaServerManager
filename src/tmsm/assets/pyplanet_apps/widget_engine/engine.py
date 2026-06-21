@@ -48,6 +48,11 @@ class WidgetEngine:
         # Engine-wide display flags (later slices: persisted in we_setting).
         self.strip_prefer_top: bool = False
         self.strip_thickness: float = 1.0
+        # Global color overrides: when enabled, every widget's bg/strip
+        # color is replaced by these values at resolve time.
+        self.global_colors_enabled: bool = False
+        self.global_bg_color: str = "40404080"
+        self.global_strip_color: str = "ffae00"
         # Current race phase. None until the host sets it (or stays None
         # forever for hosts that don't report phases). Slice 3.
         self.current_phase: Optional[Phase] = None
@@ -99,8 +104,23 @@ class WidgetEngine:
             keys: set[str] = set()
             for key, entry in self._host._entries.items():
                 phases = entry.visible_phases
-                if phases is None or p in phases:
-                    keys.add(key)
+                if phases is not None and p not in phases:
+                    continue
+                # A widget that is statically allowed in phase `p` is
+                # still INVISIBLE there when the operator disabled it
+                # — either globally (base row) or per-phase override.
+                # Skipping this check made `incoming`/`outgoing` purely
+                # static, so a phase-only disable toggled while the
+                # current phase was already showing the widget never
+                # caused a refresh on later phase transitions (and a
+                # copy-to-other-phases never took effect either).
+                row = self._host.storage.get(key)
+                if row and bool(row.get("disabled")):
+                    continue
+                phase_row = self._host.storage.phase_get(key, p)
+                if phase_row and bool(phase_row.get("disabled")):
+                    continue
+                keys.add(key)
             return keys
 
         old_visible = _visible_in(previous)
@@ -159,10 +179,18 @@ class WidgetEngine:
         transient_row = self.get_transient(login, key)
         runtime_row = self.get_runtime_layout(key)
         if runtime_row:
-            # Respect explicit phase-level disabled overrides. Runtime layout
-            # is used by gamemodes/profile overlays and should not re-enable a
-            # widget that the operator disabled for the current phase.
-            if phase_row is not None and bool(phase_row.get("disabled")):
+            # The master kill-switch (operator-level `disabled` on the
+            # base row, or a phase-level `disabled` override) MUST win
+            # over any runtime layout. Gamemode/profile overlays publish
+            # a layout that always carries `disabled=False` for every
+            # widget in the profile (it's a layout, not an enable
+            # decision), and without this guard that `False` would
+            # silently re-enable a widget the operator just disabled.
+            base_disabled = bool(row.get("disabled")) if row else False
+            phase_disabled = (
+                phase_row is not None and bool(phase_row.get("disabled"))
+            )
+            if base_disabled or phase_disabled:
                 runtime_row = dict(runtime_row)
                 runtime_row.pop("disabled", None)
             merged = dict(runtime_row)
@@ -177,6 +205,8 @@ class WidgetEngine:
             phase=effective_phase,
             strip_prefer_top=self.strip_prefer_top,
             strip_thickness=self.strip_thickness,
+            global_bg_color=(self.global_bg_color if self.global_colors_enabled else None),
+            global_strip_color=(self.global_strip_color if self.global_colors_enabled else None),
         )
         return self._apply_ui_calibration(login, resolved)
 
@@ -448,16 +478,15 @@ class WidgetEngine:
 
     async def enter_edit(self, login: str, key: str) -> bool:
         """Mark a widget as being edited by this player. Returns True if
-        the call changed anything. Auto-enables the debug overlay for the
-        edited widget so the live provenance label is visible."""
+        the call changed anything. Debug overlay is NOT toggled here —
+        it is a separate, explicit per-player choice (otherwise leaving
+        edit mode would strand the overlay enabled)."""
         if not login or key not in self._host._entries:
             return False
         prev = self._editing.get(login)
         if prev == key:
             return False
         self._editing[login] = key
-        # Make sure the player can see the live state while tweaking.
-        await self.set_debug(login, key, True)
         # If switching from another widget, refresh that one too so its
         # hide rules re-engage.
         if prev is not None and prev != key:
@@ -467,7 +496,7 @@ class WidgetEngine:
 
     async def exit_edit(self, login: str) -> Optional[str]:
         """Leave edit mode. Returns the key that was being edited (or None).
-        Debug overlay is left as-is so the player can keep inspecting."""
+        Debug overlay state is independent and is not touched here."""
         prev = self._editing.pop(login, None)
         if prev is None:
             return None

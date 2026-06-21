@@ -635,15 +635,7 @@ class RestartApp(AppConfig):
             raise RuntimeError(f"dedicated binary missing: {bin_path}")
 
         # Reconstruct argv the same way GameServerInstance.argv() does.
-        argv = [
-            str(bin_path),
-            "/nodaemon",
-            f"/title={title}",
-            "/dedicated_cfg=dedicated_cfg.txt",
-        ]
-        maplist = srv_dir / "UserData" / "Maps" / "MatchSettings" / "example.txt"
-        if maplist.is_file():
-            argv.append("/game_settings=MatchSettings/example.txt")
+        argv = [str(bin_path), *_dedicated_flags(meta, srv_dir)]
         argv_quoted = " ".join(_q(a) for a in argv)
 
         script = (
@@ -1080,6 +1072,34 @@ def _q(s: str) -> str:
 
 
 _TOML_KV = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$')
+
+
+def _dedicated_flags(meta: dict, srv_dir: Path) -> list[str]:
+    """Assemble the dedicated boot flags (everything after the binary path)
+    from a flat instance.toml mapping.
+
+    KEEP IN SYNC WITH the copy in ``src/tmsm/instances/server.py`` — that
+    host module lives in a different runtime and cannot be imported here,
+    so the body must be mirrored. Defaults reproduce the historic
+    hardcoded command line.
+
+    Note: ``_parse_toml_simple`` can only read scalar values, so
+    ``extra_args`` (a TOML list) arrives as a raw string here; the
+    isinstance guard keeps that from being iterated character-by-character.
+    """
+    flags: list[str] = []
+    if meta.get("nodaemon", True):
+        flags.append("/nodaemon")
+    flags.append(f"/title={meta.get('title', 'Trackmania')}")
+    flags.append(f"/dedicated_cfg={meta.get('dedicated_cfg', 'dedicated_cfg.txt')}")
+    ms = meta.get("matchsettings", "MatchSettings/example.txt")
+    if ms and (srv_dir / "UserData" / "Maps" / ms).is_file():
+        flags.append(f"/game_settings={ms}")
+    extra = meta.get("extra_args")
+    if isinstance(extra, (list, tuple)):
+        for item in extra:
+            flags.append(str(item))
+    return flags
 
 
 def _parse_toml_simple(path: Path) -> dict:

@@ -478,6 +478,7 @@ class ServerApp(AppConfig):
             "profiles": [],
             "save_as": st.get("save_as", ""),
             "confirm_delete": st.get("confirm_delete", ""),
+            "startup_profile": "",
             "page_size": self.PAGE_SIZE,
         }
         status_text, status_color = self._mode_status.get(login, ("", "aaa"))
@@ -588,6 +589,13 @@ class ServerApp(AppConfig):
         ctx["profiles"] = profiles[page * self.PAGE_SIZE:(page + 1) * self.PAGE_SIZE]
         ctx["match_total_pages"] = total
         ctx["profiles_count"] = len(profiles)
+        # The matchsettings file the dedicated boots with (instance.toml).
+        try:
+            from pyplanet.apps.tmsm.ui.maplist_io import active_matchsettings_rel
+            ctx["startup_profile"] = await active_matchsettings_rel(self.instance)
+        except Exception:
+            logger.exception("server: resolve startup profile failed")
+            ctx["startup_profile"] = ""
 
     # ---- input absorption -------------------------------------------
 
@@ -688,6 +696,12 @@ class ServerApp(AppConfig):
                 return
             rel = action[len("load_profile__"):]
             await self._load_profile(player, rel)
+            return
+        if action.startswith("set_startup__"):
+            if level < self.LEVEL_MASTER:
+                return
+            rel = action[len("set_startup__"):]
+            await self._set_startup_profile(player, rel)
             return
         if action == "save_current":
             if level < self.LEVEL_MASTER:
@@ -833,6 +847,29 @@ class ServerApp(AppConfig):
         self._loaded_profile = rel
         self._mode_draft.pop(player.login, None)
         self._mode_status[player.login] = (f"loaded {Path(rel).stem}", "0f0")
+        await self._open(self.game_view, player)
+
+    async def _set_startup_profile(self, player, rel: str) -> None:
+        """Persist `rel` as the matchsettings the dedicated boots with.
+
+        Writes the `matchsettings` key in instance.toml so both the host
+        (TUI) start path and the in-game restart path pick it up.
+        """
+        try:
+            from pyplanet.apps.tmsm.ui.maplist_io import set_active_matchsettings_rel
+            ok = await set_active_matchsettings_rel(self.instance, rel)
+        except Exception as e:
+            self._mode_status[player.login] = (f"set startup failed: {e}", "f44")
+            await self._open(self.game_view, player)
+            return
+        if ok:
+            self._mode_status[player.login] = (
+                f"startup maplist set to {Path(rel).stem}", "0f0",
+            )
+        else:
+            self._mode_status[player.login] = (
+                "could not persist startup maplist (instance.toml not found)", "f44",
+            )
         await self._open(self.game_view, player)
 
     async def _save_current(self, player) -> None:

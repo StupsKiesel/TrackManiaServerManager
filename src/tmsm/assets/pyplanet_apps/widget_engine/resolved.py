@@ -40,6 +40,8 @@ class ResolvedWidget:
         strip_prefer_top: bool,
         strip_thickness: float,
         row: "dict | None" = None,
+        global_bg_color: "str | None" = None,
+        global_strip_color: "str | None" = None,
     ) -> "ResolvedWidget":
         # `row` is a we_widget dict from storage. When present its non-NULL
         # values override the entry defaults; NULLs fall through.
@@ -65,8 +67,8 @@ class ResolvedWidget:
             anim_in_delay_ms=int(anim_in) if anim_in is not None else entry.animation.in_delay_ms,
             anim_out_delay_ms=int(anim_out) if anim_out is not None else entry.animation.out_delay_ms,
             disabled=disabled,
-            bg_color=entry.bg_color,
-            strip_color=entry.strip_color,
+            bg_color=(global_bg_color or entry.bg_color),
+            strip_color=(global_strip_color or entry.strip_color),
             strip_enabled=entry.strip_enabled,
             strip_edge=_strip_edge(ad, strip_prefer_top) if entry.strip_enabled else "",
             strip_thickness=strip_thickness,

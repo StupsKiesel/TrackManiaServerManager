@@ -157,6 +157,15 @@ class PodiumScoreboardWidgetApp(WidgetAppBase):
                 # No hold-to-show key: widget should be permanently
                 # visible while the podium phase is active.
                 hotkey=None,
+                # Hide every native scoreboard UI module variant during
+                # IN_PODIUM so the title-pack scoreboard doesn't draw on
+                # top of ours. The engine restores them automatically
+                # when the widget is disabled or out of phase.
+                hide_ui_modules=(
+                    "Race_ScoresTable",
+                    "Race_ScoresTable2",
+                    "Race_ScoresTable3",
+                ),
             ),
         )
 

@@ -54,10 +54,37 @@ def _ms_to_str(ms: int) -> str:
     return f"{s}.{ms:03d}"
 
 
+def _karma_display(pct: float | None) -> tuple[str, str]:
+    """Format a karma percentage (-1..+1 from sum(score)/sum(|score|)) as a
+    signed integer percent string + a manialink color. Returns ("--", grey)
+    when the map has no votes (``pct is None``)."""
+    if pct is None:
+        return ("--", "888")
+    try:
+        pct_i = int(round(float(pct) * 100))
+    except (TypeError, ValueError):
+        return ("--", "888")
+    if pct_i < -100:
+        pct_i = -100
+    if pct_i > 100:
+        pct_i = 100
+    sign = "+" if pct_i >= 0 else ""
+    if pct_i >= 50:
+        color = "0f8"
+    elif pct_i >= 0:
+        color = "fc4"
+    elif pct_i >= -50:
+        color = "f86"
+    else:
+        color = "f44"
+    return (f"{sign}{pct_i}%", color)
+
+
 def _map_to_row(m: Any) -> dict[str, Any]:
     """Coerce a PyPlanet Map model into a JSON-safe row dict."""
     return {
         "uid":          str(getattr(m, "uid", "") or ""),
+        "map_id":       int(getattr(m, "id", 0) or 0),
         "name":         str(getattr(m, "name", "") or "(unnamed)"),
         "name_clean":   _strip_styles(getattr(m, "name", "")),
         "author":       str(getattr(m, "author_nickname", None)
@@ -231,6 +258,50 @@ class App_Maplist(AppConfig):
         except Exception:
             return ""
 
+    async def _load_karma_pct(self, map_ids: list[int]) -> dict[int, float]:
+        """Aggregate the karma vote rows for the given Map PKs into
+        ``{map_id: sum(score) / sum(|score|)}``. Maps with no votes are
+        absent from the result; callers should treat missing keys as
+        "no votes yet" (rendered as ``--`` rather than ``0%``)."""
+        ids = [int(i) for i in (map_ids or []) if i]
+        if not ids:
+            return {}
+        try:
+            from pyplanet.apps.contrib.karma.models import Karma as KarmaModel
+        except Exception:
+            return {}
+        try:
+            rows = await KarmaModel.objects.execute(
+                KarmaModel.select().where(KarmaModel.map_id << ids)
+            )
+        except Exception:
+            logger.exception("maplist: karma fetch failed")
+            return {}
+        totals: dict[int, list[float]] = {}
+        for v in rows:
+            try:
+                mid = int(getattr(v, "map_id", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if not mid:
+                continue
+            score = getattr(v, "score", 0)
+            expanded = getattr(v, "expanded_score", None)
+            if expanded is not None:
+                score = expanded
+            try:
+                s = float(score or 0)
+            except (TypeError, ValueError):
+                s = 0.0
+            bucket = totals.setdefault(mid, [0.0, 0.0])
+            bucket[0] += s
+            bucket[1] += abs(s)
+        return {
+            mid: (tot / abs_tot) if abs_tot > 0 else 0.0
+            for mid, (tot, abs_tot) in totals.items()
+            if abs_tot > 0
+        }
+
     async def view_context(self, login: str) -> dict[str, Any]:
         st = self._state.setdefault(login, self._default_state())
         rows = self._filter(self._all_rows(), st["query"])
@@ -258,9 +329,18 @@ class App_Maplist(AppConfig):
             for e in self._queue_entries() if isinstance(e, dict)
         }
         current_uid = self._current_uid()
+        karma_pct = await self._load_karma_pct(
+            [r["map_id"] for r in page_rows if r.get("map_id")]
+        )
         for r in page_rows:
             r["in_queue"]   = r["uid"] in queue_uids
             r["is_current"] = r["uid"] == current_uid
+            mid = int(r.get("map_id") or 0)
+            pct = karma_pct.get(mid)
+            kstr, kcol = _karma_display(pct)
+            r["karma_pct"]   = pct if pct is not None else 0.0
+            r["karma_str"]   = kstr
+            r["karma_color"] = kcol
 
         return {
             "query":         st["query"],
@@ -614,4 +694,11 @@ class App_Maplist(AppConfig):
             self._set_status(login, "map removed from playlist (TMX metadata cleaned)", "0f8")
         else:
             self._set_status(login, "map removed from playlist", "0f8")
+        # Persist the playlist into the active startup matchsettings file so
+        # the removal survives a server restart (integrated //wml).
+        try:
+            from pyplanet.apps.tmsm.ui.maplist_io import write_active_matchsettings
+            await write_active_matchsettings(self.instance)
+        except Exception:
+            logger.exception("maplist: auto write_maplist after remove failed")
         await self._refresh_views()

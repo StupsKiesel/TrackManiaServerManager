@@ -8,7 +8,7 @@
    scripts=[{path,name,group}],
    match_page, match_total_pages, profiles_count,
    profiles=[{rel,name,size}],
-   save_as, confirm_delete, loaded_profile, page_size
+   save_as, confirm_delete, loaded_profile, startup_profile, page_size
 #}
 
 {% set W = 240 %}
@@ -157,6 +157,9 @@
       {{ ui.label('loaded: ', x=4, y=BY-2, size='sm', color='888') }}
       {{ ui.label((loaded_profile or '(unknown — load one to track)')[:80],
                   x=22, y=BY-2, size='sm') }}
+      {{ ui.label('boots: ', x=120, y=BY-2, size='sm', color='888') }}
+      {{ ui.label((startup_profile or '(default)')[:48],
+                  x=136, y=BY-2, size='sm', color='fc4') }}
 
       {% call ui.group_box('Profiles (' ~ profiles_count|string ~ ')',
                            x=4, y=BY-8, w=W-8, h=H-58) %}
@@ -164,23 +167,29 @@
         {% for p in profiles %}
           {% set yy = BY - 16 - loop.index0 * row_h %}
           {% set is_loaded = (p.rel == loaded_profile) %}
+          {% set is_startup = (p.rel == startup_profile) %}
           {% set is_confirm = (p.rel == confirm_delete) %}
-          {{ ui.label((' > ' if is_loaded else '   ') ~ p.name,
+          {{ ui.label((' > ' if is_loaded else '   ') ~ ('$fc4★$g ' if is_startup else '') ~ p.name,
                       x=8, y=yy, size='sm',
                       color=('0f0' if is_loaded else 'fff')) }}
-          {{ ui.label((p.size//1024)|string ~ ' kB', x=120, y=yy,
+          {{ ui.label((p.size//1024)|string ~ ' kB', x=104, y=yy,
                       halign='right', size='sm', color='666') }}
           {% if is_master %}
             {{ ui.push_button('load_profile__' ~ p.rel, 'Load',
-                              x=128, y=yy+1.5,
+                              x=112, y=yy+1.5,
                               variant=('ghost' if is_loaded else 'primary'),
                               size='sm', halign='left') }}
+            {{ ui.push_button('set_startup__' ~ p.rel,
+                              ('★Boot' if is_startup else 'Boot'),
+                              x=136, y=yy+1.5,
+                              variant=('success' if is_startup else 'ghost'),
+                              size='sm', halign='left') }}
             {{ ui.push_button('dup_profile__' ~ p.rel, 'Dup',
-                              x=152, y=yy+1.5, variant='ghost',
+                              x=164, y=yy+1.5, variant='ghost',
                               size='sm', halign='left') }}
             {{ ui.push_button('del_profile__' ~ p.rel,
                               ('Confirm?' if is_confirm else 'Del'),
-                              x=176, y=yy+1.5,
+                              x=186, y=yy+1.5,
                               variant=('danger' if is_confirm else 'ghost'),
                               size='sm', halign='left') }}
           {% endif %}

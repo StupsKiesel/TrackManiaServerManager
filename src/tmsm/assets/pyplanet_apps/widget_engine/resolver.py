@@ -71,6 +71,8 @@ def resolve(
     phase: Optional[Phase] = None,
     strip_prefer_top: bool = False,
     strip_thickness: float = 1.0,
+    global_bg_color: Optional[str] = None,
+    global_strip_color: Optional[str] = None,
 ) -> ResolvedWidget:
     """Compose the final widget state for the current frame."""
     effective = _merge_overlay(row, phase_row)
@@ -80,6 +82,8 @@ def resolve(
         strip_prefer_top=strip_prefer_top,
         strip_thickness=strip_thickness,
         row=effective,
+        global_bg_color=global_bg_color,
+        global_strip_color=global_strip_color,
     )
     # Phase visibility: when the widget declares a phase set and we know
     # the current phase, force-disable when out of phase.

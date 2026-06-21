@@ -1783,12 +1783,19 @@
   {% if crumbs is none %}
     {% set crumbs = view_crumbs if view_crumbs is defined else [] %}
   {% endif %}
+  {# Shared chrome colors come from the `tmsm_ui` theme cache (operator
+     can tweak the values via PyPlanet `!settings`). Falls back to the
+     historical defaults when no theme is injected into ctx. #}
+  {% set _theme = theme if theme is defined else {} %}
+  {% set _hdr_bg = _theme.window_header_color if _theme.window_header_color is defined else '000a' %}
+  {% set _body_bg = _theme.window_body_color if _theme.window_body_color is defined else '000a' %}
+  {% set _accent = _theme.window_accent_color if _theme.window_accent_color is defined else '15dfa' %}
   {# header strip #}
   <quad pos="{{ x }} {{ y }}" z-index="{{ z + 1 }}" size="{{ w }} {{ header_h }}"
-        bgcolor="000a" halign="left" valign="top" />
+        bgcolor="{{ _hdr_bg }}" halign="left" valign="top" />
   {# 1px-ish accent line under the header #}
   <quad pos="{{ x }} {{ y - header_h }}" z-index="{{ z + 2 }}" size="{{ w }} 0.3"
-        bgcolor="15dfa" halign="left" valign="top" />
+        bgcolor="{{ _accent }}" halign="left" valign="top" />
   {% if logo %}
     {# Brand image (PNG/JPG fetched by the client). Takes precedence over
        the glyph `icon` when set; sits left-aligned in the header strip. #}
@@ -1830,7 +1837,7 @@
   {# body surface #}
   <quad pos="{{ x }} {{ y - header_h }}" z-index="{{ z }}"
         size="{{ w }} {{ h - header_h }}"
-        bgcolor="000a" halign="left" valign="top" />
+        bgcolor="{{ _body_bg }}" halign="left" valign="top" />
 
   {# close button â€” quad + glyph, wired to BaseView._on_close via `_close` signal #}
   <quad pos="{{ x + w - 1.5 }} {{ y - 1.5 }}" z-index="{{ z + 3 }}" size="5 5"

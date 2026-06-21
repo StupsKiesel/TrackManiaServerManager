@@ -8,6 +8,7 @@ from typing import Callable
 
 from pyplanet.views.template import TemplateView
 
+from .theme import current as _theme_current
 from .audience import Audience
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class BaseView(TemplateView):
         if ctx is None:
             ctx = {}
         ctx.setdefault("view_crumbs", list(self.breadcrumbs))
+        ctx.setdefault("theme", _theme_current())
         return ctx
 
     def _ensure_render_data(self) -> None:

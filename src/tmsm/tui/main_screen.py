@@ -25,6 +25,7 @@ class MainScreen(Screen):
     BINDINGS = [
         Binding("enter", "open_menu", "Actions"),
         Binding("R", "refresh", "Refresh"),
+        Binding("g", "quick_start", "Quick start"),
         Binding("n", "new", "New"),
         Binding("s", "screens",    "Screens"),
         Binding("t", "stats",       "Stats"),
@@ -218,6 +219,60 @@ class MainScreen(Screen):
         except Exception as e:
             self.notify(f"Restart failed: {e}", severity="error")
         self.refresh_instances()
+
+    def action_quick_start(self) -> None:
+        """Start every instance in dependency order: the MariaDB service first,
+        then game servers, then PyPlanet pools, then everything else."""
+        self.notify("Quick start: bringing all instances up…")
+        self.run_worker(
+            self._quick_start_worker, thread=True, exclusive=True, name="quick-start"
+        )
+
+    def _quick_start_worker(self) -> None:
+        import time
+
+        # Phase order: DB service → game servers → PyPlanet pools → the rest.
+        order = [Kind.SERVICE, Kind.SERVER, Kind.POOL]
+        instances = discover_all(self.app.cfg)  # type: ignore[attr-defined]
+        phases: list[list[Instance]] = [
+            [i for i in instances if i.kind is k] for k in order
+        ]
+        phases.append([i for i in instances if i.kind not in order])
+
+        started = 0
+        failed = 0
+        for phase in phases:
+            phase_started = False
+            for inst in phase:
+                if inst.is_running:
+                    continue
+                try:
+                    inst.start()
+                    started += 1
+                    phase_started = True
+                except Exception as e:
+                    failed += 1
+                    self.app.call_from_thread(
+                        self.notify,
+                        f"Start failed: {inst.name}: {e}",
+                        severity="error",
+                    )
+            # Give the just-started phase a moment to come up before the next
+            # phase depends on it (e.g. pools need MariaDB ready).
+            if phase_started:
+                time.sleep(2.0)
+
+        self.app.call_from_thread(self._quick_start_done, started, failed)
+
+    def _quick_start_done(self, started: int, failed: int) -> None:
+        self.refresh_instances()
+        if failed:
+            self.notify(
+                f"Quick start: {started} started, {failed} failed",
+                severity="warning",
+            )
+        else:
+            self.notify(f"Quick start: {started} instance(s) started")
 
     def action_new(self) -> None:
         from .wizard import WizardScreen

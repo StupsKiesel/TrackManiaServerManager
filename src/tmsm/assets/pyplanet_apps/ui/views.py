@@ -50,6 +50,10 @@ class BaseView(TemplateView):
             app.context.signals.listen("maniaplanet:player_connect", self._on_player_connect)
         except Exception:
             logger.exception("BaseView: failed to register player_connect listener")
+        try:
+            app.context.signals.listen("maniaplanet:player_disconnect", self._on_player_disconnect)
+        except Exception:
+            logger.exception("BaseView: failed to register player_disconnect listener")
         # Auto-refresh when the impersonate app changes someone's effective
         # level — every tmsm view re-renders for the affected login.
         try:
@@ -166,6 +170,11 @@ class BaseView(TemplateView):
     async def _on_close(self, player) -> None:
         """Default handler for ui.window()'s close button — hide for that player."""
         self._visible_logins.discard(player.login)
+        # When nobody has the view open anymore, drop the global visible flag
+        # so a later player_connect (e.g. the same player reconnecting) does
+        # not re-pop a window they explicitly closed.
+        if not self._visible_logins:
+            self._visible = False
         # Call the underlying _ManiaLink.hide directly to avoid our destroy-on-hide override.
         try:
             await TemplateView.hide(self, player_logins=[player.login])
@@ -175,6 +184,8 @@ class BaseView(TemplateView):
     async def _on_crumb_hub(self, player) -> None:
         """Default handler for the `hub` breadcrumb: hide self, show hub."""
         self._visible_logins.discard(player.login)
+        if not self._visible_logins:
+            self._visible = False
         try:
             await TemplateView.hide(self, player_logins=[player.login])
         except Exception:
@@ -241,6 +252,17 @@ class BaseView(TemplateView):
             self._visible_logins.add(login)
         except Exception:
             logger.exception("BaseView: per-player display failed")
+
+    async def _on_player_disconnect(self, player, **kwargs) -> None:
+        # A disconnecting player can no longer have the view open. Drop them
+        # from the visible set so a future reconnect does not auto-re-show a
+        # view they never reopened. Clear the global flag once it's empty.
+        login = getattr(player, "login", None)
+        if not login:
+            return
+        self._visible_logins.discard(login)
+        if not self._visible_logins:
+            self._visible = False
 
     async def _on_perms_changed(self, login: str, new_level: int, real_level: int) -> None:
         """Called by tmsm_ui.perms when an impersonate override changes for

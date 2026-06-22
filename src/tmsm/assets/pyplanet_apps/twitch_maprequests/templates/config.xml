@@ -36,9 +36,11 @@
                             x=2, y=TAB_Y, w=LW, tab_h=TAB_H,
                             body_h=PANEL_H) %}
 
-    {# panel contents — single column of fields belonging to the active tab #}
-    {% set row_h = 7 %}
-    {% set base_y = TAB_Y - TAB_H - 3 %}
+    {# panel contents — single column of fields belonging to the active tab.
+       Each tab holds at most a handful of fields, so we can afford a roomy
+       row so the label, its editor and the help text read as one block. #}
+    {% set row_h = 21 %}
+    {% set base_y = TAB_Y - TAB_H - 8 %}
 
     {% for f in fields %}
       {% set yy = base_y - loop.index0 * row_h %}
@@ -79,9 +81,16 @@
                         width=58, size='sm') }}
       {% endif %}
 
-      {# description below the field #}
+      {# description directly below the field it belongs to #}
       {% if f.desc %}
-        {{ ui.label(f.desc[:64], x=8, y=yy + 3.4, size='sm', color='666') }}
+        {{ ui.label(f.desc[:64], x=8, y=yy - 5, size='sm', color='888') }}
+      {% endif %}
+
+      {# faint separator between rows so each config item reads distinctly #}
+      {% if not loop.last %}
+        <quad pos="2 {{ yy - row_h + 8 }}" z-index="201"
+              size="{{ LW - 4 }} 0.2" bgcolor="fff1"
+              halign="left" valign="top" />
       {% endif %}
     {% endfor %}
 

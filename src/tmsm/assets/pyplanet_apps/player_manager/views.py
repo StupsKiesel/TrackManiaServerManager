@@ -29,8 +29,13 @@ class PlayerManagerView(BaseView):
                 {"value": "admin", "label": "Admin"},
                 {"value": "master", "label": "Master"},
             ],
+            tab="online",
+            all_players=[],
+            all_page=1,
+            all_total_pages=1,
+            all_search="",
         )
         return ctx
 
     async def get_per_player_data(self, login):
-        return self.app.view_context(login)
+        return await self.app.build_context(login)

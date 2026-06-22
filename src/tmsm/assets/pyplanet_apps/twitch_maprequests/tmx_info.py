@@ -24,6 +24,10 @@ DIFFICULTY_BY_NAME: dict[str, int] = {v.lower(): k for k, v in DIFFICULTIES.item
 
 _USER_AGENT = "tmsm-twitch-maprequests/1.0"
 
+# v2 Search Maps requires an explicit, URL-encoded `fields=` list. We only ask
+# for the columns used by the safety-rail checks and chat replies.
+_FIELDS = "MapId,MapUid,Name,Uploader.Name,Length,Difficulty,IsPublic"
+
 
 async def fetch_info(track_id: int, timeout: float = 8.0) -> Optional[dict[str, Any]]:
     """Return a normalised dict for the TMX map, or ``None`` if missing.
@@ -32,21 +36,28 @@ async def fetch_info(track_id: int, timeout: float = 8.0) -> Optional[dict[str, 
     ``track_id, name, uploader, length_ms, difficulty_id,
     difficulty_name, downloadable``.
     """
-    url = f"https://trackmania.exchange/api/maps/{int(track_id)}"
+    # The v2 API has no per-id route; a single map is fetched via the Search
+    # Maps endpoint filtered by `id=` (results come back in a `Results` array).
+    url = "https://trackmania.exchange/api/maps"
+    params = {"id": str(int(track_id)), "fields": _FIELDS, "count": "1"}
     try:
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=timeout),
             headers={"User-Agent": _USER_AGENT, "Accept": "application/json"},
         ) as session:
-            async with session.get(url) as resp:
+            async with session.get(url, params=params) as resp:
                 if resp.status == 404:
                     return None
                 resp.raise_for_status()
-                data = await resp.json(content_type=None)
+                payload = await resp.json(content_type=None)
     except (aiohttp.ClientError, OSError) as e:
         logger.warning("tmx_info: fetch #%s failed: %s", track_id, e)
         raise
 
+    results = payload.get("Results") if isinstance(payload, dict) else None
+    if not results:
+        return None
+    data = results[0]
     if not isinstance(data, dict):
         return None
 

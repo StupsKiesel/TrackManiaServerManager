@@ -647,6 +647,9 @@ class App_TwitchMapRequests(AppConfig):
                             "already", "too long", "too hard", "failed",
                             "not found", "queue is full")) else "info"
         self._push_recent(lvl, text)
+        # Re-render so cooldown/denial/duplicate notices actually appear in the
+        # in-game activity feed (not just on a successful request).
+        await self._refresh_view()
         if not await self.s_chat_replies.get_value():
             return
         irc = self._irc

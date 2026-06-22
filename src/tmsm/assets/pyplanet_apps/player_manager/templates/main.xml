@@ -1,56 +1,119 @@
 {% import 'tmsm_ui/widgets.xml' as ui with context %}
 
 {% set W = 156 %}
-{% set H = 92 %}
+{% set H = 104 %}
 
-<frame pos="-78 46" z-index="350">
+<frame pos="-78 52" z-index="350">
   {{ ui.window('Player Manager', icon='users', x=0, y=0, w=W, h=H) }}
 
-  {{ ui.label('Online players: ' ~ players|length|string,
-              x=4, y=-12, color='fff', bold=True) }}
-  {{ ui.search_input('search', value=search, placeholder='Search nickname/login...',
-                     x=38, y=-12, width=62, size='sm') }}
-  {{ ui.push_button('refresh', 'Refresh', icon='reload',
-                    x=W-4, y=-12, halign='right', size='sm',
-                    variant='ghost', width=20) }}
+  {% set tabs_list = [
+        {'key': 'online', 'label': 'Online players'},
+        {'key': 'all', 'label': 'All known players'}] %}
 
-  <quad pos="4 -20" z-index="200" size="148 6" bgcolor="111a" halign="left" valign="top" />
-  {{ ui.label('Player', x=6, y=-23, color='ddd', size='sm') }}
-  {{ ui.label('Level', x=68, y=-23, color='ddd', size='sm') }}
-  {{ ui.label('Actions', x=118, y=-23, color='ddd', size='sm') }}
+  {% call(tab_key, tab_def) ui.tabs('tabs', tabs_list, active=tab,
+                                    x=4, y=-11, w=148, tab_h=6) %}
 
-  {% for p in players %}
-    {% set y = -28 - loop.index0 * 8 %}
-    <quad pos="4 {{ y }}" z-index="190" size="148 7.2"
-          bgcolor="{{ 'fff1' if loop.index0 % 2 else '0000' }}"
-          halign="left" valign="top" />
+    {% if tab_key == 'online' %}
+      {# ───────────── ONLINE PLAYERS ───────────── #}
+      {{ ui.label('Online: ' ~ players|length|string,
+                  x=6, y=-21, color='fff', size='sm', bold=True) }}
+      {{ ui.search_input('search', value=search, placeholder='Search nickname/login...',
+                         x=40, y=-21, width=70, size='sm') }}
+      {{ ui.push_button('refresh', 'Refresh', icon='reload',
+                        x=W-4, y=-21, halign='right', size='sm',
+                        variant='ghost', width=20) }}
 
-    {{ ui.label(p.nickname, x=6, y=y-3.4, color='fff', size='sm') }}
-    {{ ui.line_edit('pid__' ~ p.login, value=p.login,
-            x=33, y=y-3.8, width=34, size='sm') }}
+      <quad pos="4 -27" z-index="200" size="148 6" bgcolor="111a" halign="left" valign="top" />
+      {{ ui.label('Player', x=6, y=-30, color='ddd', size='sm') }}
+      {{ ui.label('Level', x=68, y=-30, color='ddd', size='sm') }}
+      {{ ui.label('Actions', x=118, y=-30, color='ddd', size='sm') }}
 
-    {{ ui.push_button('warn__' ~ p.login, 'Warn', icon='warning',
-                      x=106, y=y-3.8, halign='left', size='sm',
-                      variant='warning', width=14) }}
-    {{ ui.push_button('kick__' ~ p.login, 'Kick', icon='user-times',
-                      x=122, y=y-3.8, halign='left', size='sm',
-                      variant='danger', width=14) }}
-    {{ ui.push_button('ban__' ~ p.login, 'Ban', icon='ban',
-                      x=138, y=y-3.8, halign='left', size='sm',
-                      variant='danger', width=14) }}
+      {% for p in players %}
+        {% set y = -35 - loop.index0 * 8 %}
+        <quad pos="4 {{ y }}" z-index="190" size="148 7.2"
+              bgcolor="{{ 'fff1' if loop.index0 % 2 else '0000' }}"
+              halign="left" valign="top" />
+        {{ ui.label(p.nickname, x=6, y=y-3.6, color='fff', size='sm') }}
+        {{ ui.line_edit('pid__' ~ p.login, value=p.login,
+                x=33, y=y-3.8, width=34, size='sm') }}
+        {{ ui.push_button('warn__' ~ p.login, 'Warn', icon='warning',
+                          x=106, y=y-3.8, halign='left', size='sm',
+                          variant='warning', width=14) }}
+        {{ ui.push_button('kick__' ~ p.login, 'Kick', icon='user-times',
+                          x=122, y=y-3.8, halign='left', size='sm',
+                          variant='danger', width=14) }}
+        {{ ui.push_button('ban__' ~ p.login, 'Ban', icon='ban',
+                          x=138, y=y-3.8, halign='left', size='sm',
+                          variant='danger', width=14) }}
+        {{ ui.combo_box('lvl__' ~ p.login, level_options,
+                        selected=p.level_selected, open=p.level_open,
+                        x=68, y=y-3.8, w=26, size='sm', z=260 + loop.index0) }}
+      {% endfor %}
 
-    {{ ui.combo_box('lvl__' ~ p.login, level_options,
-                    selected=p.level_selected,
-                    open=p.level_open,
-                    x=68, y=y-3.8, w=26, size='sm', z=260 + loop.index0) }}
-  {% endfor %}
+      {% if not players %}
+        {{ ui.label('No players online.', x=W/2, y=-55, color='888',
+                    size='sm', halign='center') }}
+      {% endif %}
 
-  {{ ui.pagination('pager', page=page, total_pages=total_pages,
-                   x=4, y=-86.5, max_visible=7) }}
+      {{ ui.pagination('pager', page=page, total_pages=total_pages,
+                       x=4, y=-97, max_visible=7) }}
+      {% if status %}
+        {{ ui.label(status, x=W-4, y=-97, color=status_color, size='sm', halign='right') }}
+      {% endif %}
 
-  {% if status %}
-    {{ ui.label(status, x=W-4, y=-86.5, color=status_color, size='sm', halign='right') }}
-  {% endif %}
+    {% else %}
+      {# ───────────── ALL KNOWN PLAYERS ───────────── #}
+      {{ ui.label('Known: ' ~ all_players|length|string,
+                  x=6, y=-21, color='fff', size='sm', bold=True) }}
+      {{ ui.search_input('all_search', value=all_search, placeholder='Find nickname/login...',
+                         x=34, y=-21, width=64, size='sm') }}
+      {{ ui.push_button('all_search', 'Find', icon='search',
+                        x=100, y=-21, halign='left', size='sm',
+                        variant='primary', width=16) }}
+      {{ ui.push_button('all_refresh', 'Refresh', icon='reload',
+                        x=W-4, y=-21, halign='right', size='sm',
+                        variant='ghost', width=20) }}
+
+      <quad pos="4 -27" z-index="200" size="148 6" bgcolor="111a" halign="left" valign="top" />
+      {{ ui.label('Player', x=6, y=-30, color='ddd', size='sm') }}
+      {{ ui.label('Login', x=56, y=-30, color='ddd', size='sm') }}
+      {{ ui.label('Status', x=98, y=-30, color='ddd', size='sm') }}
+      {{ ui.label('Action', x=126, y=-30, color='ddd', size='sm') }}
+
+      {% for p in all_players %}
+        {% set y = -35 - loop.index0 * 8 %}
+        <quad pos="4 {{ y }}" z-index="190" size="148 7.2"
+              bgcolor="{{ 'fff1' if loop.index0 % 2 else '0000' }}"
+              halign="left" valign="top" />
+        {{ ui.label(p.nickname, x=6, y=y-3.6, color='fff', size='sm') }}
+        {{ ui.label(p.login, x=56, y=y-3.6, color='aaa', size='sm') }}
+        {% if p.banned %}
+          {{ ui.label('Banned', x=98, y=y-3.6, color='f55', size='sm', bold=True) }}
+          {{ ui.push_button('unblacklist__' ~ p.login, 'Unban', icon='check',
+                            x=124, y=y-3.8, halign='left', size='sm',
+                            variant='success', width=26) }}
+        {% else %}
+          {{ ui.label(('Online' if p.online else 'Offline'),
+                      x=98, y=y-3.6, color=('3d6' if p.online else '888'), size='sm') }}
+          {{ ui.push_button('blacklist__' ~ p.login, 'Ban', icon='ban',
+                            x=124, y=y-3.8, halign='left', size='sm',
+                            variant='danger', width=26) }}
+        {% endif %}
+      {% endfor %}
+
+      {% if not all_players %}
+        {{ ui.label('No players found.', x=W/2, y=-55, color='888',
+                    size='sm', halign='center') }}
+      {% endif %}
+
+      {{ ui.pagination('all_pager', page=all_page, total_pages=all_total_pages,
+                       x=4, y=-97, max_visible=7) }}
+      {% if status %}
+        {{ ui.label(status, x=W-4, y=-97, color=status_color, size='sm', halign='right') }}
+      {% endif %}
+    {% endif %}
+
+  {% endcall %}
 
   {{ ui.hover_script() }}
 </frame>

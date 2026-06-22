@@ -51,6 +51,10 @@ class PlayerManagerApp(AppConfig):
         super().__init__(*args, **kwargs)
         self.view: PlayerManagerView | None = None
         self._state: dict[str, dict[str, Any]] = {}
+        # Server blacklist (logins) + login->nickname cache for the
+        # "all known players" tab. Refreshed on demand (open / refresh / ban).
+        self._blacklist: set[str] = set()
+        self._known_names: dict[str, str] = {}
 
     async def on_start(self) -> None:
         self.view = PlayerManagerView(self)
@@ -115,6 +119,9 @@ class PlayerManagerApp(AppConfig):
                 "status_color": "aaa",
                 "confirm_open": False,
                 "confirm_payload": {},
+                "tab": "online",
+                "all_page": 1,
+                "all_search": "",
             }
             self._state[login] = state
         return state
@@ -127,6 +134,7 @@ class PlayerManagerApp(AppConfig):
             return
         login = str(getattr(player, "login", "") or "")
         self._ensure_state(login)
+        await self._refresh_blacklist()
         self.view._visible = True
         self.view._visible_logins.add(login)
         await self.view.display(player_logins=[login])
@@ -252,6 +260,25 @@ class PlayerManagerApp(AppConfig):
             confirm_variant = "danger"
             confirm_ok = "Kick"
             confirm_icon = "user-times"
+        elif confirm_verb == "blacklist":
+            nm = self._known_names.get(confirm_target, confirm_target)
+            confirm_title = "Blacklist Player"
+            confirm_message = (
+                f"Blacklist {nm} ({confirm_target})? They will be banned from the "
+                f"server even while offline, and kicked if currently connected."
+            )
+            confirm_variant = "danger"
+            confirm_ok = "Blacklist"
+            confirm_icon = "ban"
+        elif confirm_verb == "unblacklist":
+            nm = self._known_names.get(confirm_target, confirm_target)
+            confirm_title = "Remove from Blacklist"
+            confirm_message = (
+                f"Unban {nm} ({confirm_target})? They will be allowed to join again."
+            )
+            confirm_variant = "warning"
+            confirm_ok = "Unban"
+            confirm_icon = "check"
         else:
             confirm_title = "Ban Player"
             confirm_message = (
@@ -282,6 +309,103 @@ class PlayerManagerApp(AppConfig):
             "confirm_icon": confirm_icon,
         }
 
+    async def build_context(self, login: str) -> dict[str, Any]:
+        """Full per-player context: online tab (sync) + all-known tab (async DB)."""
+        ctx = self.view_context(login)
+        st = self._ensure_state(login)
+        tab = str(st.get("tab", "online") or "online")
+        ctx["tab"] = tab
+
+        all_rows: list[dict[str, Any]] = []
+        all_page = int(st.get("all_page", 1) or 1)
+        all_total_pages = 1
+        if tab == "all":
+            known = await self._all_known_players(st.get("all_search", ""))
+            page_items, all_page, all_total_pages = self._paginate(known, all_page)
+            st["all_page"] = all_page
+            all_rows = page_items
+
+        ctx["all_players"] = all_rows
+        ctx["all_page"] = all_page
+        ctx["all_total_pages"] = all_total_pages
+        ctx["all_search"] = str(st.get("all_search", "") or "")
+        return ctx
+
+    async def _all_known_players(self, search: str) -> list[dict[str, Any]]:
+        """All players from the PyPlanet DB, filtered by `search`, with ban flag."""
+        try:
+            from pyplanet.apps.core.maniaplanet.models import Player
+            query = Player.select().order_by(Player.last_seen.desc())
+            rows = list(await Player.objects.execute(query))
+        except Exception:
+            logger.exception("player_manager: load all players failed")
+            rows = []
+
+        online_logins = {
+            str(getattr(p, "login", "") or "") for p in self._online_players()
+        }
+        q = str(search or "").strip().lower()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            plogin = str(getattr(r, "login", "") or "")
+            if not plogin:
+                continue
+            nick = str(getattr(r, "nickname", plogin) or plogin)
+            self._known_names[plogin] = nick
+            if q and q not in plogin.lower() and q not in nick.lower():
+                continue
+            try:
+                lvl = int(getattr(r, "level", 0) or 0)
+            except (TypeError, ValueError):
+                lvl = 0
+            out.append({
+                "login": plogin,
+                "nickname": nick,
+                "level_label": _LEVEL_LABELS.get(lvl, "player"),
+                "online": plogin in online_logins,
+                "banned": plogin in self._blacklist,
+            })
+        return out
+
+    async def _refresh_blacklist(self) -> None:
+        """Reload the dedicated server blacklist into `self._blacklist`."""
+        bl: set[str] = set()
+        try:
+            start = 0
+            while True:
+                chunk = await self.instance.gbx("GetBlackList", 300, start)
+                if not chunk:
+                    break
+                for item in chunk:
+                    lg = str((item or {}).get("Login", "") or "")
+                    if lg:
+                        bl.add(lg)
+                if len(chunk) < 300:
+                    break
+                start += len(chunk)
+        except Exception:
+            logger.exception("player_manager: GetBlackList failed")
+        self._blacklist = bl
+
+    async def _perform_blacklist(self, verb: str, target_login: str) -> tuple[bool, str]:
+        if verb == "blacklist":
+            ok = await self._try_gbx_calls([("BlackList", [target_login])])
+            if not ok:
+                return False, f"blacklist failed for {target_login}"
+            # Kick too, if they happen to be connected right now.
+            await self._try_gbx_calls([
+                ("Kick", [target_login, "banned by server staff"]),
+                ("Kick", [target_login]),
+            ])
+            await self._refresh_blacklist()
+            return True, f"blacklisted {target_login}"
+
+        ok = await self._try_gbx_calls([("UnBlackList", [target_login])])
+        if not ok:
+            return False, f"unblacklist failed for {target_login}"
+        await self._refresh_blacklist()
+        return True, f"removed {target_login} from blacklist"
+
     async def _on_player_event(self, player=None, **kwargs) -> None:
         await self._refresh_all_visible()
 
@@ -296,6 +420,35 @@ class PlayerManagerApp(AppConfig):
         st = self._ensure_state(login)
 
         try:
+            if action == "tabs__tab__online":
+                st["tab"] = "online"
+                await self._refresh_login(login)
+                return
+
+            if action == "tabs__tab__all":
+                st["tab"] = "all"
+                await self._refresh_blacklist()
+                await self._refresh_login(login)
+                return
+
+            if action == "all_search":
+                st["all_search"] = self._entry_value(values, "all_search").strip()
+                st["all_page"] = 1
+                await self._refresh_login(login)
+                return
+
+            if action == "all_search__clear":
+                st["all_search"] = ""
+                st["all_page"] = 1
+                await self._refresh_login(login)
+                return
+
+            if action == "all_refresh":
+                st["status"] = ""
+                await self._refresh_blacklist()
+                await self._refresh_login(login)
+                return
+
             if action == "search":
                 st["search"] = self._entry_value(values, "search").strip()
                 st["page"] = 1
@@ -328,12 +481,45 @@ class PlayerManagerApp(AppConfig):
                 st["confirm_payload"] = {}
                 if verb == "level":
                     ok, msg = await self._set_pyplanet_level(target, value)
+                elif verb in ("blacklist", "unblacklist"):
+                    ok, msg = await self._perform_blacklist(verb, target)
                 else:
                     ok, msg = await self._perform_action(verb, player, target)
                 st["status"] = msg
                 st["status_color"] = "0af" if ok else "f44"
                 await self._refresh_login(login)
                 return
+
+            if action.startswith("all_pager__"):
+                verb = action[len("all_pager__"):]
+                cur = int(st.get("all_page", 1) or 1)
+                total_items = len(await self._all_known_players(st.get("all_search", "")))
+                total_pages = max(1, int(math.ceil(total_items / float(self.PAGE_SIZE))))
+                if verb == "first":
+                    cur = 1
+                elif verb == "prev":
+                    cur = max(1, cur - 1)
+                elif verb == "next":
+                    cur = min(total_pages, cur + 1)
+                elif verb == "last":
+                    cur = total_pages
+                elif verb.startswith("page__"):
+                    try:
+                        cur = int(verb[len("page__"):])
+                    except (TypeError, ValueError):
+                        pass
+                st["all_page"] = max(1, min(total_pages, cur))
+                await self._refresh_login(login)
+                return
+
+            for verb in ("blacklist", "unblacklist"):
+                prefix = verb + "__"
+                if action.startswith(prefix):
+                    target = action[len(prefix):]
+                    st["confirm_open"] = True
+                    st["confirm_payload"] = {"verb": verb, "target": target}
+                    await self._refresh_login(login)
+                    return
 
             if action.startswith("pager__"):
                 verb = action[len("pager__"):]

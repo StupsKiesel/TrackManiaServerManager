@@ -1,0 +1,85 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context: rows=[{label, short, logger, level}], levels=[...],
+            abbr={lvl:3char}, colors={lvl:hex}, page, total_pages,
+            status_text, status_color, total_count #}
+
+{% set W = 212 %}
+{% set H = 134 %}
+{% set btn_w = 13 %}
+{% set btn_x0 = 120 %}
+
+<frame pos="-106 67" z-index="200">
+
+  {{ ui.window('Logging Engine', icon='bug', x=0, y=0, w=W, h=H) }}
+
+  {{ ui.label('Per-app log verbosity. DEFAULT inherits the root level; pick DEBUG to debug one app.',
+              x=4, y=-12, color='aaa', size='sm') }}
+  {{ ui.label(total_count|string ~ ' app(s)', x=W - 4, y=-12,
+              halign='right', color='666', size='sm') }}
+
+  {# column headers #}
+  {% set row_h = 6 %}
+  {% set top_y = -18 %}
+  <quad pos="4 {{ top_y }}" z-index="201" size="{{ W - 8 }} 5"
+        bgcolor="222a" halign="left" valign="top" />
+  {{ ui.label('App',    x=6,  y=top_y - 2.5, color='ddd', size='sm', bold=True) }}
+  {{ ui.label('Level',  x=btn_x0, y=top_y - 2.5, color='ddd', size='sm', bold=True) }}
+  <quad pos="4 {{ top_y - 5 }}" z-index="202" size="{{ W - 8 }} 0.25"
+        bgcolor="15dfa" halign="left" valign="top" />
+
+  {% set body_y = top_y - 5.5 %}
+  {% for r in rows %}
+    {% set y = body_y - loop.index0 * row_h %}
+    {% if loop.index0 % 2 == 1 %}
+      <quad pos="4 {{ y }}" z-index="200" size="{{ W - 8 }} {{ row_h }}"
+            bgcolor="fff1" halign="left" valign="top" />
+    {% endif %}
+    {{ ui.label(r.short, x=6, y=y - row_h/2, color='fff', size='sm', bold=True) }}
+    {% for lv in levels %}
+      {% set bx = btn_x0 + loop.index0 * (btn_w + 1) %}
+      {% set active = (lv == r.level) %}
+      {% set col = colors[lv] %}
+      {% if active %}
+        <quad pos="{{ bx }} {{ y - row_h/2 }}" z-index="205"
+              size="{{ btn_w }} {{ row_h - 1.2 }}"
+              bgcolor="06bff" halign="left" valign="center"
+              action="{{ id }}__set__{{ r.label }}__{{ lv }}" scriptevents="1" />
+      {% else %}
+        <quad pos="{{ bx }} {{ y - row_h/2 }}" z-index="205"
+              size="{{ btn_w }} {{ row_h - 1.2 }}"
+              bgcolor="2226" halign="left" valign="center"
+              id="uibtn_ghost_{{ id }}__set__{{ r.label }}__{{ lv }}"
+              action="{{ id }}__set__{{ r.label }}__{{ lv }}" scriptevents="1"
+              class="ui-btn ui-btn-ghost" />
+      {% endif %}
+      <label pos="{{ bx + btn_w/2 }} {{ y - row_h/2 }}" z-index="206"
+             halign="center" valign="center2"
+             text="${{ 'fff' if active else col }}{{ abbr[lv] }}"
+             textsize="0.85" textfont="GameFont" />
+    {% endfor %}
+  {% endfor %}
+
+  {% if not rows %}
+    {{ ui.label('No apps registered yet — give the pool a moment after start.',
+                x=W/2, y=-60, color='888', size='sm', halign='center') }}
+  {% endif %}
+
+  {# bottom action row #}
+  {% set act_y = -H + 5 %}
+  {{ ui.push_button('all_debug', 'All DEBUG', icon='bug',
+                    x=W - 4, y=act_y, variant='primary',
+                    halign='right', size='md') }}
+  {{ ui.push_button('all_default', 'All DEFAULT', icon='reload',
+                    x=W - 32, y=act_y, variant='ghost',
+                    halign='right', size='md') }}
+  {{ ui.push_button('refresh', 'Refresh', icon='reload',
+                    x=W - 62, y=act_y, variant='ghost',
+                    halign='right', size='md') }}
+
+  {{ ui.pagination('pg', page=page, total_pages=total_pages, x=4, y=act_y) }}
+
+  {{ ui.label(status_text, x=4, y=act_y + 6, color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>

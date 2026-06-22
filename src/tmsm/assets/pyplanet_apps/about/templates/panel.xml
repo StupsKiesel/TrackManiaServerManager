@@ -1,0 +1,38 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context: pyplanet_name/version/desc/url/logo, tmsm_name/version/desc/url/author/avatar #}
+
+{% set W = 150 %}
+{% set H = 124 %}
+
+<frame pos="-75 62" z-index="200">
+
+  {{ ui.window('About', icon='info', x=0, y=0, w=W, h=H) }}
+
+  {# ── PyPlanet ─────────────────────────────────────────────────── #}
+  {% call ui.group_box(pyplanet_name, x=4, y=-12, w=W - 8, h=48) %}
+    {{ ui.image(pyplanet_logo, x=10, y=-18, w=34, h=34, keepratio='Fit') }}
+    {{ ui.label(pyplanet_name, x=52, y=-20, size='lg', color='fff', bold=True) }}
+    {{ ui.label('Version ' ~ pyplanet_version, x=52, y=-28, size='sm', color='9cf') }}
+    {{ ui.text(pyplanet_desc, x=52, y=-33, w=88, size='sm', color='ccc', maxline=3) }}
+    <label pos="52 -54" z-index="210" halign="left" valign="center2"
+           text="$6cf$u{{ pyplanet_url }}" textsize="0.9" textfont="GameFont"
+           url="{{ pyplanet_url }}"
+           focusareacolor1="0000" focusareacolor2="15f3" />
+  {% endcall %}
+
+  {# ── tmsm ─────────────────────────────────────────────────────── #}
+  {% call ui.group_box(tmsm_name, x=4, y=-64, w=W - 8, h=48) %}
+    {{ ui.image(tmsm_avatar, x=10, y=-70, w=34, h=34, keepratio='Fit') }}
+    {{ ui.label(tmsm_name, x=52, y=-72, size='lg', color='fff', bold=True) }}
+    {{ ui.label('Version ' ~ tmsm_version ~ '   ·   by ' ~ tmsm_author,
+                x=52, y=-80, size='sm', color='9cf') }}
+    {{ ui.text(tmsm_desc, x=52, y=-85, w=88, size='sm', color='ccc', maxline=3) }}
+    <label pos="52 -106" z-index="210" halign="left" valign="center2"
+           text="$6cf$u{{ tmsm_url }}" textsize="0.9" textfont="GameFont"
+           url="{{ tmsm_url }}"
+           focusareacolor1="0000" focusareacolor2="15f3" />
+  {% endcall %}
+
+  {{ ui.hover_script() }}
+</frame>

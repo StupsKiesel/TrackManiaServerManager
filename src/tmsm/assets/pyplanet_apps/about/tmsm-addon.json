@@ -1,0 +1,4 @@
+{
+  "description": "about - a player-facing window showing PyPlanet and TrackMania Server Manager versions plus project info. Two group boxes (PyPlanet on top, tmsm below), each with a logo/avatar image, a short blurb and the live version string. Opens from the hub tile (all players) or the /about chat command. Requires tmsm_ui + tmsm_hub for the UI.",
+  "author": "tmsm"
+}

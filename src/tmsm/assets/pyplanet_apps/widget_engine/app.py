@@ -1097,7 +1097,7 @@ class WidgetsApp(AppConfig):
             and self.engine.current_phase not in entry.visible_phases
         )
         clear = out_of_phase or (resolved is not None and bool(resolved.disabled))
-        logger.info(
+        logger.debug(
             "widget_engine: push_replacement key='%s' id=%s clear=%s "
             "row_disabled=%s out_of_phase=%s logins=%s",
             key, manialink_id, clear,
@@ -1142,7 +1142,7 @@ class WidgetsApp(AppConfig):
                 await self.instance.gbx(
                     "SendDisplayManialinkPage", xml, 0, False,
                 )
-                logger.info(
+                logger.debug(
                     "widget_engine: broadcast replacement '%s' id=%s clear=%s (%d bytes)",
                     key, manialink_id, clear, len(xml),
                 )
@@ -1287,16 +1287,23 @@ class WidgetsApp(AppConfig):
             f'<frame pos="0 0" z-index="3">{inner}</frame>'
             f'</frame>'
         )
-        anim_frame = f'<frame id="we_anim" pos="0 0">{body_frame}</frame>'
-        outer = (
-            f'<frame id="we_root" pos="{x} {y}" z-index="40">{anim_frame}</frame>'
-        )
 
         hotkey = repl.hotkey or ""
         anim_enabled = anim_dir != AnimDir.NONE
         # Initial hidden state: only when there's a hotkey to bring it
         # back. Without a hotkey, widget is always visible.
         start_hidden = bool(hotkey)
+
+        # Emit the anim frame ALREADY at its hidden offset when it should
+        # start concealed. Otherwise the frame renders one frame at its
+        # visible position (pos="0 0") before the ManiaScript's first tick
+        # snaps it off-screen — a visible flash every time the manialink is
+        # re-pushed (e.g. a TAB scoreboard blink on each checkpoint refresh).
+        anim_start_pos = f"{off_x} {off_y}" if start_hidden else "0 0"
+        anim_frame = f'<frame id="we_anim" pos="{anim_start_pos}">{body_frame}</frame>'
+        outer = (
+            f'<frame id="we_root" pos="{x} {y}" z-index="40">{anim_frame}</frame>'
+        )
 
         # ManiaScript: handle slide-in/out via AnimMgr; hotkey toggles
         # the Concealing state with the OS auto-repeat compensation.

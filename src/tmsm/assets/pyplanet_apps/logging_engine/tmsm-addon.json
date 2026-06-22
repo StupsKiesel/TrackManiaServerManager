@@ -1,0 +1,4 @@
+{
+  "description": "logging_engine - central per-app log level register with a master-only UI. Discovers every loaded tmsm app and gives each a 'Log level' setting (Logging category in //settings) so developers can set, say, only widget_engine to DEBUG without flooding the console via the root logger. Adds the //loglevel admin command and a master-admins-only panel (hub tile or //logging). Recommended as an always-on developer/diagnostics app. Requires tmsm_ui + tmsm_hub for the UI.",
+  "author": "tmsm"
+}

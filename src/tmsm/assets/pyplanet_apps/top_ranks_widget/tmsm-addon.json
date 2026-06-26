@@ -1,0 +1,4 @@
+{
+  "description": "Podium widget: players holding the most local records. Requires stats_tracker and local_rankings_widget.",
+  "author": "tmsm"
+}

@@ -1,0 +1,349 @@
+{% import 'tmsm_ui/widgets.xml' as ui with context %}
+
+{# context (see TournamentsApp.view_context):
+   screen        - 'list' | 'detail'
+   is_admin      - bool
+   status, status_color
+   --- list screen ---
+   tournaments   - [{id, name, status, status_label, status_color, players, maps}]
+   total, page, total_pages
+   --- detail screen ---
+   tid, t_name, t_status, t_status_label, t_status_color, t_mode_label,
+   t_self_signup, t_lock, t_winner, tab, n_players, n_maps,
+   mode_picker, map_picker
+   participants / online_candidates / maps / map_candidates / modes /
+   standings / run_* fields per tab
+#}
+
+{% set win_w = 220 %}
+{% set win_h = 150 %}
+{% set footer_y = -(win_h) + 12 %}
+{% set status_y = -(win_h) + 5 %}
+
+<frame pos="{{ -win_w / 2 }} {{ win_h / 2 + 6 }}" z-index="200">
+
+  {{ ui.window('Tournaments', icon='trophy',
+               x=0, y=0, w=win_w, h=win_h, crumbs=view_crumbs) }}
+
+  {# ======================= LIST SCREEN ============================== #}
+  {% if screen == 'list' %}
+
+    {{ ui.label('Tournaments on this server: ' ~ total,
+                x=4, y=-12, size='sm', color='aaa') }}
+    {% if is_admin %}
+      {{ ui.push_button('new', 'New tournament',
+                        x=win_w - 4, y=-12, halign='right',
+                        icon='plus', variant='success', size='sm', width=34) }}
+    {% endif %}
+
+    {% set hy = -22 %}
+    {{ ui.label('Name',    x=8,   y=hy, size='sm', color='888') }}
+    {{ ui.label('Status',  x=110, y=hy, size='sm', color='888') }}
+    {{ ui.label('Players', x=150, y=hy, size='sm', color='888') }}
+    {{ ui.label('Maps',    x=172, y=hy, size='sm', color='888') }}
+
+    {% if tournaments %}
+      {% for r in tournaments %}
+        {% set ry = hy - 5 - loop.index0 * 7 %}
+        {% if loop.index0 is divisibleby 2 %}
+          <quad pos="6 {{ ry }}" z-index="151"
+                size="{{ win_w - 12 }} 6.6" bgcolor="fff1"
+                halign="left" valign="center" />
+        {% endif %}
+        {{ ui.label(r.name|truncate(34, true, ''),
+                    x=8, y=ry, size='sm', color='fff') }}
+        {{ ui.label(r.status_label, x=110, y=ry, size='sm', color=r.status_color) }}
+        {{ ui.label(r.players|string, x=153, y=ry, size='sm', color='ccc') }}
+        {{ ui.label(r.maps|string, x=174, y=ry, size='sm', color='ccc') }}
+
+        {% set ax = win_w - 6 %}
+        {% if is_admin %}
+          {{ ui.push_button('delete__' ~ r.id, 'Del',
+                            x=ax, y=ry, halign='right',
+                            icon='trash', variant='danger', size='sm', width=14) }}
+          {% set ax = ax - 16 %}
+          {{ ui.push_button('clone__' ~ r.id, 'Clone',
+                            x=ax, y=ry, halign='right',
+                            icon='redo', variant='ghost', size='sm', width=20) }}
+          {% set ax = ax - 22 %}
+        {% endif %}
+        {{ ui.push_button('open__' ~ r.id, 'Open',
+                          x=ax, y=ry, halign='right',
+                          variant='primary', size='sm', width=18) }}
+      {% endfor %}
+    {% else %}
+      {{ ui.label('No tournaments yet' ~ (' - click New tournament' if is_admin else ''),
+                  x=win_w/2, y=-40, halign='center', size='sm', color='888') }}
+    {% endif %}
+
+    {{ ui.pagination('pg', page=page, total_pages=total_pages,
+                     x=win_w/2 - 24, y=footer_y, max_visible=7) }}
+
+  {# ======================= DETAIL SCREEN ============================ #}
+  {% else %}
+
+    {{ ui.push_button('open_list', 'Back',
+                      x=4, y=-12, halign='left',
+                      icon='arrow_left', variant='ghost', size='sm', width=18) }}
+    {{ ui.label(t_name|truncate(40, true, ''),
+                x=28, y=-12, size='md', color='fff') }}
+    {{ ui.label(t_status_label, x=win_w - 4, y=-12, halign='right',
+                size='sm', color=t_status_color) }}
+
+    {# --- tab bar --- #}
+    {% set tabs = [('overview','Overview'), ('participants','Participants'),
+                   ('maps','Maps'), ('run','Run'), ('standings','Standings')] %}
+    {% set tab_w = 40 %}
+    {% for key, label in tabs %}
+      {{ ui.push_button('tab__' ~ key, label,
+                        x=4 + loop.index0 * (tab_w + 1), y=-22, halign='left',
+                        variant=('primary' if tab == key else 'ghost'),
+                        size='sm', width=tab_w) }}
+    {% endfor %}
+
+    {% set cy = -32 %}
+
+    {# ---------------- OVERVIEW ---------------- #}
+    {% if tab == 'overview' %}
+      {{ ui.label('Match mode: $fff' ~ t_mode_label, x=8, y=cy, size='sm', color='aaa') }}
+      {{ ui.push_button('mode_open', 'Change mode',
+                        x=110, y=cy, halign='left', icon='cog',
+                        variant='ghost', size='sm', width=34) }}
+      {{ ui.label('Players: $fff' ~ n_players, x=8, y=cy - 7, size='sm', color='aaa') }}
+      {{ ui.label('Maps: $fff' ~ n_maps, x=60, y=cy - 7, size='sm', color='aaa') }}
+      {% if t_winner %}
+        {{ ui.label('Winner: $ff0' ~ t_winner, x=110, y=cy - 7, size='sm', color='aaa') }}
+      {% endif %}
+
+      {{ ui.check_box('toggle_signup', 'Self sign-up (/tournament join)',
+                      checked=t_self_signup, x=12, y=cy - 16, size='sm') }}
+      {{ ui.check_box('toggle_lock', 'Lock non-participants to spectator',
+                      checked=t_lock, x=12, y=cy - 23, size='sm') }}
+      {{ ui.check_box('toggle_auto', 'Auto-advance maps + auto-finish',
+                      checked=t_auto_advance, x=12, y=cy - 30, size='sm') }}
+
+      {# auto-start threshold stepper #}
+      {{ ui.label('Auto-start at', x=12, y=cy - 38, size='sm', color='aaa') }}
+      {{ ui.tool_button('autostart_dec', 'arrow_down',
+                        x=56, y=cy - 38, halign='left',
+                        variant='ghost', size='sm', tooltip='Fewer') }}
+      {{ ui.label((t_auto_start|string) if t_auto_start else 'off',
+                  x=66, y=cy - 38, size='sm',
+                  color=('fff' if t_auto_start else '888')) }}
+      {{ ui.tool_button('autostart_inc', 'arrow_up',
+                        x=80, y=cy - 38, halign='left',
+                        variant='ghost', size='sm', tooltip='More') }}
+      {{ ui.label('players', x=88, y=cy - 38, size='sm', color='aaa') }}
+
+      {# lifecycle buttons #}
+      {% if t_status == 'draft' %}
+        {{ ui.push_button('set_registration', 'Open registration',
+                          x=8, y=cy - 48, halign='left',
+                          icon='unlock', variant='primary', size='sm', width=44) }}
+      {% endif %}
+      {% if t_status in ('draft', 'registration') %}
+        {{ ui.push_button('start', 'Start tournament',
+                          x=56, y=cy - 48, halign='left',
+                          icon='play', variant='success', size='sm', width=44) }}
+      {% endif %}
+      {% if t_status == 'running' %}
+        {{ ui.push_button('finish', 'Finish tournament',
+                          x=8, y=cy - 48, halign='left',
+                          icon='stop', variant='danger', size='sm', width=44) }}
+      {% endif %}
+
+      {# mini standings #}
+      {{ ui.label('Standings', x=8, y=cy - 59, size='sm', color='888') }}
+      {% if standings %}
+        {% for s in standings[:5] %}
+          {% set ry = cy - 65 - loop.index0 * 6 %}
+          {{ ui.label(s.rank|string ~ '.', x=10, y=ry, size='sm', color='ff0') }}
+          {{ ui.label(s.nickname|truncate(28, true, ''), x=18, y=ry, size='sm', color='fff') }}
+          {{ ui.label(s.points|string ~ ' pts', x=120, y=ry, size='sm', color='ccc') }}
+        {% endfor %}
+      {% else %}
+        {{ ui.label('no results yet', x=18, y=cy - 65, size='sm', color='888') }}
+      {% endif %}
+
+    {# ---------------- PARTICIPANTS ---------------- #}
+    {% elif tab == 'participants' %}
+      {{ ui.label('Participants (' ~ n_players ~ ')', x=8, y=cy, size='sm', color='888') }}
+      {% if participants %}
+        {% for p in participants %}
+          {% set ry = cy - 7 - loop.index0 * 6 %}
+          {{ ui.label(loop.index|string ~ '.', x=10, y=ry, size='sm', color='ccc') }}
+          {{ ui.label(p.nickname|truncate(30, true, ''), x=18, y=ry, size='sm', color='fff') }}
+          {{ ui.label(p.points|string ~ ' pts', x=120, y=ry, size='sm', color='aaa') }}
+          {% if is_admin %}
+            {{ ui.tool_button('premove__' ~ p.login, 'trash',
+                              x=150, y=ry, halign='left',
+                              variant='danger', size='sm', tooltip='Remove') }}
+          {% endif %}
+        {% endfor %}
+      {% else %}
+        {{ ui.label('no participants yet', x=18, y=cy - 7, size='sm', color='888') }}
+      {% endif %}
+
+      {% if is_admin and online_candidates %}
+        {{ ui.label('Add online players', x=win_w - 60, y=cy, size='sm', color='888') }}
+        {% for c in online_candidates %}
+          {% set ry = cy - 7 - loop.index0 * 6 %}
+          {{ ui.label(c.nickname|truncate(20, true, ''),
+                      x=win_w - 60, y=ry, size='sm', color='ccc') }}
+          {{ ui.tool_button('padd__' ~ c.login, 'plus',
+                            x=win_w - 6, y=ry, halign='right',
+                            variant='success', size='sm', tooltip='Add') }}
+        {% endfor %}
+      {% endif %}
+
+    {# ---------------- MAPS ---------------- #}
+    {% elif tab == 'maps' %}
+      {{ ui.label('Map pool (' ~ n_maps ~ ')', x=8, y=cy, size='sm', color='888') }}
+      {% if is_admin %}
+        {% if map_picker %}
+          {{ ui.push_button('maps_close', 'Done',
+                            x=win_w - 4, y=cy, halign='right',
+                            icon='check', variant='primary', size='sm', width=22) }}
+        {% else %}
+          {{ ui.push_button('maps_open', 'Add maps',
+                            x=win_w - 4, y=cy, halign='right',
+                            icon='plus', variant='success', size='sm', width=28) }}
+        {% endif %}
+      {% endif %}
+
+      {% if not map_picker %}
+        {% if maps %}
+          {% for m in maps %}
+            {% set ry = cy - 7 - loop.index0 * 6 %}
+            {{ ui.label(m.order|string ~ '.', x=10, y=ry, size='sm', color='ccc') }}
+            {{ ui.label(m.name|truncate(40, true, ''), x=18, y=ry, size='sm', color='fff') }}
+            {% set sc = '0f8' if m.status == 'played' else ('f80' if m.status == 'skipped' else '888') %}
+            {{ ui.label(m.status, x=150, y=ry, size='sm', color=sc) }}
+            {% if is_admin %}
+              {{ ui.tool_button('mapup__' ~ m.id, 'arrow_up',
+                                x=win_w - 20, y=ry, halign='right',
+                                variant='ghost', size='sm', tooltip='Move up') }}
+              {{ ui.tool_button('mapdown__' ~ m.id, 'arrow_down',
+                                x=win_w - 13, y=ry, halign='right',
+                                variant='ghost', size='sm', tooltip='Move down') }}
+              {{ ui.tool_button('mapremove__' ~ m.id, 'trash',
+                                x=win_w - 6, y=ry, halign='right',
+                                variant='danger', size='sm', tooltip='Remove') }}
+            {% endif %}
+          {% endfor %}
+        {% else %}
+          {{ ui.label('no maps in the pool yet', x=18, y=cy - 7, size='sm', color='888') }}
+        {% endif %}
+      {% else %}
+        {{ ui.label('Server maps - click + to add', x=8, y=cy - 7, size='sm', color='888') }}
+        {% for c in map_candidates %}
+          {% set ry = cy - 13 - loop.index0 * 6 %}
+          {{ ui.label(c.name|truncate(46, true, ''), x=18, y=ry, size='sm', color='fff') }}
+          {{ ui.tool_button('mapadd__' ~ c.uid, 'plus',
+                            x=win_w - 6, y=ry, halign='right',
+                            variant='success', size='sm', tooltip='Add') }}
+        {% endfor %}
+        {{ ui.pagination('pg', page=page, total_pages=total_pages,
+                         x=win_w/2 - 24, y=footer_y, max_visible=7) }}
+      {% endif %}
+
+    {# ---------------- RUN ---------------- #}
+    {% elif tab == 'run' %}
+      {% if not run_is_running %}
+        {{ ui.label('Tournament is not running. Start it from the Overview tab.',
+                    x=8, y=cy, size='sm', color='fa0') }}
+      {% else %}
+        {{ ui.label('Map ' ~ run_index ~ ' / ' ~ run_total, x=8, y=cy, size='sm', color='888') }}
+        {{ ui.label('Current: $fff' ~ (run_current or '(none)'),
+                    x=8, y=cy - 7, size='sm', color='aaa') }}
+        {{ ui.label('State: $fff' ~ (run_current_status or '-'),
+                    x=8, y=cy - 14, size='sm', color='aaa') }}
+        {{ ui.label('Next: $fff' ~ (run_next or '(end)'),
+                    x=8, y=cy - 21, size='sm', color='aaa') }}
+
+        {% if run_auto %}
+          {% if run_paused %}
+            {{ ui.label('Auto-advance PAUSED - waiting for players. '
+                        'Use Confirm to resume.',
+                        x=8, y=cy - 27, size='sm', color='f80') }}
+          {% else %}
+            {{ ui.label('Auto-advance ON - maps advance after each podium.',
+                        x=8, y=cy - 27, size='sm', color='0f8') }}
+          {% endif %}
+        {% else %}
+          {{ ui.label('Manual mode - use Confirm & next to advance.',
+                      x=8, y=cy - 27, size='sm', color='888') }}
+        {% endif %}
+
+        {{ ui.push_button('run_confirm', 'Confirm & next',
+                          x=8, y=cy - 34, halign='left',
+                          icon='check', variant='success', size='sm', width=42) }}
+        {{ ui.push_button('run_redo', 'Redo map',
+                          x=52, y=cy - 34, halign='left',
+                          icon='undo', variant='warning', size='sm', width=30) }}
+        {{ ui.push_button('run_skip', 'Skip map',
+                          x=84, y=cy - 34, halign='left',
+                          icon='arrow_right', variant='ghost', size='sm', width=30) }}
+        {{ ui.push_button('finish', 'Finish',
+                          x=116, y=cy - 34, halign='left',
+                          icon='stop', variant='danger', size='sm', width=26) }}
+
+        {{ ui.label('Live standings', x=8, y=cy - 46, size='sm', color='888') }}
+        {% for s in standings[:6] %}
+          {% set ry = cy - 52 - loop.index0 * 6 %}
+          {{ ui.label(s.rank|string ~ '.', x=10, y=ry, size='sm', color='ff0') }}
+          {{ ui.label(s.nickname|truncate(28, true, ''), x=18, y=ry, size='sm', color='fff') }}
+          {{ ui.label(s.points|string ~ ' pts', x=120, y=ry, size='sm', color='ccc') }}
+        {% endfor %}
+      {% endif %}
+
+    {# ---------------- STANDINGS ---------------- #}
+    {% elif tab == 'standings' %}
+      {{ ui.label('Standings', x=8, y=cy, size='sm', color='888') }}
+      {% if standings %}
+        {% for s in standings %}
+          {% set ry = cy - 7 - loop.index0 * 6 %}
+          {% if loop.index0 is divisibleby 2 %}
+            <quad pos="6 {{ ry }}" z-index="151"
+                  size="{{ win_w - 12 }} 5.6" bgcolor="fff1"
+                  halign="left" valign="center" />
+          {% endif %}
+          {% set rc = 'ff0' if s.rank <= 3 else 'ccc' %}
+          {{ ui.label(s.rank|string ~ '.', x=10, y=ry, size='sm', color=rc) }}
+          {{ ui.label(s.nickname|truncate(34, true, ''), x=18, y=ry, size='sm', color='fff') }}
+          {{ ui.label(s.points|string ~ ' pts', x=150, y=ry, size='sm', color='ccc') }}
+        {% endfor %}
+      {% else %}
+        {{ ui.label('no results yet', x=18, y=cy - 7, size='sm', color='888') }}
+      {% endif %}
+    {% endif %}
+
+    {# --- mode picker overlay --- #}
+    {% if mode_picker %}
+      <quad pos="0 0" z-index="400" size="{{ win_w }} {{ win_h }}"
+            bgcolor="000c" halign="left" valign="top" />
+      {{ ui.label('Pick a match mode', x=win_w/2, y=-20, halign='center',
+                  size='md', color='fff', z=410) }}
+      {% for m in modes %}
+        {% set ry = -32 - loop.index0 * 9 %}
+        {{ ui.push_button('mode__' ~ m.index, m.label,
+                          x=win_w/2, y=ry, halign='center',
+                          variant=('success' if m.selected else 'primary'),
+                          size='sm', width=70, z=410) }}
+      {% endfor %}
+      {{ ui.push_button('mode_close', 'Cancel',
+                        x=win_w/2, y=-32 - (modes|length) * 9 - 4, halign='center',
+                        icon='cross', variant='ghost', size='sm', width=30, z=410) }}
+    {% endif %}
+
+  {% endif %}
+
+  {# ============================ FOOTER ============================== #}
+  {{ ui.tool_button('refresh', 'reload',
+                    x=4, y=status_y, halign='left',
+                    variant='ghost', size='sm', tooltip='Reload') }}
+  {{ ui.label(status, x=14, y=status_y, halign='left',
+              color=status_color, size='sm') }}
+
+  {{ ui.hover_script() }}
+</frame>

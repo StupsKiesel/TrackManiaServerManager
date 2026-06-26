@@ -21,6 +21,9 @@ Thumbs.db
 # Local data (should never be in repo)
 .tmsm/
 
+# Experimental / not for public release
+EXPERIMENTAL/
+
 # Windows-only setup helper
 install-wsl.bat
 

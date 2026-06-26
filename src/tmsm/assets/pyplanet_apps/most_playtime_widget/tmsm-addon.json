@@ -1,0 +1,4 @@
+{
+  "description": "Podium widget: players with the most active playtime on the server. Requires stats_tracker.",
+  "author": "tmsm"
+}

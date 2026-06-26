@@ -1,0 +1,4 @@
+{
+  "description": "Widget: GBX replacement for Race_BigMessage. Announces the game winner with a large centered banner (e.g. \"{Nick} has won the game!\"). The message is translated client-side into each player's own game language via LocalUser.Language. Replaces the title-pack default Race_BigMessage manialink.",
+  "author": "tmsm"
+}

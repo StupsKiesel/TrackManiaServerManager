@@ -1,0 +1,4 @@
+{
+  "description": "Podium widget: current-playlist maps that have gone the longest without being played. Requires stats_tracker.",
+  "author": "tmsm"
+}

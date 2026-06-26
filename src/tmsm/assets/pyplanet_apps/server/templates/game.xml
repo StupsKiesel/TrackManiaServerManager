@@ -5,7 +5,7 @@
    categories=[{key,label,fields=[{key,label,kind,value,default,dirty}]}],
    dirty_count, status, status_color,
    switcher_open, picker_page, picker_total_pages, scripts_count,
-   scripts=[{path,name,group}],
+   scripts=[{path,name,group,internal}],
    match_page, match_total_pages, profiles_count,
    profiles=[{rel,name,size}],
    save_as, confirm_delete, loaded_profile, startup_profile, page_size
@@ -62,14 +62,15 @@
                   id="pick_{{ id }}__pick_script__{{ s.path }}"
                   action="{{ id }}__pick_script__{{ s.path }}" ScriptEvents="1"
                   class="ui-btn ui-btn-ghost" />
-            {{ ui.label(s.name, x=xx + 1, y=yy, size='sm') }}
+            {{ ui.label(s.name, x=xx + 1, y=yy, size='sm',
+                        color=('6cf' if s.internal else 'fff')) }}
             {% if s.group %}
               {{ ui.label(s.group, x=xx + col_w - 3, y=yy, halign='right',
-                          size='sm', color='666') }}
+                          size='sm', color=('6cf' if s.internal else '666')) }}
             {% endif %}
           {% endfor %}
           {% if not scripts %}
-            {{ ui.label('no .Script.txt found under Scripts/Modes/',
+            {{ ui.label('no mode scripts available',
                         x=6, y=BY-18, size='sm', color='888') }}
           {% endif %}
         {% endcall %}
@@ -85,19 +86,25 @@
         {% endif %}
 
       {% else %}
-        {# normal mode: render param categories as fixed-height cards in 2 cols.
-           Each category card is identical height (10 rows total: title +
-           6 fields + pager + spacing) so the layout doesn't shift. #}
+        {# normal mode: render param categories as cards in 2 cols. Each card
+           shrinks to exactly fit its visible fields (+ pager); each row of the
+           grid advances by the taller card in the pair, so columns stay
+           top-aligned and the cards never overflow the window. #}
         {% set col_w = (W-12)/2 %}
-        {% set card_h = 44 %}
-        {% set rows_per_card = 6 %}
-        {% for cat in categories %}
-          {% set col = loop.index0 % 2 %}
-          {% set row = loop.index0 // 2 %}
-          {% set cx = 4 + col * (col_w + 4) %}
-          {% set cy = BY - 8 - row * (card_h + 2) %}
-          {% call ui.group_box(cat.label ~ '  (' ~ cat.total|string ~ ')',
-                               x=cx, y=cy, w=col_w, h=card_h) %}
+        {% set cur = namespace(y = BY - 8) %}
+        {% for pair in categories|batch(2) %}
+          {% set rh = namespace(v = 0) %}
+          {% for cat in pair %}
+            {% set ch = 10 + (cat.fields|length) * 5 + (5 if cat.has_pages else 0) %}
+            {% if ch > rh.v %}{% set rh.v = ch %}{% endif %}
+          {% endfor %}
+          {% for cat in pair %}
+            {% set col = loop.index0 %}
+            {% set cx = 4 + col * (col_w + 4) %}
+            {% set cy = cur.y %}
+            {% set card_h = 10 + (cat.fields|length) * 5 + (5 if cat.has_pages else 0) %}
+            {% call ui.group_box(cat.label ~ '  (' ~ cat.total|string ~ ')',
+                                 x=cx, y=cy, w=col_w, h=card_h) %}
             {% for f in cat.fields %}
               {% set fy = cy - 8 - loop.index0 * 5 %}
               {% if f.dirty %}
@@ -127,7 +134,9 @@
                                 x=cx+col_w-2, y=py, variant='ghost',
                                 size='sm', halign='right') }}
             {% endif %}
-          {% endcall %}
+            {% endcall %}
+          {% endfor %}
+          {% set cur.y = cur.y - (rh.v + 2) %}
         {% endfor %}
         {% if not categories %}
           {{ ui.label('no mode script parameters reported',

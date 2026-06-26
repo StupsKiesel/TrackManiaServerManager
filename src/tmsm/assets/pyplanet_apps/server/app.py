@@ -371,6 +371,22 @@ class ServerApp(AppConfig):
         {"key": "match", "label": "Match Settings"},
     ]
 
+    # Official Nadeo online mode scripts. These ship inside the dedicated
+    # server binary, so there is usually no .Script.txt on disk for them — but
+    # SetScriptName still accepts them by name. We always offer them in the
+    # picker so the standard modes can be selected even on a fresh install.
+    # (path relative to Scripts/Modes/, friendly label)
+    BUILTIN_SCRIPTS: list[tuple[str, str]] = [
+        ("Trackmania/TM_TimeAttack_Online.Script.txt", "Time Attack"),
+        ("Trackmania/TM_Rounds_Online.Script.txt",     "Rounds"),
+        ("Trackmania/TM_Cup_Online.Script.txt",        "Cup"),
+        ("Trackmania/TM_Knockout_Online.Script.txt",   "Knockout"),
+        ("Trackmania/TM_Team_Online.Script.txt",       "Team"),
+        ("Trackmania/TM_Laps_Online.Script.txt",       "Laps"),
+        ("Trackmania/TM_Champion_Online.Script.txt",   "Champion"),
+        ("Trackmania/TM_TMWT_Online.Script.txt",       "TMWT (Teams)"),
+    ]
+
     LEVEL_ADMIN = 2
     LEVEL_MASTER = 3
     PAGE_SIZE = 12
@@ -413,19 +429,41 @@ class ServerApp(AppConfig):
 
     async def _list_scripts(self) -> list[dict[str, str]]:
         gd = await self._game_data_dir_path()
-        if gd is None:
-            return []
-        modes_root = gd / "Scripts" / "Modes"
-        if not modes_root.is_dir():
-            return []
+        # Always start with the built-in Nadeo online modes; these can be
+        # selected even when no .Script.txt exists on disk for them.
         out: list[dict[str, str]] = []
-        for p in sorted(modes_root.rglob("*.Script.txt")):
-            rel = p.relative_to(modes_root).as_posix()
+        seen: set[str] = set()
+        for rel, label in self.BUILTIN_SCRIPTS:
             out.append({
                 "path": rel,
-                "name": p.stem.replace(".Script", ""),
-                "group": rel.split("/", 1)[0] if "/" in rel else "",
+                "name": label,
+                "group": "Nadeo",
+                "internal": "1",
             })
+            seen.add(rel.lower())
+        # Then merge in custom community modes found on disk (skip any that
+        # duplicate a built-in path).
+        if gd is not None:
+            modes_root = gd / "Scripts" / "Modes"
+            if not modes_root.is_dir():
+                # Make sure the drop-in folder exists so admins have an obvious
+                # place to put custom .Script.txt mode scripts.
+                try:
+                    modes_root.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    logger.exception("server: could not create %s", modes_root)
+            if modes_root.is_dir():
+                for p in sorted(modes_root.rglob("*.Script.txt")):
+                    rel = p.relative_to(modes_root).as_posix()
+                    if rel.lower() in seen:
+                        continue
+                    seen.add(rel.lower())
+                    out.append({
+                        "path": rel,
+                        "name": p.stem.replace(".Script", ""),
+                        "group": rel.split("/", 1)[0] if "/" in rel else "",
+                        "internal": "",
+                    })
         return out
 
     async def _list_match_profiles(self) -> list[dict[str, Any]]:

@@ -102,8 +102,15 @@ class MapPicker:
         f = dict(filters or {})
         ex = {int(x) for x in (excluded_tmx_ids or [])}
         vlist = list(validators)
+        total = max(1, int(max_attempts))
+        consecutive_errors = 0
         # Each call returns one random row (count=1 via random=True).
-        for attempt in range(max(1, int(max_attempts))):
+        for attempt in range(total):
+            # Pace requests so a long pick cycle doesn't hammer TMX into a
+            # rate-limit. Once throttled every later attempt would 429 and the
+            # mode would end up with no map to juke.
+            if attempt > 0:
+                await asyncio.sleep(0.5)
             try:
                 data = await tmx_search(
                     self._game(),
@@ -113,13 +120,27 @@ class MapPicker:
                     **f,
                 )
             except (aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
+                status = getattr(e, "status", None)
+                consecutive_errors += 1
                 logger.warning(
-                    "gamemodes: tmx random search failed (attempt %s/%s, %s)",
+                    "gamemodes: tmx random search failed (attempt %s/%s, %s%s)",
                     attempt + 1,
-                    max(1, int(max_attempts)),
+                    total,
                     e.__class__.__name__,
+                    f" {status}" if status else "",
                 )
+                # TMX is rate-limiting us (429) or several calls failed in a
+                # row: stop now, continuing only deepens the throttle and
+                # burns the whole pick cycle for nothing.
+                if status == 429 or consecutive_errors >= 3:
+                    logger.warning(
+                        "gamemodes: aborting pick cycle early after %s "
+                        "consecutive tmx failures (rate-limited?)",
+                        consecutive_errors,
+                    )
+                    break
                 continue
+            consecutive_errors = 0
             rows = data.get("results") or []
             if not rows:
                 continue
@@ -129,7 +150,15 @@ class MapPicker:
                 continue
             if any(not v(row) for v in vlist):
                 continue
+            logger.info(
+                "gamemodes: picker accepted tid=%s name=%r on attempt %s/%s",
+                tid, str(row.get("name") or ""), attempt + 1, total,
+            )
             return row
+        logger.warning(
+            "gamemodes: picker exhausted - no valid candidate after %s attempts",
+            total,
+        )
         return None
 
     async def install(self, row: dict[str, Any],
@@ -149,6 +178,7 @@ class MapPicker:
         if not blob:
             logger.warning("gamemodes: tmx download empty (#%s) - skipping", tid)
             return None
+        logger.info("gamemodes: install #%s downloaded %d bytes", tid, len(blob))
         ext = ".Map.Gbx" if self._game() == "tmnext" else ".Challenge.Gbx"
         filename = _safe_filename(row.get("name", f"tmx_{tid}"), tid, ext)
         storage = self.app.instance.storage
@@ -168,6 +198,7 @@ class MapPicker:
         except Exception:
             logger.exception("gamemodes: add_map failed (#%s)", tid)
             return None
+        logger.info("gamemodes: install #%s added to server (%s)", tid, filename)
         # `add_map` returns bool; update_list crashes on this PyPlanet build.
         # Ask the dedicated for map info then get-or-create the DB row directly.
         uploaded = None
@@ -175,6 +206,9 @@ class MapPicker:
             from pyplanet.apps.core.maniaplanet.models import Map as _Map
             import re as _re
             info = await self.app.instance.gbx("GetMapInfo", filename)
+            logger.info(
+                "gamemodes: install #%s GetMapInfo present=%s", tid, bool(info),
+            )
             if info:
                 mx_id = None
                 fn = info.get("FileName", "")
@@ -204,6 +238,10 @@ class MapPicker:
                     price=info.get("CopperPrice", 0),
                     mx_id=mx_id,
                 )
+                logger.info(
+                    "gamemodes: install #%s db row id=%s uid=%s",
+                    tid, getattr(uploaded, "id", None), info.get("UId"),
+                )
         except Exception:
             logger.exception("gamemodes: GetMapInfo/get_or_create failed (#%s)", tid)
         # Persist TMX metadata so map_info_widget / tmx_map_info / discord
@@ -223,6 +261,12 @@ class MapPicker:
         if juke_next and uploaded is not None:
             try:
                 await self.app.instance.map_manager.set_next_map(uploaded)
+                logger.info("gamemodes: install #%s set_next_map ok", tid)
             except Exception:
                 logger.exception("gamemodes: set_next_map failed (#%s)", tid)
+        if uploaded is None:
+            logger.warning(
+                "gamemodes: install #%s returning None (file added but no DB Map "
+                "row - GetMapInfo/get_or_create failed)", tid,
+            )
         return uploaded

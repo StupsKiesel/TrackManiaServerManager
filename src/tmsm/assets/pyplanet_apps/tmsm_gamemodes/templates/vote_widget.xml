@@ -1,0 +1,60 @@
+{% import 'widget_engine/frame.xml' as widgets with context %}
+
+{# Player vote panel rendered as a widget_engine widget so the master admin
+   can position/size it via //widget. Context (see vote_widget_context_for):
+     vote          - {title, options[{value,label}], tally{value:int},
+                      total, remaining, duration, key} or None
+     has_voted     - whether the viewing player already cast a ballot
+     picked_value  - the option this player chose (if any)
+     widget_w/h    - admin-resolved size (frame macro injects the rest)
+   The frame script conceals the widget whenever widget_force_hidden is set
+   (i.e. no active vote), so we only need to draw content when `vote` exists.
+#}
+
+{% set ww = widget_w | default(70.0) %}
+{% set wh = widget_h | default(30.0) %}
+
+{% call widgets.frame() %}
+  {% if vote %}
+    {% set head_h = 8.5 %}
+    {% set rows = vote.options | length %}
+    {% set rh = (wh - head_h) / (rows if rows > 0 else 1) %}
+    {% set bar_h = rh - 1.0 %}
+
+    <label pos="2 -1.6" z-index="42" halign="left" valign="top"
+           text="$fc4VOTE" textsize="1.2" textfont="GameFontBlack" />
+    <label pos="{{ ww - 2 }} -1.6" z-index="42" halign="right" valign="top"
+           text="$fc4{{ vote.remaining }}s" textsize="1.0" textfont="GameFontBlack" />
+    <label pos="2 -4.7" z-index="42" halign="left" valign="top"
+           sizen="{{ ww - 4 }} 3" textsize="0.9" textfont="GameFontRegular"
+           text="$fff{{ vote.title }}" />
+
+    {% for opt in vote.options %}
+      {% set oy = -head_h - loop.index0 * rh %}
+      {% set count = vote.tally[opt.value] if opt.value in vote.tally else 0 %}
+      {% set frac = (count / vote.total) if vote.total > 0 else 0 %}
+      {% set picked = (has_voted and picked_value == opt.value) %}
+      {% set fill = ('2ea84cff' if picked else '2b5cc0bb') %}
+
+      <quad pos="2 {{ oy }}" z-index="41" size="{{ ww - 4 }} {{ bar_h }}"
+            bgcolor="00000066" halign="left" valign="top" />
+      {% if frac > 0 %}
+        <quad pos="2 {{ oy }}" z-index="42" size="{{ (ww - 4) * frac }} {{ bar_h }}"
+              bgcolor="{{ fill }}" halign="left" valign="top" />
+      {% endif %}
+
+      <label pos="3 {{ oy - bar_h / 2 }}" z-index="43" halign="left" valign="center2"
+             sizen="{{ ww - 12 }} {{ bar_h }}" textsize="0.9" textfont="GameFontBlack"
+             text="$fff{{ opt.label }}" />
+      <label pos="{{ ww - 3 }} {{ oy - bar_h / 2 }}" z-index="43"
+             halign="right" valign="center2" textsize="0.9" textfont="GameFontBlack"
+             text="$fff{{ count }}" />
+
+      {# Click target stays active even after voting so players can change
+         their pick; the engine overwrites the existing ballot. #}
+      <quad pos="2 {{ oy }}" z-index="44" size="{{ ww - 4 }} {{ bar_h }}"
+            bgcolor="0000" bgcolorfocus="ffffff22"
+            action="{{ id }}__vote__pick__{{ opt.value }}" />
+    {% endfor %}
+  {% endif %}
+{% endcall %}

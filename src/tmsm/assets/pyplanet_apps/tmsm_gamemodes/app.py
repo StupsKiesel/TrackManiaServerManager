@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from types import SimpleNamespace
 from typing import Any
 
 from pyplanet.apps.config import AppConfig
@@ -20,7 +21,13 @@ from . import state as _state
 from . import modes as _builtin_modes  # noqa: F401  side-effect: registers built-ins
 from .base import REGISTRY, GameMode, GameModeContext
 from .picker import MapPicker
-from .views import AdminView, OperatorView, RmcResultsView, VotePanelView
+from .views import (
+    AdminView,
+    OperatorView,
+    RmcResultsView,
+    VotePanelView,
+    VotePanelWidgetView,
+)
 from .votes import VoteEngine
 from .widget_layout_storage import WidgetLayoutStorage
 
@@ -40,6 +47,16 @@ class TmsmGamemodesApp(AppConfig):
     game_dependencies = ["trackmania", "trackmania_next", "shootmania"]
 
     LEVEL_OPERATOR = 1
+
+    # RMC vote panel rendered as a widget_engine widget (admin-positionable).
+    VOTE_WIDGET_KEY = "rmc_vote_widget"
+    VOTE_WIDGET_NAME = "RMC Vote"
+    VOTE_WIDGET_ICON = "check-square"
+    VOTE_WIDGET_DEFAULT_X = -35.0
+    VOTE_WIDGET_DEFAULT_Y = 50.0
+    VOTE_WIDGET_DEFAULT_W = 70.0
+    VOTE_WIDGET_DEFAULT_H = 30.0
+
     CONFIG_PAGE_SIZE = 6
     CONFIG_ROW_HEIGHT = 7
     CONFIG_GROUP_BASE_HEIGHT = 18
@@ -53,6 +70,8 @@ class TmsmGamemodesApp(AppConfig):
         self.operator_view: OperatorView | None = None
         self.admin_view: AdminView | None = None
         self.vote_view: VotePanelView | None = None
+        self.vote_widget_view: VotePanelWidgetView | None = None
+        self._vote_widget_binding: Any = None
         self.rmc_results_view: RmcResultsView | None = None
         # Latest RMC run row id used to feed `rmc_results_context` after a
         # run finishes; None until a run is persisted.
@@ -148,6 +167,12 @@ class TmsmGamemodesApp(AppConfig):
             self.vote_view = VotePanelView(self)
             self.vote_view.handle_catch_all = self._catch_all  # type: ignore[assignment]
 
+            self.vote_widget_view = VotePanelWidgetView(self)
+            self.vote_widget_view.handle_catch_all = self._catch_all  # type: ignore[assignment]
+            # widget_engine renders `app.view`; bind a namespace so the engine
+            # drives the widget view (not the operator/admin windows).
+            self._vote_widget_binding = SimpleNamespace(view=self.vote_widget_view)
+
             self.rmc_results_view = RmcResultsView(self)
             self.rmc_results_view.handle_catch_all = self._catch_all  # type: ignore[assignment]
         except Exception:
@@ -165,6 +190,11 @@ class TmsmGamemodesApp(AppConfig):
 
         await self._sync_required_widget_visibility()
 
+        await self._register_vote_widget_with_engine()
+        self.context.signals.listen(
+            "widget_engine:request_register", self._on_widget_request_register,
+        )
+
         await self._register_with_hub()
 
     async def on_stop(self) -> None:
@@ -173,7 +203,8 @@ class TmsmGamemodesApp(AppConfig):
                 await self._active.on_disable()
             except Exception:
                 logger.exception("gamemodes: on_disable on stop failed")
-        for v in (self.operator_view, self.admin_view, self.vote_view, self.rmc_results_view):
+        for v in (self.operator_view, self.admin_view, self.vote_view,
+                  self.vote_widget_view, self.rmc_results_view):
             if v is not None:
                 try:
                     await v.destroy()
@@ -182,6 +213,8 @@ class TmsmGamemodesApp(AppConfig):
         self.operator_view = None
         self.admin_view = None
         self.vote_view = None
+        self.vote_widget_view = None
+        self._vote_widget_binding = None
         self.rmc_results_view = None
 
     # ---- persistence ---------------------------------------------------
@@ -1399,6 +1432,13 @@ class TmsmGamemodesApp(AppConfig):
         if self._active is None:
             return
         try:
+            _m = kwargs.get("map")
+            logger.info(
+                "gamemodes: -> %s on_map_begin uid=%s name=%r",
+                self._active.key,
+                str(getattr(_m, "uid", "") or ""),
+                str(getattr(_m, "name", "") or ""),
+            )
             await self._active.on_map_begin(kwargs.get("map"))
         except Exception:
             logger.exception("gamemodes: %s on_map_begin failed", self._active.key)
@@ -1407,6 +1447,11 @@ class TmsmGamemodesApp(AppConfig):
         if self._active is None:
             return
         try:
+            _m = kwargs.get("map")
+            logger.info(
+                "gamemodes: -> %s on_map_end uid=%s",
+                self._active.key, str(getattr(_m, "uid", "") or ""),
+            )
             await self._active.on_map_end(kwargs.get("map"))
         except Exception:
             logger.exception("gamemodes: %s on_map_end failed", self._active.key)
@@ -1415,6 +1460,7 @@ class TmsmGamemodesApp(AppConfig):
         if self._active is None:
             return
         try:
+            logger.info("gamemodes: -> %s on_podium_start", self._active.key)
             await self._active.on_podium_start()
         except Exception:
             logger.exception("gamemodes: %s on_podium_start failed",
@@ -1456,44 +1502,176 @@ class TmsmGamemodesApp(AppConfig):
 
     # ---- vote engine hooks --------------------------------------------
 
+    def _online_logins(self) -> list[str]:
+        try:
+            return [
+                str(p.login)
+                for p in self.instance.player_manager.online
+                if getattr(p, "login", None)
+            ]
+        except Exception:
+            return []
+
+    async def _show_vote_widget(self) -> None:
+        """(Re)render the admin-positioned RMC vote widget for everyone.
+
+        The widget is persistent and conceals itself client-side when no
+        vote is active (``widget_force_hidden``), so the same call both
+        opens and refreshes it; on vote end the snapshot is already cleared
+        so the frame script animates it away.
+        """
+        view = self.vote_widget_view
+        if view is None:
+            return
+        logins = self._online_logins()
+        try:
+            if logins:
+                await view.display(player_logins=logins)
+            else:
+                await view.display()
+        except Exception:
+            logger.exception("gamemodes: vote widget display failed")
+
     async def _on_vote_started(self) -> None:
-        if self.vote_view is not None:
-            try:
-                await self.vote_view.show()
-            except Exception:
-                logger.exception("gamemodes: vote_view show failed")
+        await self._show_vote_widget()
         await self._refresh_operator()
 
     async def _on_vote_progress(self) -> None:
-        if self.vote_view is not None:
-            try:
-                await self.vote_view.refresh()
-            except Exception:
-                logger.exception("gamemodes: vote_view refresh failed")
+        await self._show_vote_widget()
 
     async def _on_vote_ended(self, result: dict[str, Any] | None) -> None:
-        if self.vote_view is not None:
-            # BaseView.hide() calls destroy(), which unregisters the action
-            # listener and clears self.data — making the view unusable for
-            # subsequent votes. Use TemplateView.hide() directly so the view
-            # stays alive and re-shows cleanly next time.
-            #
-            # We MUST hide both per-player and globally: BaseView.refresh()
-            # re-displays per-login on every progress tick, so by the time
-            # the vote times out the manialink has been pushed both as a
-            # global frame AND as per-player frames. A bare hide(None) only
-            # clears the global flag and leaves the per-player frames on
-            # the clients, so the panel sticks around forever.
-            try:
-                logins = list(self.vote_view._visible_logins)
-                if logins:
-                    await TemplateView.hide(self.vote_view, player_logins=logins)
-                await TemplateView.hide(self.vote_view)
-            except Exception:
-                logger.exception("gamemodes: vote_view hide failed")
-            self.vote_view._visible = False
-            self.vote_view._visible_logins.clear()
+        # The vote engine clears its snapshot before calling us, so a final
+        # render conceals the widget (widget_force_hidden -> the frame script
+        # animates it off-screen). The persistent view stays alive for the
+        # next vote; no destroy/hide juggling required.
+        await self._show_vote_widget()
         await self._refresh_operator()
+
+    # ---- widget engine registration -----------------------------------
+
+    async def _on_widget_request_register(self, **kwargs) -> None:
+        await self._register_vote_widget_with_engine()
+
+    async def _register_vote_widget_with_engine(self) -> None:
+        try:
+            from pyplanet.apps.tmsm.widget_engine.registry import (
+                AnimDir, Animation, DriveMode, HideRule, WidgetEntry, WidgetKind,
+            )
+            sig = self.context.signals.get_signal("widget_engine:register")
+        except Exception:
+            logger.info("gamemodes: widget_engine:register not available")
+            return
+        try:
+            entry = WidgetEntry(
+                key=self.VOTE_WIDGET_KEY,
+                name=self.VOTE_WIDGET_NAME,
+                description="RMC vote panel: current vote, countdown, and click-to-vote options.",
+                icon=self.VOTE_WIDGET_ICON,
+                default_x=self.VOTE_WIDGET_DEFAULT_X,
+                default_y=self.VOTE_WIDGET_DEFAULT_Y,
+                default_w=self.VOTE_WIDGET_DEFAULT_W,
+                default_h=self.VOTE_WIDGET_DEFAULT_H,
+                kind=WidgetKind.PERSISTENT,
+                drive_mode=DriveMode.FIXED,
+                hide_rule=HideRule(named=("in_menu",), raw=""),
+                animation=Animation(direction=AnimDir.DOWN, duration_ms=200),
+                bg_color="000000d0",
+                strip_color="ffae00",
+                strip_enabled=True,
+                author="tmsm",
+                version="0.1",
+            )
+            await sig.send_robust(
+                {"entry": entry, "app": self._vote_widget_binding or self},
+                raw=True,
+            )
+        except Exception:
+            logger.exception("gamemodes: vote widget registration failed")
+
+    def vote_widget_context_for(self, login: str | None) -> dict[str, Any]:
+        anchor_x = float(self.VOTE_WIDGET_DEFAULT_X)
+        anchor_y = float(self.VOTE_WIDGET_DEFAULT_Y)
+        card_w = float(self.VOTE_WIDGET_DEFAULT_W)
+        card_h = float(self.VOTE_WIDGET_DEFAULT_H)
+        anim_dir = "down"
+        anim_duration_ms = 200
+        anim_in_delay_ms = 0
+        anim_out_delay_ms = 0
+        widget_disabled = False
+        bg_color = "000000d0"
+        strip_color = "ffae00"
+        strip_edge = "top"
+        strip_thickness = 1.0
+
+        host = self.instance.apps.apps.get("widget_engine")
+        if host is not None and getattr(host, "engine", None) is not None and login:
+            try:
+                resolved = host.engine.resolve(self.VOTE_WIDGET_KEY, login)
+                if resolved is not None:
+                    anchor_x = float(getattr(resolved, "x", anchor_x) or anchor_x)
+                    anchor_y = float(getattr(resolved, "y", anchor_y) or anchor_y)
+                    card_w = float(getattr(resolved, "w", card_w) or card_w)
+                    card_h = float(getattr(resolved, "h", card_h) or card_h)
+                    raw_dir = getattr(getattr(resolved, "anim_dir", None), "value", None)
+                    anim_dir = str(raw_dir or anim_dir)
+                    anim_duration_ms = int(getattr(resolved, "anim_duration_ms", anim_duration_ms) or anim_duration_ms)
+                    anim_in_delay_ms = int(getattr(resolved, "anim_in_delay_ms", anim_in_delay_ms) or anim_in_delay_ms)
+                    anim_out_delay_ms = int(getattr(resolved, "anim_out_delay_ms", anim_out_delay_ms) or anim_out_delay_ms)
+                    widget_disabled = bool(getattr(resolved, "disabled", widget_disabled))
+                    bg_color = str(getattr(resolved, "bg_color", bg_color) or bg_color)
+                    strip_color = str(getattr(resolved, "strip_color", strip_color) or strip_color)
+                    strip_edge = str(getattr(resolved, "strip_edge", strip_edge) or strip_edge)
+                    strip_thickness = float(getattr(resolved, "strip_thickness", strip_thickness) or strip_thickness)
+            except Exception:
+                logger.exception("gamemodes: vote widget resolve failed")
+
+        off_x, off_y = {
+            "none": (0.0, 0.0),
+            "left": (-500.0, 0.0),
+            "right": (500.0, 0.0),
+            "up": (0.0, 500.0),
+            "down": (0.0, -500.0),
+        }.get(anim_dir, (0.0, 0.0))
+
+        snap = self.votes.snapshot()
+        picked = None
+        has_voted = False
+        if snap and login and login in snap.get("ballots", {}):
+            picked = snap["ballots"][login]
+            has_voted = True
+        vote_active = isinstance(snap, dict)
+
+        return {
+            "widget_key": self.VOTE_WIDGET_KEY,
+            "widget_view_id": self.vote_widget_view.id if self.vote_widget_view is not None else "",
+            "widget_kind": "persistent",
+            "widget_x": anchor_x,
+            "widget_y": anchor_y,
+            "widget_w": card_w,
+            "widget_h": card_h,
+            "widget_scale_y": 1.0,
+            "widget_disabled": widget_disabled,
+            "widget_hide_clauses": ["MenuOpen"],
+            "widget_hide_raw": "",
+            "widget_anim_dir": anim_dir,
+            "widget_anim_duration_ms": anim_duration_ms,
+            "widget_anim_in_delay_ms": anim_in_delay_ms,
+            "widget_anim_out_delay_ms": anim_out_delay_ms,
+            "widget_anim_off_x": off_x,
+            "widget_anim_off_y": off_y,
+            "widget_bg_color": bg_color,
+            "widget_strip_color": strip_color,
+            "widget_strip_edge": strip_edge,
+            "widget_strip_thickness": strip_thickness,
+            "widget_edit_mode": False,
+            "widget_debug_mode": False,
+            "widget_debug_status": "",
+            "widget_debug_lines": [],
+            "vote": snap,
+            "has_voted": has_voted,
+            "picked_value": picked,
+            "widget_force_hidden": widget_disabled or (not vote_active),
+        }
 
     # ---- refresh helpers ----------------------------------------------
 

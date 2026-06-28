@@ -440,23 +440,43 @@ async def tags(game: str) -> list[dict[str, Any]]:
     return out
 
 
-async def download(game: str, track_id: int) -> Optional[bytes]:
+async def download(game: str, track_id: int, *,
+                   timeout_s: float = 60.0, retries: int = 2) -> Optional[bytes]:
     """Download the raw ``.Map.Gbx`` / ``.Challenge.Gbx`` bytes for ``track_id``.
 
     Uses the documented v2 endpoint ``/mapgbx/{id}``. Returns ``None`` on 404
-    (map removed). All other HTTP errors propagate.
+    (map removed). Transient failures (timeouts, dropped connections) are
+    retried with a short backoff; the last exception propagates if every
+    attempt fails.
     """
     base, _ = site_for(game)
     url = f"{base}/mapgbx/{int(track_id)}"
     headers = {"User-Agent": USER_AGENT}
-    timeout = aiohttp.ClientTimeout(total=60)
+    timeout = aiohttp.ClientTimeout(total=float(timeout_s))
 
-    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-        async with session.get(url, allow_redirects=True) as resp:
-            if resp.status == 404:
-                return None
-            resp.raise_for_status()
-            return await resp.read()
+    attempts = max(0, int(retries)) + 1
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(url, allow_redirects=True) as resp:
+                    if resp.status == 404:
+                        return None
+                    resp.raise_for_status()
+                    return await resp.read()
+        except (aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
+            last_exc = e
+            if attempt + 1 >= attempts:
+                raise
+            logger.warning(
+                "tmx.download: #%s failed (attempt %s/%s, %s) - retrying",
+                int(track_id), attempt + 1, attempts, e.__class__.__name__,
+            )
+            await asyncio.sleep(0.75 * (attempt + 1))
+
+    if last_exc is not None:
+        raise last_exc
+    return None
 
 
 # ---- TMX description (BBCode-ish) parsing & flow layout -----------------

@@ -1,6 +1,7 @@
 """Views for the tmsm_gamemodes app."""
 from __future__ import annotations
 
+from pyplanet.apps.tmsm.ui.audience import Audience
 from pyplanet.apps.tmsm.ui.views import BaseView
 
 
@@ -123,6 +124,30 @@ class VotePanelView(BaseView):
 
     async def get_per_player_data(self, login):
         return await self.app.vote_panel_context(login)
+
+
+class VotePanelWidgetView(BaseView):
+    """Player-facing vote panel rendered through ``widget_engine``.
+
+    Unlike :class:`VotePanelView` (a fixed bottom-centre overlay), this view
+    is registered with the widget engine so the master admin can move/resize
+    it like any other widget. The engine resolves its position/size and the
+    app injects that, together with the live vote snapshot, via
+    ``vote_widget_context_for``. It is concealed client-side (frame script
+    honours ``widget_force_hidden``) whenever no vote is active.
+    """
+
+    template_name = "tmsm_gamemodes/vote_widget.xml"
+    audience: Audience = Audience.everyone()
+    breadcrumbs = []
+
+    async def get_context_data(self):
+        ctx = await super().get_context_data()
+        ctx.update(self.app.vote_widget_context_for(None))
+        return ctx
+
+    async def get_per_player_data(self, login):
+        return self.app.vote_widget_context_for(login)
 
 
 class RmcResultsView(BaseView):

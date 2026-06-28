@@ -66,6 +66,12 @@ class RandomChallengeMode(GameMode):
         self._busy = False
         self._round_ending = False
         self._run_task: asyncio.Task | None = None
+        # Relentless next-map picker runs as a background task during each
+        # map so it has the full map duration to keep retrying until a fresh
+        # map is downloaded. `_pick_epoch` lets a newer pick supersede an
+        # older one without cancelling mid-download.
+        self._pick_task: asyncio.Task | None = None
+        self._pick_epoch = 0
         self._current_map = None
         self._in_race_started_at_monotonic: float | None = None
         # Logins that were actively racing the moment the operator hit Pause.
@@ -250,6 +256,7 @@ class RandomChallengeMode(GameMode):
         if self._run_task is not None:
             self._run_task.cancel()
             self._run_task = None
+        self._cancel_pick_task()
         self._save()
         await self._refresh_rmc_widgets()
 
@@ -305,8 +312,16 @@ class RandomChallengeMode(GameMode):
         }
         consumed_tid = int(run.get("pending_track_id") or 0)
         run["pending_track_id"] = 0
+        # The very first map of a run arms the countdown: the timer must never
+        # tick while we were still searching for / loading map 1.
+        first_map = bool(run.get("awaiting_first_map"))
+        run["awaiting_first_map"] = False
         if not bool(run.get("paused")):
             self._in_race_started_at_monotonic = time.monotonic()
+        if first_map:
+            self.ctx.chat(
+                "$0f0>> $fffRMC:$z first map loaded - the clock is running. GO!"
+            )
         self._save()
         self._update_status()
         logger.info(
@@ -316,10 +331,11 @@ class RandomChallengeMode(GameMode):
             consumed_tid,
         )
         # Pre-pick the NEXT map now, while this map is being played, so the
-        # TMX search + download has the full map duration to complete instead
-        # of being squeezed into the ~20s podium. The pick is silent here; it
-        # is announced later in on_podium_start.
-        await self._pick_and_jukebox(triggered_by="map_begin", announce=False)
+        # TMX search + download has the full map duration to keep retrying
+        # until it succeeds. Runs as a background task (relentless, never
+        # replays) so it never blocks map_begin; it is announced later in
+        # on_podium_start.
+        self._kick_pick(triggered_by="map_begin", announce=False)
 
     async def on_map_end(self, map_obj) -> None:
         self._commit_race_elapsed()
@@ -525,6 +541,9 @@ class RandomChallengeMode(GameMode):
             "pending_track_id": 0,
             "pending_row": {},
             "last_event": "",
+            # The countdown stays frozen until the first map actually loads
+            # (cleared in on_map_begin); never count down while searching.
+            "awaiting_first_map": True,
             "started_at": datetime.datetime.utcnow().isoformat(),
             "contributions": {},  # login -> {nickname, goal_clears, secondary_clears, finishes, best_delta_ms, total_clear_time_ms}
         }
@@ -539,14 +558,29 @@ class RandomChallengeMode(GameMode):
         self._save()
         self._update_status()
 
-        picked = await self._pick_and_jukebox(triggered_by="run_start")
+        if announce:
+            self.ctx.chat("$0f0>> $fffRMC:$z started.")
+            self.ctx.chat("$fa0>> $fffRMC:$z searching for the first map...")
+
+        # Relentlessly find + download map 1. The countdown is frozen until it
+        # actually loads, so this can take as long as TMX needs.
+        picked = await self._pick_and_jukebox(
+            triggered_by="run_start", announce=False,
+        )
         if picked:
+            if announce:
+                row = dict(self._state.setdefault("run", {}).get("pending_row") or {})
+                name = str(row.get("name") or "")
+                if name:
+                    self.ctx.chat(
+                        f"$0f0>> $fffRMC:$z map found - $fa0{name}$z. Loading..."
+                    )
+                else:
+                    self.ctx.chat("$0f0>> $fffRMC:$z map found. Loading...")
             try:
                 await self.ctx.instance.gbx("NextMap")
             except Exception:
                 logger.exception("rmc: NextMap on run start failed")
-        if announce:
-            self.ctx.chat("$fa0>> $fffRMC:$z new run started.")
         await self._refresh_rmc_widgets()
 
     async def _finish_run(self, reason: str) -> None:
@@ -558,6 +592,7 @@ class RandomChallengeMode(GameMode):
         run["active"] = False
         run["paused"] = False
         run["last_event"] = str(reason or "")
+        self._cancel_pick_task()
         # Persist stats first so the results view can read the new run_id.
         run_id = await self._persist_run_stats(reason=reason)
         if run_id:
@@ -826,14 +861,54 @@ class RandomChallengeMode(GameMode):
 
     # ---- picking -------------------------------------------------------
 
+    def _cancel_pick_task(self) -> None:
+        """Hard-stop the background picker (run end / mode disable)."""
+        task = self._pick_task
+        self._pick_task = None
+        # Bump the epoch so any loop that survives cancellation bails fast.
+        self._pick_epoch += 1
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _kick_pick(self, triggered_by: str, announce: bool = False) -> None:
+        """(Re)start the relentless background picker.
+
+        A newer pick supersedes an older one via `_pick_epoch`; we do NOT
+        cancel the old task here so an in-flight download can finish cleanly
+        — the stale loop notices the epoch change and exits on its own.
+        """
+        self._pick_task = asyncio.ensure_future(
+            self._pick_loop_guarded(triggered_by=triggered_by, announce=announce)
+        )
+
+    async def _pick_loop_guarded(self, triggered_by: str, announce: bool) -> None:
+        try:
+            await self._pick_and_jukebox(triggered_by=triggered_by, announce=announce)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "rmc: background pick crashed (trigger=%s)", triggered_by,
+            )
+
     async def _pick_and_jukebox(self, triggered_by: str, announce: bool = True) -> bool:
+        """Relentlessly pick + download + juke the NEXT map.
+
+        RMC must never play a map twice, so there is no replay fallback: this
+        keeps trying new candidates (with backoff) until a fresh map is
+        downloaded and set as next, the run ends, or a newer pick supersedes
+        this one. Pre-picking at map start gives this the full map duration to
+        succeed even when TMX is briefly slow or rate-limiting.
+        """
         run = self._state.setdefault("run", {})
-        if self._busy or not bool(run.get("active")):
+        if not bool(run.get("active")):
             logger.info(
-                "rmc: _pick_and_jukebox(trigger=%s) skipped (busy=%s active=%s)",
-                triggered_by, self._busy, bool(run.get("active")),
+                "rmc: _pick_and_jukebox(trigger=%s) skipped (inactive)", triggered_by,
             )
             return False
+
+        self._pick_epoch += 1
+        my_epoch = self._pick_epoch
         self._busy = True
         try:
             validators = [downloadable()]
@@ -847,159 +922,145 @@ class RandomChallengeMode(GameMode):
                 validators.append(lambda row: bool(row.get("tags") or []))
             validators.append(self._validate_author_time)
 
-            excluded = set()
-            last_tid = int(self._state.get("last_track_id") or 0)
-            if last_tid > 0:
-                excluded.add(last_tid)
-            if self._config.get("skip_duplicate_maps"):
-                for tid in self._history_ids():
-                    excluded.add(int(tid))
-            for tid in self._broken_track_ids():
-                excluded.add(int(tid))
-
-            # Try a few different candidates: a single map that won't download
-            # (e.g. a TMX timeout) shouldn't force the whole round into a replay.
             attempts_cfg = min(60, max(1, int(self._config.get("max_pick_attempts") or 30)))
             tried_tids: set[int] = set()
-            row = None
-            installed = None
-            for cand in range(3):
+            consecutive_failures = 0
+            round_no = 0
+
+            while True:
+                # Supersede / abort checks before each round.
+                if my_epoch != self._pick_epoch:
+                    logger.info(
+                        "rmc: pick superseded (trigger=%s) - newer pick took over",
+                        triggered_by,
+                    )
+                    return False
+                if not bool(run.get("active")):
+                    logger.info(
+                        "rmc: pick aborted - run no longer active (trigger=%s)",
+                        triggered_by,
+                    )
+                    return False
+
+                round_no += 1
+
+                # Rebuild the exclusion set each round (history may grow as we
+                # retry; also re-reads broken maps the operator may have added).
+                excluded = set(tried_tids)
+                last_tid = int(self._state.get("last_track_id") or 0)
+                if last_tid > 0:
+                    excluded.add(last_tid)
+                if self._config.get("skip_duplicate_maps"):
+                    for tid in self._history_ids():
+                        excluded.add(int(tid))
+                for tid in self._broken_track_ids():
+                    excluded.add(int(tid))
+
                 row = await self.ctx.picker.pick_random(
                     filters={},
                     validators=validators,
-                    excluded_tmx_ids=list(excluded | tried_tids),
+                    excluded_tmx_ids=list(excluded),
                     max_attempts=attempts_cfg,
                 )
                 if row is None:
+                    # TMX busy / rate-limited / no candidate this round. Back
+                    # off (growing, capped) and keep trying — never give up.
+                    consecutive_failures += 1
+                    backoff = min(20.0, 2.0 * consecutive_failures)
                     logger.warning(
-                        "rmc: no valid map found (trigger=%s, candidate %s)",
-                        triggered_by, cand + 1,
+                        "rmc: no candidate (trigger=%s round=%s) - retrying in %.1fs",
+                        triggered_by, round_no, backoff,
                     )
-                    break
+                    await asyncio.sleep(backoff)
+                    continue
+
                 cand_tid = int(row.get("track_id") or 0)
                 logger.info(
-                    "rmc: picked tid=%s name=%r (trigger=%s, candidate %s); installing",
-                    cand_tid, str(row.get("name") or ""), triggered_by, cand + 1,
+                    "rmc: picked tid=%s name=%r (trigger=%s round=%s); installing",
+                    cand_tid, str(row.get("name") or ""), triggered_by, round_no,
                 )
                 installed = await self.ctx.picker.install(row, juke_next=True)
-                if installed is not None:
-                    break
-                logger.warning(
-                    "rmc: install failed for tid=%s - trying another candidate",
+                if installed is None:
+                    # This specific map could not be downloaded/added. Exclude
+                    # it and immediately try a different one. Small pause so we
+                    # don't hammer a rate-limited TMX.
+                    consecutive_failures += 1
+                    tried_tids.add(cand_tid)
+                    logger.warning(
+                        "rmc: install failed tid=%s (trigger=%s) - excluding, "
+                        "trying another map", cand_tid, triggered_by,
+                    )
+                    await asyncio.sleep(min(10.0, 1.0 * consecutive_failures))
+                    continue
+
+                # Re-check epoch right before committing: if a newer pick
+                # started while we were downloading, let it win.
+                if my_epoch != self._pick_epoch:
+                    logger.info(
+                        "rmc: pick superseded after install (trigger=%s tid=%s) - "
+                        "discarding", triggered_by, cand_tid,
+                    )
+                    return False
+
+                logger.info(
+                    "rmc: installed uid=%s id=%r tid=%s",
+                    str(getattr(installed, "uid", "") or ""),
+                    getattr(installed, "id", None),
                     cand_tid,
                 )
-                tried_tids.add(cand_tid)
-                row = None
-                installed = None
 
-            if installed is None:
-                # No candidate could be installed (TMX busy / all timed out).
-                # Replay the current map so the dedicated is never left mapless
-                # and the podium announcement stays accurate.
-                logger.warning(
-                    "rmc: no installable map found (trigger=%s) - replaying current map",
-                    triggered_by,
-                )
-                await self._replay_current_as_next(
-                    run, reason="no installable map found (TMX busy)",
-                )
-                return False
-            logger.info(
-                "rmc: installed uid=%s id=%r tid=%s",
-                str(getattr(installed, "uid", "") or ""),
-                getattr(installed, "id", None),
-                int(row.get("track_id") or 0),
-            )
+                tid = cand_tid
+                self._state["last_track_id"] = tid
+                history = self._history_ids()
+                history.append(tid)
+                cap = max(10, int(self._config.get("history_size") or 200))
+                if len(history) > cap:
+                    history = history[-cap:]
+                self._state["history_track_ids"] = history
 
-            tid = int(row.get("track_id") or 0)
-            self._state["last_track_id"] = tid
-            history = self._history_ids()
-            history.append(tid)
-            cap = max(10, int(self._config.get("history_size") or 200))
-            if len(history) > cap:
-                history = history[-cap:]
-            self._state["history_track_ids"] = history
-
-            run["pending_track_id"] = tid
-            run["pending_row"] = {
-                "track_id": tid,
-                "name": str(row.get("name") or ""),
-                "author": str(row.get("author") or ""),
-            }
-            self._save()
-            self._update_status()
-            logger.info(
-                "rmc: next map set tid=%s name=%r pending_track_id=%s announce=%s",
-                tid, str(row.get("name") or ""), tid, announce,
-            )
-
-            if announce:
-                self.ctx.chat(
-                    f"$fa0>> $fffRMC:$z next map $fa0{row.get('name')}$z by {row.get('author')}"
-                )
-            return True
-        finally:
-            self._busy = False
-
-    async def _replay_current_as_next(self, run: dict[str, Any], *, reason: str) -> None:
-        """Fallback when no fresh map could be installed: set the current map as
-        the next map so the dedicated is never left to fall back to a server
-        playlist map, and refresh the pending slot to a replay marker so the
-        podium announcement matches what actually loads."""
-        cur_obj = None
-        try:
-            cur_obj = self.ctx.instance.map_manager.current_map
-        except Exception:
-            logger.exception("rmc: replay fallback - reading current_map failed")
-        if cur_obj is not None:
-            try:
-                await self.ctx.instance.map_manager.set_next_map(cur_obj)
+                run["pending_track_id"] = tid
+                run["pending_row"] = {
+                    "track_id": tid,
+                    "name": str(row.get("name") or ""),
+                    "author": str(row.get("author") or ""),
+                }
+                self._save()
+                self._update_status()
                 logger.info(
-                    "rmc: replay fallback set_next_map(current uid=%s) ok (%s)",
-                    str(getattr(cur_obj, "uid", "") or ""), reason,
+                    "rmc: next map set tid=%s name=%r pending_track_id=%s announce=%s",
+                    tid, str(row.get("name") or ""), tid, announce,
                 )
-            except Exception:
-                logger.exception(
-                    "rmc: replay fallback set_next_map(current) failed (%s)", reason,
-                )
-        else:
-            logger.warning(
-                "rmc: replay fallback could not resolve current_map (%s)", reason,
-            )
-        cur_info = dict(run.get("current_map") or {})
-        run["pending_track_id"] = int(cur_info.get("track_id") or 0)
-        run["pending_row"] = {
-            "track_id": int(cur_info.get("track_id") or 0),
-            "name": str(cur_info.get("name") or ""),
-            "author": str(cur_info.get("author") or ""),
-            "replay": True,
-        }
-        self._save()
-        await self.ctx.notify(
-            f"RMC: {reason} - replaying current map, retrying next podium",
-            severity="warning",
-        )
+
+                if announce:
+                    self.ctx.chat(
+                        f"$fa0>> $fffRMC:$z next map $fa0{row.get('name')}$z "
+                        f"by {row.get('author')}"
+                    )
+                return True
+        finally:
+            if my_epoch == self._pick_epoch:
+                self._busy = False
 
     def _announce_pending_next(self) -> None:
         """Announce the map pre-picked at map start. Called at podium."""
         run = self._state.setdefault("run", {})
+        pending_tid = int(run.get("pending_track_id") or 0)
         row = dict(run.get("pending_row") or {})
         name = str(row.get("name") or "")
+        pick_running = self._pick_task is not None and not self._pick_task.done()
         logger.info(
-            "rmc: announce_pending_next name=%r replay=%s track_id=%s",
-            name, bool(row.get("replay")), row.get("track_id"),
+            "rmc: announce_pending_next pending_tid=%s name=%r pick_running=%s",
+            pending_tid, name, pick_running,
         )
-        if not name:
-            logger.warning("rmc: announce_pending_next called with empty pending_row")
+        if pending_tid <= 0 or not name:
+            # The relentless picker hasn't finished downloading the next map
+            # yet (RMC never replays). It keeps retrying and will juke the
+            # fresh map before this one actually ends.
+            self.ctx.chat("$fa0>> $fffRMC:$z selecting next map...")
             return
-        if row.get("replay"):
-            self.ctx.chat(
-                f"$fa0>> $fffRMC:$z no fresh map available - replaying $fa0{name}$z"
-            )
-        else:
-            self.ctx.chat(
-                f"$fa0>> $fffRMC:$z next map $fa0{name}$z by {row.get('author')}"
-            )
+        self.ctx.chat(
+            f"$fa0>> $fffRMC:$z next map $fa0{name}$z by {row.get('author')}"
+        )
 
     def _validate_author_time(self, row: dict[str, Any]) -> bool:
         raw = row.get("author_time")
@@ -1353,6 +1414,8 @@ class RandomChallengeMode(GameMode):
         base = int(run.get("remaining_race_ms") or 0)
         if not bool(run.get("active")) or bool(run.get("paused")):
             return max(0, base)
+        if bool(run.get("awaiting_first_map")):
+            return max(0, base)
         if not self._is_in_race_phase():
             return max(0, base)
         if self._in_race_started_at_monotonic is None:
@@ -1363,6 +1426,9 @@ class RandomChallengeMode(GameMode):
     def _commit_race_elapsed(self) -> None:
         run = self._state.setdefault("run", {})
         if not bool(run.get("active")) or bool(run.get("paused")):
+            self._in_race_started_at_monotonic = None
+            return
+        if bool(run.get("awaiting_first_map")):
             self._in_race_started_at_monotonic = None
             return
         if not self._is_in_race_phase():
